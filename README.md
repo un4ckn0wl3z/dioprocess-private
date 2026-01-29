@@ -52,7 +52,7 @@ A modern, lightweight Windows process monitor built with **Rust**, **Dioxus**, a
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/dioprocess.git
+git clone https://github.com/un4ckn0wl3z/dioprocess.git
 cd dioprocess
 
 # Build release version
