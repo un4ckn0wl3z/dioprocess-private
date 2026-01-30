@@ -1,6 +1,6 @@
-# 🖥️ DioProcess - Windows Process Monitor
+# 🖥️ DioProcess - Windows System Monitor
 
-A modern, lightweight Windows process monitor built with **Rust**, **Dioxus**, and **Windows API**.
+A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, and **Windows API**.
 
 ![image](preview.png)
 
@@ -10,12 +10,25 @@ A modern, lightweight Windows process monitor built with **Rust**, **Dioxus**, a
 
 ## ✨ Features
 
+### 📑 Tab Navigation
+- **Processes Tab** - Monitor and manage running processes
+- **Network Tab** - View active network connections (TCP/UDP)
+
 ### Process Management
 - 📋 **Process List** - View all running processes with PID, name, CPU, threads, memory, and path
 - 🔍 **Search & Filter** - Quick search by process name, PID, or executable path
 - ⚡ **Real-time Updates** - Auto-refresh every 3 seconds (toggleable)
 - ☠️ **Kill Process** - Terminate processes with a click or keyboard shortcut
 - 📊 **Sortable Columns** - Sort by PID, Name, CPU, Threads, or Memory (ascending/descending)
+
+### Network Monitoring
+- 🌐 **Connection List** - View all TCP and UDP connections
+- 🔌 **Port Information** - Local and remote addresses with ports
+- 📡 **Connection State** - LISTEN, ESTABLISHED, TIME_WAIT, CLOSE_WAIT, etc.
+- 🔗 **Process Mapping** - See which process owns each connection
+- 🔍 **Filters** - Filter by protocol (TCP/UDP) and connection state
+- ☠️ **Kill Process** - Terminate the process using a port
+- 📂 **Open File Location** - Navigate to the executable
 
 ### System Monitoring
 - 🖥️ **CPU Usage** - Global CPU usage with visual progress bar
@@ -24,9 +37,10 @@ A modern, lightweight Windows process monitor built with **Rust**, **Dioxus**, a
 - 📈 **Process Count** - Total number of running processes
 
 ### User Interface
-- 🎨 **Modern Dark Theme** - Sleek gradient design with Tailwind CSS
+- 🎨 **Modern Dark Theme** - Sleek gradient design
 - 🪟 **Borderless Window** - Custom title bar with drag, minimize, maximize, close
 - 📱 **Responsive Layout** - Adapts to window resizing
+- 🔀 **Tab-based Navigation** - Switch between Processes and Network views
 
 ### Context Menu (Right-Click)
 - ☠️ Kill Process
@@ -36,7 +50,7 @@ A modern, lightweight Windows process monitor built with **Rust**, **Dioxus**, a
 - 📋 Copy PID
 - 📝 Copy Path
 - 🧵 View Threads
-- � View Handles
+- 🔗 View Handles
 - 🔄 Refresh List
 
 ### Thread View (Right-click → View Threads)
@@ -57,7 +71,7 @@ A modern, lightweight Windows process monitor built with **Rust**, **Dioxus**, a
 ### Keyboard Shortcuts
 | Key | Action |
 |-----|--------|
-| `F5` | Refresh process list |
+| `F5` | Refresh list |
 | `Delete` | Kill selected process |
 | `Escape` | Close context menu |
 
@@ -95,45 +109,64 @@ cargo build --release
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| `dioxus` | 0.6 | Desktop UI framework |
+| `dioxus` | 0.6 | Desktop UI framework with router |
 | `tokio` | 1.x | Async runtime for auto-refresh |
 | `sysinfo` | 0.31 | CPU/Memory system statistics |
 | `windows` | 0.58 | Windows API bindings |
+| `arboard` | 3.x | Clipboard operations |
 
 ### Windows API Features Used
-- `Win32_System_Diagnostics_ToolHelp` - Process enumeration
-- `Win32_System_Threading` - Process management
+- `Win32_System_Diagnostics_ToolHelp` - Process/Thread enumeration
+- `Win32_System_Threading` - Process/Thread management
 - `Win32_System_ProcessStatus` - Memory information
+- `Win32_NetworkManagement_IpHelper` - Network connections (TCP/UDP tables)
+- `Win32_Networking_WinSock` - Socket address handling
 - `Win32_Foundation` - Core Windows types
 - `Win32_Security` - Process access rights
 
 ## 📁 Project Structure
 
-This project uses a **Cargo workspace** with two crates:
+This project uses a **Cargo workspace** with three crates:
 
 ```
 dioprocess/
 ├── Cargo.toml              # Workspace configuration
-├── README.md               # This file
+├── README.md
 ├── LICENSE
 └── crates/
-    ├── process/            # Library crate - Windows process APIs
+    ├── process/            # Library - Windows process/network APIs
     │   ├── Cargo.toml
     │   └── src/
-    │       └── lib.rs      # Process enumeration, kill, system stats
-    └── dioprocess/         # Binary crate - Desktop application
+    │       └── lib.rs      # Process, thread, handle, network APIs
+    ├── ui/                 # Library - Dioxus UI components
+    │   ├── Cargo.toml
+    │   └── src/
+    │       ├── lib.rs
+    │       ├── routes.rs           # Tab routing (Process/Network)
+    │       ├── state.rs            # Shared state types
+    │       ├── helpers.rs          # Utility functions
+    │       ├── styles.rs           # CSS styles
+    │       └── components/
+    │           ├── mod.rs
+    │           ├── app.rs          # Main app with routing
+    │           ├── process_tab.rs  # Process list view
+    │           ├── network_tab.rs  # Network connections view
+    │           ├── process_row.rs  # Process table row
+    │           ├── thread_window.rs # Thread modal
+    │           └── handle_window.rs # Handle modal
+    └── dioprocess/         # Binary - Desktop application entry
         ├── Cargo.toml
         └── src/
-            ├── main.rs     # Entry point, window configuration
-            └── ui.rs       # Dioxus UI components
+            └── main.rs     # Entry point, window configuration
 ```
 
 ### Crates
 
 | Crate | Type | Description |
 |-------|------|-------------|
-| `process` | Library | Windows API bindings for process management (sysinfo, windows-rs) |
-| `dioprocess` | Binary | Desktop UI application (Dioxus, Tokio) |
+| `process` | Library | Windows API bindings for process, thread, handle, and network management |
+| `ui` | Library | Dioxus UI components with routing, styles, and state management |
+| `dioprocess` | Binary | Desktop application entry point |
 
 ## 📄 License
 
