@@ -3,6 +3,16 @@
 
 use dioxus::prelude::*;
 use process::{ProcessInfo, get_processes, get_system_stats, kill_process, open_file_location, format_uptime, suspend_process, resume_process};
+use arboard::Clipboard;
+
+/// Helper function to copy text to clipboard
+fn copy_to_clipboard(text: &str) -> bool {
+    if let Ok(mut clipboard) = Clipboard::new() {
+        clipboard.set_text(text).is_ok()
+    } else {
+        false
+    }
+}
 
 // Thread window state - stores PID and process name to open in new window
 static THREAD_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::global(|| None);
@@ -570,11 +580,7 @@ pub fn App() -> Element {
                         class: "context-menu-item",
                         onclick: move |_| {
                             if let Some(pid) = ctx_menu.pid {
-                                let eval = document::eval(&format!(
-                                    r#"navigator.clipboard.writeText("{}")"#,
-                                    pid
-                                ));
-                                let _ = eval;
+                                copy_to_clipboard(&pid.to_string());
                                 status_message.set(format!("📋 PID {} copied to clipboard", pid));
                                 spawn(async move {
                                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -594,11 +600,7 @@ pub fn App() -> Element {
                         onclick: {
                             let path = ctx_menu.exe_path.clone();
                             move |_| {
-                                let eval = document::eval(&format!(
-                                    r#"navigator.clipboard.writeText("{}")"#,
-                                    path.replace('\\', "\\\\")
-                                ));
-                                let _ = eval;
+                                copy_to_clipboard(&path);
                                 status_message.set("📋 Path copied to clipboard".to_string());
                                 spawn(async move {
                                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -958,11 +960,7 @@ pub fn ThreadWindow(pid: u32, process_name: String) -> Element {
                             class: "context-menu-item",
                             onclick: move |_| {
                                 if let Some(tid) = ctx_menu.thread_id {
-                                    let eval = document::eval(&format!(
-                                        r#"navigator.clipboard.writeText("{}")"#,
-                                        tid
-                                    ));
-                                    let _ = eval;
+                                    copy_to_clipboard(&tid.to_string());
                                     status_message.set(format!("📋 Thread ID {} copied", tid));
                                     spawn(async move {
                                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1206,11 +1204,7 @@ pub fn HandleWindow(pid: u32, process_name: String) -> Element {
                             class: "context-menu-item",
                             onclick: move |_| {
                                 if let Some(hval) = ctx_menu.handle_value {
-                                    let eval = document::eval(&format!(
-                                        r#"navigator.clipboard.writeText("0x{:04X}")"#,
-                                        hval
-                                    ));
-                                    let _ = eval;
+                                    copy_to_clipboard(&format!("0x{:04X}", hval));
                                     status_message.set(format!("📋 Handle 0x{:04X} copied", hval));
                                     spawn(async move {
                                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;

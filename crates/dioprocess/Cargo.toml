@@ -7,3 +7,4 @@ edition = "2021"
 dioxus = { version = "0.6", features = ["desktop"] }
 tokio = { version = "1", features = ["time"] }
 process = { path = "../process" }
+arboard = "3"
