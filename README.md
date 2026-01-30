@@ -35,7 +35,16 @@ A modern, lightweight Windows process monitor built with **Rust**, **Dioxus**, a
 - 📂 Open File Location
 - 📋 Copy PID
 - 📝 Copy Path
+- 🧵 View Threads
 - 🔄 Refresh List
+
+### Thread View (Right-click → View Threads)
+- 🧵 View all threads of a process in a modal window
+- ⏸️ Suspend individual threads
+- ▶️ Resume individual threads
+- ☠️ Kill threads (use with caution!)
+- 📋 Copy Thread ID
+- Auto-refresh thread list
 
 ### Keyboard Shortcuts
 | Key | Action |

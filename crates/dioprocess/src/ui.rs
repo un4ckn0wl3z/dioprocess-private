@@ -4,6 +4,9 @@
 use dioxus::prelude::*;
 use process::{ProcessInfo, get_processes, get_system_stats, kill_process, open_file_location, format_uptime, suspend_process, resume_process};
 
+// Thread window state - stores PID and process name to open in new window
+static THREAD_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::global(|| None);
+
 /// Sort column options
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum SortColumn {
@@ -609,6 +612,28 @@ pub fn App() -> Element {
                     // Separator
                     div { class: "context-menu-separator" }
                     
+                    // View Threads
+                    button {
+                        class: "context-menu-item",
+                        onclick: move |_| {
+                            if let Some(pid) = ctx_menu.pid {
+                                // Find process name
+                                let proc_name = processes.read()
+                                    .iter()
+                                    .find(|p| p.pid == pid)
+                                    .map(|p| p.name.clone())
+                                    .unwrap_or_else(|| format!("PID {}", pid));
+                                *THREAD_WINDOW_STATE.write() = Some((pid, proc_name));
+                            }
+                            context_menu.set(ContextMenuState::default());
+                        },
+                        span { "🧵" }
+                        span { "View Threads" }
+                    }
+                    
+                    // Separator
+                    div { class: "context-menu-separator" }
+                    
                     // Refresh
                     button {
                         class: "context-menu-item",
@@ -619,6 +644,310 @@ pub fn App() -> Element {
                         },
                         span { "🔄" }
                         span { "Refresh List" }
+                    }
+                }
+            }
+            
+            // Thread Window Modal
+            if let Some((pid, proc_name)) = THREAD_WINDOW_STATE.read().clone() {
+                ThreadWindow { pid: pid, process_name: proc_name }
+            }
+        }
+    }
+}
+
+/// Thread context menu state
+#[derive(Clone, Debug, Default)]
+pub struct ThreadContextMenuState {
+    pub visible: bool,
+    pub x: i32,
+    pub y: i32,
+    pub thread_id: Option<u32>,
+}
+
+/// Thread Window component
+#[component]
+pub fn ThreadWindow(pid: u32, process_name: String) -> Element {
+    use process::{get_process_threads, suspend_thread, resume_thread, kill_thread, get_priority_name, ThreadInfo};
+    
+    let mut threads = use_signal(|| get_process_threads(pid));
+    let mut selected_thread = use_signal(|| None::<u32>);
+    let mut context_menu = use_signal(|| ThreadContextMenuState::default());
+    let mut status_message = use_signal(|| String::new());
+    let mut auto_refresh = use_signal(|| true);
+    
+    // Auto-refresh every 2 seconds
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if *auto_refresh.read() {
+                threads.set(get_process_threads(pid));
+            }
+        }
+    });
+    
+    let ctx_menu = context_menu.read().clone();
+    let thread_list: Vec<ThreadInfo> = threads.read().clone();
+    let thread_count = thread_list.len();
+    
+    rsx! {
+        // Modal overlay
+        div {
+            class: "thread-modal-overlay",
+            onclick: move |_| {
+                *THREAD_WINDOW_STATE.write() = None;
+            },
+            
+            // Modal window
+            div {
+                class: "thread-modal",
+                onclick: move |e| e.stop_propagation(),
+                
+                // Header
+                div {
+                    class: "thread-modal-header",
+                    div {
+                        class: "thread-modal-title",
+                        "🧵 Threads - {process_name} (PID: {pid})"
+                    }
+                    button {
+                        class: "thread-modal-close",
+                        onclick: move |_| {
+                            *THREAD_WINDOW_STATE.write() = None;
+                        },
+                        "✕"
+                    }
+                }
+                
+                // Controls
+                div {
+                    class: "thread-controls",
+                    span { class: "thread-count", "Threads: {thread_count}" }
+                    
+                    label { class: "checkbox-label",
+                        input {
+                            r#type: "checkbox",
+                            class: "checkbox",
+                            checked: *auto_refresh.read(),
+                            onchange: move |e| auto_refresh.set(e.checked()),
+                        }
+                        span { "Auto-refresh" }
+                    }
+                    
+                    button {
+                        class: "btn btn-small btn-primary",
+                        onclick: move |_| {
+                            threads.set(get_process_threads(pid));
+                        },
+                        "🔄 Refresh"
+                    }
+                }
+                
+                // Status message
+                if !status_message.read().is_empty() {
+                    div { class: "thread-status-message", "{status_message}" }
+                }
+                
+                // Thread table
+                div {
+                    class: "thread-table-container",
+                    table {
+                        class: "thread-table",
+                        thead {
+                            tr {
+                                th { class: "th", "Thread ID" }
+                                th { class: "th", "Base Priority" }
+                                th { class: "th", "Priority" }
+                                th { class: "th", "Actions" }
+                            }
+                        }
+                        tbody {
+                            for thread in thread_list {
+                                {
+                                    let tid = thread.thread_id;
+                                    let is_selected = *selected_thread.read() == Some(tid);
+                                    let row_class = if is_selected { "thread-row selected" } else { "thread-row" };
+                                    
+                                    rsx! {
+                                        tr {
+                                            key: "{tid}",
+                                            class: "{row_class}",
+                                            onclick: move |_| {
+                                                let current = *selected_thread.read();
+                                                if current == Some(tid) {
+                                                    selected_thread.set(None);
+                                                } else {
+                                                    selected_thread.set(Some(tid));
+                                                }
+                                            },
+                                            oncontextmenu: move |e| {
+                                                e.prevent_default();
+                                                let coords = e.client_coordinates();
+                                                selected_thread.set(Some(tid));
+                                                context_menu.set(ThreadContextMenuState {
+                                                    visible: true,
+                                                    x: coords.x as i32,
+                                                    y: coords.y as i32,
+                                                    thread_id: Some(tid),
+                                                });
+                                            },
+                                            td { class: "cell cell-tid", "{thread.thread_id}" }
+                                            td { class: "cell", "{thread.base_priority}" }
+                                            td { class: "cell", "{get_priority_name(thread.priority)}" }
+                                            td { class: "cell cell-actions",
+                                                button {
+                                                    class: "action-btn action-btn-warning",
+                                                    title: "Suspend Thread",
+                                                    onclick: move |e| {
+                                                        e.stop_propagation();
+                                                        if suspend_thread(tid) {
+                                                            status_message.set(format!("⏸️ Thread {} suspended", tid));
+                                                        } else {
+                                                            status_message.set(format!("✗ Failed to suspend thread {}", tid));
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    },
+                                                    "⏸️"
+                                                }
+                                                button {
+                                                    class: "action-btn action-btn-success",
+                                                    title: "Resume Thread",
+                                                    onclick: move |e| {
+                                                        e.stop_propagation();
+                                                        if resume_thread(tid) {
+                                                            status_message.set(format!("▶️ Thread {} resumed", tid));
+                                                        } else {
+                                                            status_message.set(format!("✗ Failed to resume thread {}", tid));
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    },
+                                                    "▶️"
+                                                }
+                                                button {
+                                                    class: "action-btn action-btn-danger",
+                                                    title: "Kill Thread (Dangerous!)",
+                                                    onclick: move |e| {
+                                                        e.stop_propagation();
+                                                        if kill_thread(tid) {
+                                                            status_message.set(format!("☠️ Thread {} terminated", tid));
+                                                            threads.set(get_process_threads(pid));
+                                                        } else {
+                                                            status_message.set(format!("✗ Failed to terminate thread {}", tid));
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    },
+                                                    "☠️"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Context menu for threads
+                if ctx_menu.visible {
+                    div {
+                        class: "context-menu",
+                        style: "left: {ctx_menu.x}px; top: {ctx_menu.y}px;",
+                        onclick: move |e| e.stop_propagation(),
+                        
+                        button {
+                            class: "context-menu-item context-menu-item-warning",
+                            onclick: move |_| {
+                                if let Some(tid) = ctx_menu.thread_id {
+                                    if suspend_thread(tid) {
+                                        status_message.set(format!("⏸️ Thread {} suspended", tid));
+                                    } else {
+                                        status_message.set(format!("✗ Failed to suspend thread {}", tid));
+                                    }
+                                    spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                        status_message.set(String::new());
+                                    });
+                                }
+                                context_menu.set(ThreadContextMenuState::default());
+                            },
+                            span { "⏸️" }
+                            span { "Suspend Thread" }
+                        }
+                        
+                        button {
+                            class: "context-menu-item context-menu-item-success",
+                            onclick: move |_| {
+                                if let Some(tid) = ctx_menu.thread_id {
+                                    if resume_thread(tid) {
+                                        status_message.set(format!("▶️ Thread {} resumed", tid));
+                                    } else {
+                                        status_message.set(format!("✗ Failed to resume thread {}", tid));
+                                    }
+                                    spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                        status_message.set(String::new());
+                                    });
+                                }
+                                context_menu.set(ThreadContextMenuState::default());
+                            },
+                            span { "▶️" }
+                            span { "Resume Thread" }
+                        }
+                        
+                        div { class: "context-menu-separator" }
+                        
+                        button {
+                            class: "context-menu-item context-menu-item-danger",
+                            onclick: move |_| {
+                                if let Some(tid) = ctx_menu.thread_id {
+                                    if kill_thread(tid) {
+                                        status_message.set(format!("☠️ Thread {} terminated", tid));
+                                        threads.set(get_process_threads(pid));
+                                    } else {
+                                        status_message.set(format!("✗ Failed to terminate thread {}", tid));
+                                    }
+                                    spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                        status_message.set(String::new());
+                                    });
+                                }
+                                context_menu.set(ThreadContextMenuState::default());
+                            },
+                            span { "☠️" }
+                            span { "Kill Thread" }
+                        }
+                        
+                        div { class: "context-menu-separator" }
+                        
+                        button {
+                            class: "context-menu-item",
+                            onclick: move |_| {
+                                if let Some(tid) = ctx_menu.thread_id {
+                                    let eval = document::eval(&format!(
+                                        r#"navigator.clipboard.writeText("{}")"#,
+                                        tid
+                                    ));
+                                    let _ = eval;
+                                    status_message.set(format!("📋 Thread ID {} copied", tid));
+                                    spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                        status_message.set(String::new());
+                                    });
+                                }
+                                context_menu.set(ThreadContextMenuState::default());
+                            },
+                            span { "📋" }
+                            span { "Copy Thread ID" }
+                        }
                     }
                 }
             }
@@ -1067,5 +1396,140 @@ pub const CUSTOM_STYLES: &str = r#"
         height: 1px;
         background: rgba(34, 211, 238, 0.2);
         margin: 4px 0;
+    }
+
+    /* Thread Modal */
+    .thread-modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 100;
+    }
+    .thread-modal {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border: 1px solid rgba(34, 211, 238, 0.3);
+        border-radius: 12px;
+        width: 700px;
+        max-width: 90vw;
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+    }
+    .thread-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid rgba(34, 211, 238, 0.2);
+    }
+    .thread-modal-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #22d3ee;
+    }
+    .thread-modal-close {
+        width: 32px;
+        height: 32px;
+        border: none;
+        background: transparent;
+        color: #9ca3af;
+        font-size: 16px;
+        cursor: pointer;
+        border-radius: 6px;
+        transition: all 0.15s;
+    }
+    .thread-modal-close:hover {
+        background: #dc2626;
+        color: white;
+    }
+    .thread-controls {
+        display: flex;
+        gap: 16px;
+        padding: 12px 20px;
+        align-items: center;
+        border-bottom: 1px solid rgba(34, 211, 238, 0.1);
+    }
+    .thread-count {
+        color: #9ca3af;
+        font-size: 14px;
+    }
+    .thread-status-message {
+        margin: 8px 20px;
+        padding: 8px 16px;
+        background: rgba(34, 211, 238, 0.2);
+        border-radius: 6px;
+        font-size: 14px;
+        color: #22d3ee;
+    }
+    .thread-table-container {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0 20px 20px;
+    }
+    .thread-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .thread-row {
+        cursor: pointer;
+        transition: background 0.15s;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .thread-row:hover {
+        background: rgba(34, 211, 238, 0.1);
+    }
+    .thread-row.selected {
+        border-left: 4px solid #22d3ee;
+        background: rgba(34, 211, 238, 0.2);
+    }
+    .cell-tid {
+        font-family: monospace;
+        color: #facc15;
+    }
+    .cell-actions {
+        display: flex;
+        gap: 8px;
+    }
+    .action-btn {
+        width: 28px;
+        height: 28px;
+        border: none;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.1);
+        cursor: pointer;
+        font-size: 12px;
+        transition: all 0.15s;
+    }
+    .action-btn:hover {
+        transform: scale(1.1);
+    }
+    .action-btn-warning {
+        color: #fbbf24;
+    }
+    .action-btn-warning:hover {
+        background: rgba(251, 191, 36, 0.3);
+    }
+    .action-btn-success {
+        color: #4ade80;
+    }
+    .action-btn-success:hover {
+        background: rgba(74, 222, 128, 0.3);
+    }
+    .action-btn-danger {
+        color: #f87171;
+    }
+    .action-btn-danger:hover {
+        background: rgba(239, 68, 68, 0.3);
+    }
+    .btn-small {
+        padding: 6px 12px;
+        font-size: 12px;
     }
 "#;

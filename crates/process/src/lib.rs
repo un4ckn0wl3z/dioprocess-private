@@ -9,12 +9,15 @@ use sysinfo::{System, ProcessesToUpdate, ProcessRefreshKind, RefreshKind};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, MAX_PATH};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD,
 };
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
     PROCESS_NAME_WIN32, PROCESS_QUERY_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ,
     PROCESS_SUSPEND_RESUME,
+    OpenThread, SuspendThread, ResumeThread, TerminateThread, GetThreadPriority,
+    THREAD_SUSPEND_RESUME, THREAD_TERMINATE, THREAD_QUERY_INFORMATION,
 };
 use windows::core::PWSTR;
 use ntapi::ntpsapi::{NtSuspendProcess, NtResumeProcess};
@@ -254,5 +257,125 @@ pub fn format_uptime(seconds: u64) -> String {
         format!("{}h {}m", hours, minutes)
     } else {
         format!("{}m", minutes)
+    }
+}
+
+/// Thread information structure
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadInfo {
+    pub thread_id: u32,
+    pub owner_pid: u32,
+    pub base_priority: i32,
+    pub priority: i32,
+}
+
+/// Get list of threads for a specific process
+pub fn get_process_threads(pid: u32) -> Vec<ThreadInfo> {
+    let mut threads = Vec::new();
+
+    unsafe {
+        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) {
+            Ok(handle) => handle,
+            Err(_) => return threads,
+        };
+
+        let mut entry: THREADENTRY32 = zeroed();
+        entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+
+        if Thread32First(snapshot, &mut entry).is_ok() {
+            loop {
+                if entry.th32OwnerProcessID == pid {
+                    let priority = get_thread_priority(entry.th32ThreadID);
+                    
+                    threads.push(ThreadInfo {
+                        thread_id: entry.th32ThreadID,
+                        owner_pid: entry.th32OwnerProcessID,
+                        base_priority: entry.tpBasePri,
+                        priority,
+                    });
+                }
+
+                if Thread32Next(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+
+        let _ = CloseHandle(snapshot);
+    }
+
+    threads
+}
+
+/// Get thread priority
+fn get_thread_priority(thread_id: u32) -> i32 {
+    unsafe {
+        let handle = match OpenThread(THREAD_QUERY_INFORMATION, false, thread_id) {
+            Ok(h) => h,
+            Err(_) => return 0,
+        };
+
+        let priority = GetThreadPriority(handle);
+        let _ = CloseHandle(handle);
+        priority
+    }
+}
+
+/// Suspend a thread by ID
+/// Returns true if successful, false otherwise
+pub fn suspend_thread(thread_id: u32) -> bool {
+    unsafe {
+        let handle = match OpenThread(THREAD_SUSPEND_RESUME, false, thread_id) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+
+        let result = SuspendThread(handle);
+        let _ = CloseHandle(handle);
+        result != u32::MAX // Returns previous suspend count, or -1 on error
+    }
+}
+
+/// Resume a suspended thread by ID
+/// Returns true if successful, false otherwise
+pub fn resume_thread(thread_id: u32) -> bool {
+    unsafe {
+        let handle = match OpenThread(THREAD_SUSPEND_RESUME, false, thread_id) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+
+        let result = ResumeThread(handle);
+        let _ = CloseHandle(handle);
+        result != u32::MAX // Returns previous suspend count, or -1 on error
+    }
+}
+
+/// Terminate a thread by ID (DANGEROUS - may cause process instability)
+/// Returns true if successful, false otherwise
+pub fn kill_thread(thread_id: u32) -> bool {
+    unsafe {
+        let handle = match OpenThread(THREAD_TERMINATE, false, thread_id) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+
+        let result = TerminateThread(handle, 1).is_ok();
+        let _ = CloseHandle(handle);
+        result
+    }
+}
+
+/// Get thread priority name
+pub fn get_priority_name(priority: i32) -> &'static str {
+    match priority {
+        -15 => "Idle",
+        -2 => "Lowest",
+        -1 => "Below Normal",
+        0 => "Normal",
+        1 => "Above Normal",
+        2 => "Highest",
+        15 => "Time Critical",
+        _ => "Unknown",
     }
 }
