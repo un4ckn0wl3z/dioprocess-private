@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::collections::HashMap;
 use sysinfo::{System, ProcessesToUpdate, ProcessRefreshKind, RefreshKind};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, MAX_PATH};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, MAX_PATH, BOOL};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
     Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD,
@@ -15,12 +15,15 @@ use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
     PROCESS_NAME_WIN32, PROCESS_QUERY_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ,
-    PROCESS_SUSPEND_RESUME,
+    PROCESS_SUSPEND_RESUME, PROCESS_DUP_HANDLE,
     OpenThread, SuspendThread, ResumeThread, TerminateThread, GetThreadPriority,
     THREAD_SUSPEND_RESUME, THREAD_TERMINATE, THREAD_QUERY_INFORMATION,
 };
 use windows::core::PWSTR;
 use ntapi::ntpsapi::{NtSuspendProcess, NtResumeProcess};
+use ntapi::ntexapi::{NtQuerySystemInformation, SystemHandleInformation};
+use windows::Win32::System::Threading::GetCurrentProcess;
+use windows::Win32::Foundation::DuplicateHandle;
 
 /// Global system info for CPU tracking (needs to persist between calls)
 static SYSTEM_INFO: Mutex<Option<System>> = Mutex::new(None);
@@ -377,5 +380,233 @@ pub fn get_priority_name(priority: i32) -> &'static str {
         2 => "Highest",
         15 => "Time Critical",
         _ => "Unknown",
+    }
+}
+
+/// Handle information structure
+#[derive(Clone, Debug, PartialEq)]
+pub struct HandleInfo {
+    pub handle_value: u16,
+    pub object_type_index: u8,
+    pub object_type_name: String,
+    pub granted_access: u32,
+}
+
+/// Get list of handles for a specific process
+pub fn get_process_handles(pid: u32) -> Vec<HandleInfo> {
+    let mut handles = Vec::new();
+    
+    unsafe {
+        // Start with a reasonable buffer size
+        let mut buffer_size: usize = 0x10000; // 64KB initial
+        let mut buffer: Vec<u8>;
+        let mut return_length: u32 = 0;
+        
+        // Loop until we have enough buffer
+        loop {
+            buffer = vec![0u8; buffer_size];
+            
+            let status = NtQuerySystemInformation(
+                SystemHandleInformation,
+                buffer.as_mut_ptr() as *mut _,
+                buffer_size as u32,
+                &mut return_length,
+            );
+            
+            // STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
+            if status == 0xC0000004u32 as i32 {
+                buffer_size *= 2;
+                if buffer_size > 0x4000000 { // 64MB max
+                    return handles;
+                }
+                continue;
+            }
+            
+            if status != 0 {
+                return handles;
+            }
+            
+            break;
+        }
+        
+        // Parse the buffer manually
+        // SYSTEM_HANDLE_INFORMATION structure:
+        // ULONG NumberOfHandles
+        // SYSTEM_HANDLE_TABLE_ENTRY_INFO Handles[1]
+        
+        if buffer.len() < 4 {
+            return handles;
+        }
+        
+        let number_of_handles = u32::from_ne_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+        
+        // Each SYSTEM_HANDLE_TABLE_ENTRY_INFO is 16 bytes on x86, 24 bytes on x64
+        #[cfg(target_pointer_width = "64")]
+        const ENTRY_SIZE: usize = 24;
+        #[cfg(target_pointer_width = "32")]
+        const ENTRY_SIZE: usize = 16;
+        
+        let entries_start = if cfg!(target_pointer_width = "64") { 8 } else { 4 }; // alignment
+        
+        for i in 0..number_of_handles {
+            let offset = entries_start + i * ENTRY_SIZE;
+            if offset + ENTRY_SIZE > buffer.len() {
+                break;
+            }
+            
+            // Parse entry based on architecture
+            #[cfg(target_pointer_width = "64")]
+            let (entry_pid, handle_value, object_type, granted_access) = {
+                // x64: UniqueProcessId (USHORT at 0), reserved (USHORT at 2), ObjectTypeIndex (UCHAR at 4), 
+                // HandleAttributes (UCHAR at 5), HandleValue (USHORT at 6), Object (PVOID at 8), GrantedAccess (ULONG at 16)
+                let unique_pid = u16::from_ne_bytes([buffer[offset], buffer[offset + 1]]) as u32;
+                let obj_type = buffer[offset + 4];
+                let handle_val = u16::from_ne_bytes([buffer[offset + 6], buffer[offset + 7]]);
+                let access = u32::from_ne_bytes([buffer[offset + 16], buffer[offset + 17], buffer[offset + 18], buffer[offset + 19]]);
+                (unique_pid, handle_val, obj_type, access)
+            };
+            
+            #[cfg(target_pointer_width = "32")]
+            let (entry_pid, handle_value, object_type, granted_access) = {
+                let unique_pid = u16::from_ne_bytes([buffer[offset], buffer[offset + 1]]) as u32;
+                let obj_type = buffer[offset + 4];
+                let handle_val = u16::from_ne_bytes([buffer[offset + 6], buffer[offset + 7]]);
+                let access = u32::from_ne_bytes([buffer[offset + 12], buffer[offset + 13], buffer[offset + 14], buffer[offset + 15]]);
+                (unique_pid, handle_val, obj_type, access)
+            };
+            
+            if entry_pid == pid {
+                let type_name = get_object_type_name(object_type);
+                
+                handles.push(HandleInfo {
+                    handle_value,
+                    object_type_index: object_type,
+                    object_type_name: type_name,
+                    granted_access,
+                });
+            }
+        }
+    }
+    
+    handles
+}
+
+/// Get object type name from type index (common Windows object types)
+fn get_object_type_name(type_index: u8) -> String {
+    // Common object type indices on Windows 10/11
+    // Note: These can vary by Windows version
+    match type_index {
+        0 => "Reserved",
+        1 => "Reserved",
+        2 => "Type",
+        3 => "Directory",
+        4 => "SymbolicLink",
+        5 => "Token",
+        6 => "Job",
+        7 => "Process",
+        8 => "Thread",
+        9 => "UserApcReserve",
+        10 => "IoCompletionReserve",
+        11 => "ActivityReference",
+        12 => "PsSiloContextPaged",
+        13 => "PsSiloContextNonPaged",
+        14 => "DebugObject",
+        15 => "Event",
+        16 => "Mutant",
+        17 => "Callback",
+        18 => "Semaphore",
+        19 => "Timer",
+        20 => "IRTimer",
+        21 => "Profile",
+        22 => "KeyedEvent",
+        23 => "WindowStation",
+        24 => "Desktop",
+        25 => "Composition",
+        26 => "RawInputManager",
+        27 => "CoreMessaging",
+        28 => "TpWorkerFactory",
+        29 => "Adapter",
+        30 => "Controller",
+        31 => "Device",
+        32 => "Driver",
+        33 => "IoCompletion",
+        34 => "WaitCompletionPacket",
+        35 => "File",
+        36 => "TmTm",
+        37 => "TmTx",
+        38 => "TmRm",
+        39 => "TmEn",
+        40 => "Section",
+        41 => "Session",
+        42 => "Partition",
+        43 => "Key",
+        44 => "RegistryTransaction",
+        45 => "ALPC Port",
+        46 => "EnergyTracker",
+        47 => "PowerRequest",
+        48 => "WmiGuid",
+        49 => "EtwRegistration",
+        50 => "EtwSessionDemuxEntry",
+        51 => "EtwConsumer",
+        52 => "DmaAdapter",
+        53 => "DmaDomain",
+        54 => "PcwObject",
+        55 => "FilterConnectionPort",
+        56 => "FilterCommunicationPort",
+        57 => "NdisCmState",
+        58 => "DxgkSharedResource",
+        59 => "DxgkSharedSyncObject",
+        60 => "DxgkSharedSwapChainObject",
+        _ => "Unknown",
+    }.to_string()
+}
+
+/// Close a handle in another process
+/// Returns true if successful, false otherwise
+/// WARNING: Closing handles can cause process instability!
+pub fn close_process_handle(pid: u32, handle_value: u16) -> bool {
+    use windows::Win32::Foundation::DUPLICATE_CLOSE_SOURCE;
+    
+    unsafe {
+        // Open the target process with DUP_HANDLE permission
+        let process_handle = match OpenProcess(PROCESS_DUP_HANDLE, false, pid) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        
+        // Duplicate the handle with DUPLICATE_CLOSE_SOURCE to close it in the target process
+        let mut dup_handle: HANDLE = HANDLE::default();
+        let result = DuplicateHandle(
+            process_handle,
+            HANDLE(handle_value as isize as *mut _),
+            GetCurrentProcess(),
+            &mut dup_handle,
+            0,
+            BOOL(0),
+            DUPLICATE_CLOSE_SOURCE,
+        );
+        
+        // Close our copy if we got one
+        if !dup_handle.is_invalid() {
+            let _ = CloseHandle(dup_handle);
+        }
+        
+        let _ = CloseHandle(process_handle);
+        result.is_ok()
+    }
+}
+
+/// Get handle type category for display coloring
+pub fn get_handle_type_category(type_name: &str) -> &'static str {
+    match type_name {
+        "File" => "file",
+        "Key" => "registry",
+        "Process" | "Thread" | "Job" => "process",
+        "Event" | "Mutant" | "Semaphore" | "Timer" => "sync",
+        "Section" => "memory",
+        "Token" => "security",
+        "ALPC Port" => "ipc",
+        "Directory" | "SymbolicLink" => "namespace",
+        _ => "other",
     }
 }

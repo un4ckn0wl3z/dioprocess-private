@@ -36,6 +36,7 @@ A modern, lightweight Windows process monitor built with **Rust**, **Dioxus**, a
 - 📋 Copy PID
 - 📝 Copy Path
 - 🧵 View Threads
+- � View Handles
 - 🔄 Refresh List
 
 ### Thread View (Right-click → View Threads)
@@ -45,6 +46,13 @@ A modern, lightweight Windows process monitor built with **Rust**, **Dioxus**, a
 - ☠️ Kill threads (use with caution!)
 - 📋 Copy Thread ID
 - Auto-refresh thread list
+
+### Handle View (Right-click → View Handles)
+- 🔗 View all handles (files, registry, events, etc.) of a process
+- 🔍 Filter handles by type
+- ✕ Close handles (use with caution!)
+- 📋 Copy Handle value
+- Color-coded handle types (File, Registry, Process, Sync, Memory, etc.)
 
 ### Keyboard Shortcuts
 | Key | Action |
