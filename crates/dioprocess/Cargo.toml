@@ -1,8 +1,11 @@
 [package]
 name = "dioprocess"
-version = "0.1.0"
+version = "0.0.4"
 edition = "2021"
 
 [dependencies]
 dioxus = { version = "0.6", features = ["desktop"] }
 ui = { path = "../ui" }
+
+[build-dependencies]
+embed-resource = "3.0.6"

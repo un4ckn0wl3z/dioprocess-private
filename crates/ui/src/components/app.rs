@@ -29,6 +29,7 @@ pub fn Layout() -> Element {
     });
 
     let stats = system_stats.read().clone();
+    let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
 
     // Determine active tab
     let is_process_tab = matches!(route, Route::ProcessTab {});
@@ -48,7 +49,7 @@ pub fn Layout() -> Element {
                         let window = dioxus::desktop::window();
                         let _ = window.drag_window();
                     },
-                    span { class: "title-text", "🖥️ System Monitor" }
+                    span { class: "title-text", "🖥️ DioProcess | Windows System Monitor Tool v{version}" }
                 }
                 div { class: "title-bar-buttons",
                     button {

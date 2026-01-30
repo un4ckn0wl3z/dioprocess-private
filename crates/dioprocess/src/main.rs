@@ -1,6 +1,6 @@
 //! Windows Process Monitor
 //! A desktop application built with Dioxus and windows-rs
-
+#![windows_subsystem = "windows"]
 use dioxus::desktop::{LogicalSize, WindowBuilder};
 use ui::App;
 

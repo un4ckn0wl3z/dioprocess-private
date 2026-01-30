@@ -102,11 +102,12 @@ pub fn NetworkTab() -> Element {
             let proto_match = match protocol_filter.read().as_str() {
                 "tcp" => c.protocol == Protocol::Tcp,
                 "udp" => c.protocol == Protocol::Udp,
+                "all" => true,
                 _ => true,
             };
 
             // State filter
-            let state_match = if state_filter.read().is_empty() {
+            let state_match = if state_filter.read().as_str() == "all" {
                 true
             } else {
                 match &c.state {
@@ -210,7 +211,7 @@ pub fn NetworkTab() -> Element {
                     class: "filter-select",
                     value: "{protocol_filter}",
                     onchange: move |e| protocol_filter.set(e.value().clone()),
-                    option { value: "", "All Protocols" }
+                    option { value: "all", "All Protocols" }
                     option { value: "tcp", "TCP" }
                     option { value: "udp", "UDP" }
                 }
@@ -219,7 +220,7 @@ pub fn NetworkTab() -> Element {
                     class: "filter-select",
                     value: "{state_filter}",
                     onchange: move |e| state_filter.set(e.value().clone()),
-                    option { value: "", "All States" }
+                    option { value: "all", "All States" }
                     option { value: "listen", "LISTEN" }
                     option { value: "established", "ESTABLISHED" }
                     option { value: "time_wait", "TIME_WAIT" }
