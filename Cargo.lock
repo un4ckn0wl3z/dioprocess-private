@@ -757,9 +757,8 @@ name = "dioprocess"
 version = "0.1.0"
 dependencies = [
  "dioxus",
- "sysinfo",
+ "process",
  "tokio",
- "windows 0.58.0",
 ]
 
 [[package]]
@@ -3256,6 +3255,14 @@ dependencies = [
  "quote",
  "syn 2.0.114",
  "version_check",
+]
+
+[[package]]
+name = "process"
+version = "0.1.0"
+dependencies = [
+ "sysinfo",
+ "windows 0.58.0",
 ]
 
 [[package]]

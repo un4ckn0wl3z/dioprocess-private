@@ -90,15 +90,31 @@ cargo build --release
 
 ## 📁 Project Structure
 
+This project uses a **Cargo workspace** with two crates:
+
 ```
 dioprocess/
-├── Cargo.toml          # Dependencies and project config
-├── README.md           # This file
-└── src/
-    ├── main.rs         # Entry point, window configuration
-    ├── process.rs      # Windows API process management
-    └── ui.rs           # Dioxus UI components
+├── Cargo.toml              # Workspace configuration
+├── README.md               # This file
+├── LICENSE
+└── crates/
+    ├── process/            # Library crate - Windows process APIs
+    │   ├── Cargo.toml
+    │   └── src/
+    │       └── lib.rs      # Process enumeration, kill, system stats
+    └── dioprocess/         # Binary crate - Desktop application
+        ├── Cargo.toml
+        └── src/
+            ├── main.rs     # Entry point, window configuration
+            └── ui.rs       # Dioxus UI components
 ```
+
+### Crates
+
+| Crate | Type | Description |
+|-------|------|-------------|
+| `process` | Library | Windows API bindings for process management (sysinfo, windows-rs) |
+| `dioprocess` | Binary | Desktop UI application (Dioxus, Tokio) |
 
 ## 📄 License
 

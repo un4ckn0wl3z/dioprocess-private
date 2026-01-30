@@ -1,7 +1,6 @@
 //! Windows Process Monitor
 //! A desktop application built with Dioxus and windows-rs
 
-mod process;
 mod ui;
 
 use dioxus::desktop::{WindowBuilder, LogicalSize};

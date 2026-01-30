@@ -1,21 +1,10 @@
-[package]
-name = "dioprocess"
+[workspace]
+resolver = "2"
+members = [
+    "crates/process",
+    "crates/dioprocess",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-
-[dependencies]
-dioxus = { version = "0.6", features = ["desktop"] }
-tokio = { version = "1", features = ["time"] }
-sysinfo = "0.31"
-
-[dependencies.windows]
-version = "0.58"
-features = [
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_Threading",
-    "Win32_System_ProcessStatus",
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_System_SystemInformation",
-    "Win32_UI_Shell",
-]

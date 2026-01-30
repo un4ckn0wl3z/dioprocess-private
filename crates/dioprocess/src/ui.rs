@@ -2,7 +2,7 @@
 //! Contains Dioxus components with custom CSS (offline)
 
 use dioxus::prelude::*;
-use crate::process::{ProcessInfo, get_processes, get_system_stats, kill_process, open_file_location, format_uptime};
+use process::{ProcessInfo, get_processes, get_system_stats, kill_process, open_file_location, format_uptime};
 
 /// Sort column options
 #[derive(Clone, Copy, PartialEq, Debug)]
