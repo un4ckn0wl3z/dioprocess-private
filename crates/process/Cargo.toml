@@ -17,3 +17,7 @@ features = [
     "Win32_System_SystemInformation",
     "Win32_UI_Shell",
 ]
+
+[dependencies.ntapi]
+version = "0.4"
+

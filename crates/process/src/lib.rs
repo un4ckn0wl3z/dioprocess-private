@@ -14,8 +14,10 @@ use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
     PROCESS_NAME_WIN32, PROCESS_QUERY_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ,
+    PROCESS_SUSPEND_RESUME,
 };
 use windows::core::PWSTR;
+use ntapi::ntpsapi::{NtSuspendProcess, NtResumeProcess};
 
 /// Global system info for CPU tracking (needs to persist between calls)
 static SYSTEM_INFO: Mutex<Option<System>> = Mutex::new(None);
@@ -196,6 +198,36 @@ pub fn kill_process(pid: u32) -> bool {
         let result = TerminateProcess(handle, 1).is_ok();
         let _ = CloseHandle(handle);
         result
+    }
+}
+
+/// Suspend a process by PID (pause all threads)
+/// Returns true if successful, false otherwise
+pub fn suspend_process(pid: u32) -> bool {
+    unsafe {
+        let handle = match OpenProcess(PROCESS_SUSPEND_RESUME, false, pid) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+
+        let status = NtSuspendProcess(handle.0 as *mut _);
+        let _ = CloseHandle(handle);
+        status == 0 // NTSTATUS 0 = STATUS_SUCCESS
+    }
+}
+
+/// Resume a suspended process by PID
+/// Returns true if successful, false otherwise
+pub fn resume_process(pid: u32) -> bool {
+    unsafe {
+        let handle = match OpenProcess(PROCESS_SUSPEND_RESUME, false, pid) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+
+        let status = NtResumeProcess(handle.0 as *mut _);
+        let _ = CloseHandle(handle);
+        status == 0 // NTSTATUS 0 = STATUS_SUCCESS
     }
 }
 

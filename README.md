@@ -30,6 +30,8 @@ A modern, lightweight Windows process monitor built with **Rust**, **Dioxus**, a
 
 ### Context Menu (Right-Click)
 - ☠️ Kill Process
+- ⏸️ Suspend Process
+- ▶️ Resume Process
 - 📂 Open File Location
 - 📋 Copy PID
 - 📝 Copy Path
@@ -135,7 +137,7 @@ Contributions are welcome! Feel free to:
 - [ ] Export process list to CSV
 - [ ] Dark/Light theme toggle
 - [ ] Process priority adjustment
-- [ ] Suspend/Resume processes
+- [x] Suspend/Resume processes
 - [ ] Network I/O per process
 - [ ] Services management tab
 

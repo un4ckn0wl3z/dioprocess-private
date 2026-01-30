@@ -2,7 +2,7 @@
 //! Contains Dioxus components with custom CSS (offline)
 
 use dioxus::prelude::*;
-use process::{ProcessInfo, get_processes, get_system_stats, kill_process, open_file_location, format_uptime};
+use process::{ProcessInfo, get_processes, get_system_stats, kill_process, open_file_location, format_uptime, suspend_process, resume_process};
 
 /// Sort column options
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -498,6 +498,48 @@ pub fn App() -> Element {
                         },
                         span { "☠️" }
                         span { "Kill Process" }
+                    }
+                    
+                    // Suspend Process
+                    button {
+                        class: "context-menu-item context-menu-item-warning",
+                        onclick: move |_| {
+                            if let Some(pid) = ctx_menu.pid {
+                                if suspend_process(pid) {
+                                    status_message.set(format!("⏸️ Process {} suspended", pid));
+                                } else {
+                                    status_message.set(format!("✗ Failed to suspend process {}", pid));
+                                }
+                                spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                    status_message.set(String::new());
+                                });
+                            }
+                            context_menu.set(ContextMenuState::default());
+                        },
+                        span { "⏸️" }
+                        span { "Suspend Process" }
+                    }
+                    
+                    // Resume Process
+                    button {
+                        class: "context-menu-item context-menu-item-success",
+                        onclick: move |_| {
+                            if let Some(pid) = ctx_menu.pid {
+                                if resume_process(pid) {
+                                    status_message.set(format!("▶️ Process {} resumed", pid));
+                                } else {
+                                    status_message.set(format!("✗ Failed to resume process {}", pid));
+                                }
+                                spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                    status_message.set(String::new());
+                                });
+                            }
+                            context_menu.set(ContextMenuState::default());
+                        },
+                        span { "▶️" }
+                        span { "Resume Process" }
                     }
                     
                     // Separator
@@ -1008,6 +1050,18 @@ pub const CUSTOM_STYLES: &str = r#"
     }
     .context-menu-item-danger:hover {
         background: rgba(239, 68, 68, 0.2);
+    }
+    .context-menu-item-warning {
+        color: #fbbf24;
+    }
+    .context-menu-item-warning:hover {
+        background: rgba(251, 191, 36, 0.2);
+    }
+    .context-menu-item-success {
+        color: #4ade80;
+    }
+    .context-menu-item-success:hover {
+        background: rgba(74, 222, 128, 0.2);
     }
     .context-menu-separator {
         height: 1px;
