@@ -1,9 +1,7 @@
 //! Windows Process Monitor
 //! A desktop application built with Dioxus and windows-rs
 
-mod ui;
-
-use dioxus::desktop::{WindowBuilder, LogicalSize};
+use dioxus::desktop::{LogicalSize, WindowBuilder};
 use ui::App;
 
 fn main() {
@@ -16,8 +14,8 @@ fn main() {
                         .with_title("Process Monitor")
                         .with_decorations(false)
                         .with_inner_size(LogicalSize::new(1100.0, 700.0))
-                        .with_resizable(true)
-                )
+                        .with_resizable(true),
+                ),
         )
         .launch(App);
 }

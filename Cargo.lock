@@ -797,10 +797,8 @@ dependencies = [
 name = "dioprocess"
 version = "0.1.0"
 dependencies = [
- "arboard",
  "dioxus",
- "process",
- "tokio",
+ "ui",
 ]
 
 [[package]]
@@ -4570,6 +4568,16 @@ dependencies = [
  "memoffset",
  "tempfile",
  "winapi",
+]
+
+[[package]]
+name = "ui"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "dioxus",
+ "process",
+ "tokio",
 ]
 
 [[package]]
