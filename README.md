@@ -146,18 +146,6 @@ Contributions are welcome! Feel free to:
 - Suggest features
 - Submit pull requests
 
-## 🔮 Roadmap
 
-- [ ] Process tree view (parent/child hierarchy)
-- [ ] Resource usage graphs over time
-- [ ] System tray support
-- [ ] Export process list to CSV
-- [ ] Dark/Light theme toggle
-- [ ] Process priority adjustment
-- [x] Suspend/Resume processes
-- [ ] Network I/O per process
-- [ ] Services management tab
-
----
 
 Built with ❤️ using Rust and Dioxus
