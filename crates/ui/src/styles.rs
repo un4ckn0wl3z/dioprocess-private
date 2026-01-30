@@ -649,4 +649,111 @@ pub const CUSTOM_STYLES: &str = r#"
         color: #9ca3af;
         background: rgba(156, 163, 175, 0.15);
     }
+
+    /* Tab Bar */
+    .tab-bar {
+        display: flex;
+        gap: 4px;
+        padding: 0 20px;
+        background: linear-gradient(to right, rgba(15, 23, 42, 0.6), rgba(30, 41, 59, 0.6));
+        border-bottom: 1px solid rgba(34, 211, 238, 0.1);
+        flex-shrink: 0;
+    }
+    .tab-item {
+        padding: 12px 24px;
+        color: #9ca3af;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+        border-bottom: 2px solid transparent;
+        transition: all 0.15s;
+        cursor: pointer;
+    }
+    .tab-item:hover {
+        color: #22d3ee;
+        background: rgba(34, 211, 238, 0.1);
+    }
+    .tab-item.tab-active {
+        color: #22d3ee;
+        border-bottom-color: #22d3ee;
+        background: rgba(34, 211, 238, 0.1);
+    }
+
+    /* Tab Content */
+    .process-tab,
+    .network-tab {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        outline: none;
+    }
+
+    /* Network Tab Specific Styles */
+    .network-table .th {
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+    .network-table .cell {
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+    .cell-proto {
+        font-family: monospace;
+        font-weight: 600;
+        width: 60px;
+    }
+    .proto-tcp {
+        color: #22d3ee;
+    }
+    .proto-udp {
+        color: #a855f7;
+    }
+    .cell-addr {
+        font-family: monospace;
+        color: #d1d5db;
+    }
+    .cell-port {
+        font-family: monospace;
+        color: #facc15;
+        width: 70px;
+        text-align: center;
+    }
+    .cell-state {
+        font-size: 12px;
+        font-weight: 500;
+        width: 100px;
+    }
+    .state-listen {
+        color: #4ade80;
+    }
+    .state-established {
+        color: #22d3ee;
+    }
+    .state-waiting {
+        color: #fbbf24;
+    }
+    .state-other {
+        color: #9ca3af;
+    }
+
+    /* Filter Select */
+    .filter-select {
+        padding: 10px 12px;
+        border: none;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.1);
+        color: white;
+        font-size: 14px;
+        outline: none;
+        cursor: pointer;
+        min-width: 130px;
+    }
+    .filter-select:focus {
+        background: rgba(255, 255, 255, 0.15);
+    }
+    .filter-select option {
+        background: #1e293b;
+        color: white;
+    }
 "#;

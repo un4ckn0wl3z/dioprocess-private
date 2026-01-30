@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-dioxus = { version = "0.6", features = ["desktop"] }
+dioxus = { version = "0.6", features = ["desktop", "router"] }
 tokio = { version = "1", features = ["time"] }
 process = { path = "../process" }
 arboard = "3"
