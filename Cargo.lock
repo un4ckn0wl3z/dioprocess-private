@@ -2764,7 +2764,7 @@ dependencies = [
 
 [[package]]
 name = "misc"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "windows 0.58.0",
 ]
@@ -3520,7 +3520,7 @@ dependencies = [
 
 [[package]]
 name = "process"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "ntapi",
  "sysinfo",
@@ -4803,7 +4803,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "arboard",
  "dioxus",
