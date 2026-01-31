@@ -7,4 +7,6 @@ edition.workspace = true
 dioxus = { version = "0.6", features = ["desktop", "router"] }
 tokio = { version = "1", features = ["time"] }
 process = { path = "../process" }
+misc = { path = "../misc" }
 arboard = "3"
+rfd = "0.15"

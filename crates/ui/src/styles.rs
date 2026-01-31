@@ -443,6 +443,49 @@ pub const CUSTOM_STYLES: &str = r#"
         margin: 4px 0;
     }
 
+    /* Context Menu Submenu */
+    .context-menu-submenu {
+        position: relative;
+    }
+    .context-menu-submenu-trigger {
+        width: 100%;
+        padding: 8px 16px;
+        text-align: left;
+        font-size: 14px;
+        color: #d1d5db;
+        background: transparent;
+        border: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    .context-menu-submenu-trigger:hover {
+        background: rgba(34, 211, 238, 0.2);
+    }
+    .context-menu-submenu-trigger .arrow {
+        margin-left: auto;
+        font-size: 10px;
+        color: #6b7280;
+    }
+    .context-menu-submenu-content {
+        display: none;
+        position: absolute;
+        left: 100%;
+        top: 0;
+        background: #1e293b;
+        border: 1px solid rgba(34, 211, 238, 0.3);
+        border-radius: 8px;
+        box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+        padding: 4px 0;
+        min-width: 160px;
+        z-index: 51;
+    }
+    .context-menu-submenu:hover > .context-menu-submenu-content {
+        display: block;
+    }
+
     /* Thread Modal */
     .thread-modal-overlay {
         position: fixed;
