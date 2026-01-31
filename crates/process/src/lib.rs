@@ -1,30 +1,29 @@
 //! Windows process management module
 //! Contains Windows API calls for process enumeration and management
 
+use ntapi::ntexapi::{NtQuerySystemInformation, SystemHandleInformation};
+use ntapi::ntpsapi::{NtResumeProcess, NtSuspendProcess};
+use std::collections::HashMap;
 use std::mem::zeroed;
 use std::process::Command;
 use std::sync::Mutex;
-use std::collections::HashMap;
-use sysinfo::{System, ProcessesToUpdate, ProcessRefreshKind, RefreshKind};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, MAX_PATH, BOOL};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+use windows::core::PWSTR;
+use windows::Win32::Foundation::DuplicateHandle;
+use windows::Win32::Foundation::{CloseHandle, BOOL, HANDLE, MAX_PATH};
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
-    Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD,
-    Module32FirstW, Module32NextW, MODULEENTRY32W, TH32CS_SNAPMODULE, TH32CS_SNAPMODULE32,
+    CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, Process32FirstW, Process32NextW,
+    Thread32First, Thread32Next, MODULEENTRY32W, PROCESSENTRY32W, TH32CS_SNAPMODULE,
+    TH32CS_SNAPMODULE32, TH32CS_SNAPPROCESS, TH32CS_SNAPTHREAD, THREADENTRY32,
 };
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
-use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
-    PROCESS_NAME_WIN32, PROCESS_QUERY_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ,
-    PROCESS_SUSPEND_RESUME, PROCESS_DUP_HANDLE,
-    OpenThread, SuspendThread, ResumeThread, TerminateThread, GetThreadPriority,
-    THREAD_SUSPEND_RESUME, THREAD_TERMINATE, THREAD_QUERY_INFORMATION,
-};
-use windows::core::PWSTR;
-use ntapi::ntpsapi::{NtSuspendProcess, NtResumeProcess};
-use ntapi::ntexapi::{NtQuerySystemInformation, SystemHandleInformation};
 use windows::Win32::System::Threading::GetCurrentProcess;
-use windows::Win32::Foundation::DuplicateHandle;
+use windows::Win32::System::Threading::{
+    GetThreadPriority, OpenProcess, OpenThread, QueryFullProcessImageNameW, ResumeThread,
+    SuspendThread, TerminateProcess, TerminateThread, PROCESS_DUP_HANDLE, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_READ,
+    THREAD_QUERY_INFORMATION, THREAD_SUSPEND_RESUME, THREAD_TERMINATE,
+};
 
 /// Global system info for CPU tracking (needs to persist between calls)
 static SYSTEM_INFO: Mutex<Option<System>> = Mutex::new(None);
@@ -54,7 +53,7 @@ pub struct SystemStats {
 /// Get list of running processes using Windows API with CPU usage from sysinfo
 pub fn get_processes() -> Vec<ProcessInfo> {
     let mut processes = Vec::new();
-    
+
     // Get CPU usage from sysinfo
     let cpu_map = get_cpu_usage_map();
 
@@ -72,7 +71,11 @@ pub fn get_processes() -> Vec<ProcessInfo> {
         if Process32FirstW(snapshot, &mut entry).is_ok() {
             loop {
                 let name = String::from_utf16_lossy(
-                    &entry.szExeFile[..entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len())]
+                    &entry.szExeFile[..entry
+                        .szExeFile
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entry.szExeFile.len())],
                 );
 
                 let (memory_mb, exe_path) = get_process_details(entry.th32ProcessID);
@@ -103,19 +106,21 @@ pub fn get_processes() -> Vec<ProcessInfo> {
 /// Get CPU usage map using sysinfo
 fn get_cpu_usage_map() -> HashMap<u32, f32> {
     let mut map = HashMap::new();
-    
+
     let mut sys_guard = SYSTEM_INFO.lock().unwrap();
     let sys = sys_guard.get_or_insert_with(|| {
-        System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new().with_cpu()))
+        System::new_with_specifics(
+            RefreshKind::new().with_processes(ProcessRefreshKind::new().with_cpu()),
+        )
     });
-    
+
     // Refresh processes to get CPU usage
     sys.refresh_processes_specifics(ProcessesToUpdate::All, ProcessRefreshKind::new().with_cpu());
-    
+
     for (pid, process) in sys.processes() {
         map.insert(pid.as_u32(), process.cpu_usage());
     }
-    
+
     map
 }
 
@@ -127,21 +132,25 @@ pub fn get_system_stats() -> SystemStats {
             RefreshKind::new()
                 .with_memory(sysinfo::MemoryRefreshKind::new().with_ram())
                 .with_cpu(sysinfo::CpuRefreshKind::new().with_cpu_usage())
-                .with_processes(ProcessRefreshKind::new().with_cpu())
+                .with_processes(ProcessRefreshKind::new().with_cpu()),
         )
     });
-    
+
     // Refresh all relevant info
     sys.refresh_memory();
     sys.refresh_cpu_all();
-    
+
     let total_memory = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
     let used_memory = sys.used_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-    
+
     SystemStats {
         total_memory_gb: total_memory,
         used_memory_gb: used_memory,
-        memory_percent: if total_memory > 0.0 { (used_memory / total_memory) * 100.0 } else { 0.0 },
+        memory_percent: if total_memory > 0.0 {
+            (used_memory / total_memory) * 100.0
+        } else {
+            0.0
+        },
         cpu_usage: sys.global_cpu_usage(),
         process_count: sys.processes().len(),
         uptime_seconds: System::uptime(),
@@ -151,10 +160,11 @@ pub fn get_system_stats() -> SystemStats {
 /// Get memory usage and executable path for a specific process
 fn get_process_details(pid: u32) -> (f64, String) {
     unsafe {
-        let handle: HANDLE = match OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
-            Ok(h) => h,
-            Err(_) => return (0.0, String::new()),
-        };
+        let handle: HANDLE =
+            match OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
+                Ok(h) => h,
+                Err(_) => return (0.0, String::new()),
+            };
 
         // Get memory info
         let mut mem_counters: PROCESS_MEMORY_COUNTERS = zeroed();
@@ -254,7 +264,7 @@ pub fn format_uptime(seconds: u64) -> String {
     let days = seconds / 86400;
     let hours = (seconds % 86400) / 3600;
     let minutes = (seconds % 3600) / 60;
-    
+
     if days > 0 {
         format!("{}d {}h {}m", days, hours, minutes)
     } else if hours > 0 {
@@ -290,7 +300,7 @@ pub fn get_process_threads(pid: u32) -> Vec<ThreadInfo> {
             loop {
                 if entry.th32OwnerProcessID == pid {
                     let priority = get_thread_priority(entry.th32ThreadID);
-                    
+
                     threads.push(ThreadInfo {
                         thread_id: entry.th32ThreadID,
                         owner_pid: entry.th32OwnerProcessID,
@@ -396,89 +406,105 @@ pub struct HandleInfo {
 /// Get list of handles for a specific process
 pub fn get_process_handles(pid: u32) -> Vec<HandleInfo> {
     let mut handles = Vec::new();
-    
+
     unsafe {
         // Start with a reasonable buffer size
         let mut buffer_size: usize = 0x10000; // 64KB initial
         let mut buffer: Vec<u8>;
         let mut return_length: u32 = 0;
-        
+
         // Loop until we have enough buffer
         loop {
             buffer = vec![0u8; buffer_size];
-            
+
             let status = NtQuerySystemInformation(
                 SystemHandleInformation,
                 buffer.as_mut_ptr() as *mut _,
                 buffer_size as u32,
                 &mut return_length,
             );
-            
+
             // STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
             if status == 0xC0000004u32 as i32 {
                 buffer_size *= 2;
-                if buffer_size > 0x4000000 { // 64MB max
+                if buffer_size > 0x4000000 {
+                    // 64MB max
                     return handles;
                 }
                 continue;
             }
-            
+
             if status != 0 {
                 return handles;
             }
-            
+
             break;
         }
-        
+
         // Parse the buffer manually
         // SYSTEM_HANDLE_INFORMATION structure:
         // ULONG NumberOfHandles
         // SYSTEM_HANDLE_TABLE_ENTRY_INFO Handles[1]
-        
+
         if buffer.len() < 4 {
             return handles;
         }
-        
-        let number_of_handles = u32::from_ne_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
-        
+
+        let number_of_handles =
+            u32::from_ne_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+
         // Each SYSTEM_HANDLE_TABLE_ENTRY_INFO is 16 bytes on x86, 24 bytes on x64
         #[cfg(target_pointer_width = "64")]
         const ENTRY_SIZE: usize = 24;
         #[cfg(target_pointer_width = "32")]
         const ENTRY_SIZE: usize = 16;
-        
-        let entries_start = if cfg!(target_pointer_width = "64") { 8 } else { 4 }; // alignment
-        
+
+        let entries_start = if cfg!(target_pointer_width = "64") {
+            8
+        } else {
+            4
+        }; // alignment
+
         for i in 0..number_of_handles {
             let offset = entries_start + i * ENTRY_SIZE;
             if offset + ENTRY_SIZE > buffer.len() {
                 break;
             }
-            
+
             // Parse entry based on architecture
             #[cfg(target_pointer_width = "64")]
             let (entry_pid, handle_value, object_type, granted_access) = {
-                // x64: UniqueProcessId (USHORT at 0), reserved (USHORT at 2), ObjectTypeIndex (UCHAR at 4), 
+                // x64: UniqueProcessId (USHORT at 0), reserved (USHORT at 2), ObjectTypeIndex (UCHAR at 4),
                 // HandleAttributes (UCHAR at 5), HandleValue (USHORT at 6), Object (PVOID at 8), GrantedAccess (ULONG at 16)
                 let unique_pid = u16::from_ne_bytes([buffer[offset], buffer[offset + 1]]) as u32;
                 let obj_type = buffer[offset + 4];
                 let handle_val = u16::from_ne_bytes([buffer[offset + 6], buffer[offset + 7]]);
-                let access = u32::from_ne_bytes([buffer[offset + 16], buffer[offset + 17], buffer[offset + 18], buffer[offset + 19]]);
+                let access = u32::from_ne_bytes([
+                    buffer[offset + 16],
+                    buffer[offset + 17],
+                    buffer[offset + 18],
+                    buffer[offset + 19],
+                ]);
                 (unique_pid, handle_val, obj_type, access)
             };
-            
+
             #[cfg(target_pointer_width = "32")]
             let (entry_pid, handle_value, object_type, granted_access) = {
                 let unique_pid = u16::from_ne_bytes([buffer[offset], buffer[offset + 1]]) as u32;
                 let obj_type = buffer[offset + 4];
                 let handle_val = u16::from_ne_bytes([buffer[offset + 6], buffer[offset + 7]]);
-                let access = u32::from_ne_bytes([buffer[offset + 12], buffer[offset + 13], buffer[offset + 14], buffer[offset + 15]]);
+                let access = u32::from_ne_bytes([
+                    buffer[offset + 12],
+                    buffer[offset + 13],
+                    buffer[offset + 14],
+                    buffer[offset + 15],
+                ]);
                 (unique_pid, handle_val, obj_type, access)
             };
-            
+
             if entry_pid == pid {
                 let type_name = get_object_type_name(object_type);
-                
+
                 handles.push(HandleInfo {
                     handle_value,
                     object_type_index: object_type,
@@ -488,7 +514,7 @@ pub fn get_process_handles(pid: u32) -> Vec<HandleInfo> {
             }
         }
     }
-    
+
     handles
 }
 
@@ -559,7 +585,8 @@ fn get_object_type_name(type_index: u8) -> String {
         59 => "DxgkSharedSyncObject",
         60 => "DxgkSharedSwapChainObject",
         _ => "Unknown",
-    }.to_string()
+    }
+    .to_string()
 }
 
 /// Close a handle in another process
@@ -567,14 +594,14 @@ fn get_object_type_name(type_index: u8) -> String {
 /// WARNING: Closing handles can cause process instability!
 pub fn close_process_handle(pid: u32, handle_value: u16) -> bool {
     use windows::Win32::Foundation::DUPLICATE_CLOSE_SOURCE;
-    
+
     unsafe {
         // Open the target process with DUP_HANDLE permission
         let process_handle = match OpenProcess(PROCESS_DUP_HANDLE, false, pid) {
             Ok(h) => h,
             Err(_) => return false,
         };
-        
+
         // Duplicate the handle with DUPLICATE_CLOSE_SOURCE to close it in the target process
         let mut dup_handle: HANDLE = HANDLE::default();
         let result = DuplicateHandle(
@@ -586,12 +613,12 @@ pub fn close_process_handle(pid: u32, handle_value: u16) -> bool {
             BOOL(0),
             DUPLICATE_CLOSE_SOURCE,
         );
-        
+
         // Close our copy if we got one
         if !dup_handle.is_invalid() {
             let _ = CloseHandle(dup_handle);
         }
-        
+
         let _ = CloseHandle(process_handle);
         result.is_ok()
     }
@@ -633,7 +660,8 @@ pub fn get_process_modules(pid: u32) -> Vec<ModuleInfo> {
     let mut modules = Vec::new();
 
     unsafe {
-        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid) {
+        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)
+        {
             Ok(handle) => handle,
             Err(_) => return modules,
         };
@@ -644,10 +672,18 @@ pub fn get_process_modules(pid: u32) -> Vec<ModuleInfo> {
         if Module32FirstW(snapshot, &mut entry).is_ok() {
             loop {
                 let name = String::from_utf16_lossy(
-                    &entry.szModule[..entry.szModule.iter().position(|&c| c == 0).unwrap_or(entry.szModule.len())]
+                    &entry.szModule[..entry
+                        .szModule
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entry.szModule.len())],
                 );
                 let path = String::from_utf16_lossy(
-                    &entry.szExePath[..entry.szExePath.iter().position(|&c| c == 0).unwrap_or(entry.szExePath.len())]
+                    &entry.szExePath[..entry
+                        .szExePath
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entry.szExePath.len())],
                 );
 
                 modules.push(ModuleInfo {
@@ -692,7 +728,12 @@ pub fn get_module_imports(module_path: &str) -> Vec<ImportEntry> {
     if data.len() < pe_offset + 4 {
         return imports;
     }
-    let pe_sig = u32::from_le_bytes([data[pe_offset], data[pe_offset + 1], data[pe_offset + 2], data[pe_offset + 3]]);
+    let pe_sig = u32::from_le_bytes([
+        data[pe_offset],
+        data[pe_offset + 1],
+        data[pe_offset + 2],
+        data[pe_offset + 3],
+    ]);
     if pe_sig != 0x00004550 {
         // Not "PE\0\0"
         return imports;
@@ -703,7 +744,8 @@ pub fn get_module_imports(module_path: &str) -> Vec<ImportEntry> {
     if data.len() < coff_offset + 20 {
         return imports;
     }
-    let optional_header_size = u16::from_le_bytes([data[coff_offset + 16], data[coff_offset + 17]]) as usize;
+    let optional_header_size =
+        u16::from_le_bytes([data[coff_offset + 16], data[coff_offset + 17]]) as usize;
 
     // Optional header starts after COFF header
     let opt_offset = coff_offset + 20;
@@ -721,16 +763,36 @@ pub fn get_module_imports(module_path: &str) -> Vec<ImportEntry> {
             if data.len() < opt_offset + 104 + 8 {
                 return imports;
             }
-            import_dir_rva = u32::from_le_bytes([data[opt_offset + 104], data[opt_offset + 105], data[opt_offset + 106], data[opt_offset + 107]]) as usize;
-            import_dir_size = u32::from_le_bytes([data[opt_offset + 108], data[opt_offset + 109], data[opt_offset + 110], data[opt_offset + 111]]) as usize;
+            import_dir_rva = u32::from_le_bytes([
+                data[opt_offset + 104],
+                data[opt_offset + 105],
+                data[opt_offset + 106],
+                data[opt_offset + 107],
+            ]) as usize;
+            import_dir_size = u32::from_le_bytes([
+                data[opt_offset + 108],
+                data[opt_offset + 109],
+                data[opt_offset + 110],
+                data[opt_offset + 111],
+            ]) as usize;
         }
         0x20b => {
             // PE32+ (64-bit)
             if data.len() < opt_offset + 120 + 8 {
                 return imports;
             }
-            import_dir_rva = u32::from_le_bytes([data[opt_offset + 120], data[opt_offset + 121], data[opt_offset + 122], data[opt_offset + 123]]) as usize;
-            import_dir_size = u32::from_le_bytes([data[opt_offset + 124], data[opt_offset + 125], data[opt_offset + 126], data[opt_offset + 127]]) as usize;
+            import_dir_rva = u32::from_le_bytes([
+                data[opt_offset + 120],
+                data[opt_offset + 121],
+                data[opt_offset + 122],
+                data[opt_offset + 123],
+            ]) as usize;
+            import_dir_size = u32::from_le_bytes([
+                data[opt_offset + 124],
+                data[opt_offset + 125],
+                data[opt_offset + 126],
+                data[opt_offset + 127],
+            ]) as usize;
         }
         _ => return imports,
     }
@@ -755,10 +817,29 @@ pub fn get_module_imports(module_path: &str) -> Vec<ImportEntry> {
         if data.len() < s_off + 40 {
             break;
         }
-        let virtual_size = u32::from_le_bytes([data[s_off + 8], data[s_off + 9], data[s_off + 10], data[s_off + 11]]) as usize;
-        let virtual_address = u32::from_le_bytes([data[s_off + 12], data[s_off + 13], data[s_off + 14], data[s_off + 15]]) as usize;
-        let raw_data_offset = u32::from_le_bytes([data[s_off + 20], data[s_off + 21], data[s_off + 22], data[s_off + 23]]) as usize;
-        sections.push(SectionInfo { virtual_address, virtual_size, raw_data_offset });
+        let virtual_size = u32::from_le_bytes([
+            data[s_off + 8],
+            data[s_off + 9],
+            data[s_off + 10],
+            data[s_off + 11],
+        ]) as usize;
+        let virtual_address = u32::from_le_bytes([
+            data[s_off + 12],
+            data[s_off + 13],
+            data[s_off + 14],
+            data[s_off + 15],
+        ]) as usize;
+        let raw_data_offset = u32::from_le_bytes([
+            data[s_off + 20],
+            data[s_off + 21],
+            data[s_off + 22],
+            data[s_off + 23],
+        ]) as usize;
+        sections.push(SectionInfo {
+            virtual_address,
+            virtual_size,
+            raw_data_offset,
+        });
     }
 
     let rva_to_offset = |rva: usize| -> Option<usize> {
@@ -783,8 +864,18 @@ pub fn get_module_imports(module_path: &str) -> Vec<ImportEntry> {
             break;
         }
 
-        let ilt_rva = u32::from_le_bytes([data[desc_offset], data[desc_offset + 1], data[desc_offset + 2], data[desc_offset + 3]]) as usize;
-        let name_rva = u32::from_le_bytes([data[desc_offset + 12], data[desc_offset + 13], data[desc_offset + 14], data[desc_offset + 15]]) as usize;
+        let ilt_rva = u32::from_le_bytes([
+            data[desc_offset],
+            data[desc_offset + 1],
+            data[desc_offset + 2],
+            data[desc_offset + 3],
+        ]) as usize;
+        let name_rva = u32::from_le_bytes([
+            data[desc_offset + 12],
+            data[desc_offset + 13],
+            data[desc_offset + 14],
+            data[desc_offset + 15],
+        ]) as usize;
 
         // Null descriptor terminates the list
         if name_rva == 0 && ilt_rva == 0 {
@@ -803,7 +894,12 @@ pub fn get_module_imports(module_path: &str) -> Vec<ImportEntry> {
             ilt_rva
         } else {
             // Fallback to IAT (FirstThunk)
-            u32::from_le_bytes([data[desc_offset + 16], data[desc_offset + 17], data[desc_offset + 18], data[desc_offset + 19]]) as usize
+            u32::from_le_bytes([
+                data[desc_offset + 16],
+                data[desc_offset + 17],
+                data[desc_offset + 18],
+                data[desc_offset + 19],
+            ]) as usize
         };
 
         let mut functions = Vec::new();
@@ -818,12 +914,21 @@ pub fn get_module_imports(module_path: &str) -> Vec<ImportEntry> {
 
                 let thunk_value = if is_pe32plus {
                     u64::from_le_bytes([
-                        data[thunk_off], data[thunk_off + 1], data[thunk_off + 2], data[thunk_off + 3],
-                        data[thunk_off + 4], data[thunk_off + 5], data[thunk_off + 6], data[thunk_off + 7],
+                        data[thunk_off],
+                        data[thunk_off + 1],
+                        data[thunk_off + 2],
+                        data[thunk_off + 3],
+                        data[thunk_off + 4],
+                        data[thunk_off + 5],
+                        data[thunk_off + 6],
+                        data[thunk_off + 7],
                     ])
                 } else {
                     u32::from_le_bytes([
-                        data[thunk_off], data[thunk_off + 1], data[thunk_off + 2], data[thunk_off + 3],
+                        data[thunk_off],
+                        data[thunk_off + 1],
+                        data[thunk_off + 2],
+                        data[thunk_off + 3],
                     ]) as u64
                 };
 
@@ -850,7 +955,10 @@ pub fn get_module_imports(module_path: &str) -> Vec<ImportEntry> {
             }
         }
 
-        imports.push(ImportEntry { dll_name, functions });
+        imports.push(ImportEntry {
+            dll_name,
+            functions,
+        });
         desc_offset += 20;
     }
 
@@ -865,4 +973,3 @@ fn read_cstring(data: &[u8], offset: usize) -> String {
     }
     String::from_utf8_lossy(&data[offset..end]).to_string()
 }
-

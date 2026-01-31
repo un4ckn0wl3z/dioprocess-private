@@ -148,7 +148,10 @@ pub fn NetworkTab() -> Element {
                 let b_state = b.state.map(|s| s.to_string()).unwrap_or_default();
                 a_state.cmp(&b_state)
             }
-            NetworkSortColumn::Process => a.process_name.to_lowercase().cmp(&b.process_name.to_lowercase()),
+            NetworkSortColumn::Process => a
+                .process_name
+                .to_lowercase()
+                .cmp(&b.process_name.to_lowercase()),
             NetworkSortColumn::Pid => a.pid.cmp(&b.pid),
         };
         match *sort_order.read() {
@@ -174,7 +177,6 @@ pub fn NetworkTab() -> Element {
             ""
         }
     };
-
 
     rsx! {
         div {

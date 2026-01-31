@@ -3,8 +3,8 @@
 use dioxus::prelude::*;
 use misc::{inject_dll, inject_dll_manual_map, inject_dll_thread_hijack};
 use process::{
-    get_processes, get_system_stats, kill_process, open_file_location,
-    resume_process, suspend_process, ProcessInfo,
+    get_processes, get_system_stats, kill_process, open_file_location, resume_process,
+    suspend_process, ProcessInfo,
 };
 
 use super::{HandleWindow, ModuleWindow, ProcessRow, ThreadWindow};

@@ -3,9 +3,8 @@
 
 use std::collections::HashMap;
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetExtendedTcpTable, GetExtendedUdpTable,
-    MIB_TCP_STATE, TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
-    MIB_TCPROW_OWNER_PID, MIB_UDPROW_OWNER_PID,
+    GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCPROW_OWNER_PID, MIB_TCP_STATE,
+    MIB_UDPROW_OWNER_PID, TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
 };
 use windows::Win32::Networking::WinSock::AF_INET;
 

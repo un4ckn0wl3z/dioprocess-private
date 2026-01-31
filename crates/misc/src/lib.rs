@@ -14,14 +14,14 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::Win32::System::Memory::{
-    VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE,
-    PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
+    VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_EXECUTE_READWRITE,
+    PAGE_READWRITE,
 };
 use windows::Win32::System::Threading::{
-    CreateRemoteThread, OpenProcess, OpenThread, ResumeThread, SuspendThread,
-    WaitForSingleObject, PROCESS_ALL_ACCESS, PROCESS_CREATE_THREAD, PROCESS_QUERY_INFORMATION,
-    PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE, THREAD_GET_CONTEXT,
-    THREAD_SET_CONTEXT, THREAD_SUSPEND_RESUME,
+    CreateRemoteThread, OpenProcess, OpenThread, ResumeThread, SuspendThread, WaitForSingleObject,
+    PROCESS_ALL_ACCESS, PROCESS_CREATE_THREAD, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION,
+    PROCESS_VM_READ, PROCESS_VM_WRITE, THREAD_GET_CONTEXT, THREAD_SET_CONTEXT,
+    THREAD_SUSPEND_RESUME,
 };
 
 /// Errors that can occur during misc operations.
@@ -139,8 +139,8 @@ pub fn inject_dll(pid: u32, dll_path: &str) -> Result<(), MiscError> {
 
         // Resolve LoadLibraryW address from kernel32.dll
         let kernel32_name = CString::new("kernel32.dll").unwrap();
-        let kernel32 = GetModuleHandleA(PCSTR(kernel32_name.as_ptr() as *const u8))
-            .map_err(|_| {
+        let kernel32 =
+            GetModuleHandleA(PCSTR(kernel32_name.as_ptr() as *const u8)).map_err(|_| {
                 let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE);
                 let _ = CloseHandle(process_handle);
                 MiscError::GetModuleHandleFailed
@@ -218,8 +218,8 @@ pub fn unload_module(pid: u32, base_address: usize) -> Result<(), MiscError> {
 
         // Resolve FreeLibrary address from kernel32.dll
         let kernel32_name = CString::new("kernel32.dll").unwrap();
-        let kernel32 = GetModuleHandleA(PCSTR(kernel32_name.as_ptr() as *const u8))
-            .map_err(|_| {
+        let kernel32 =
+            GetModuleHandleA(PCSTR(kernel32_name.as_ptr() as *const u8)).map_err(|_| {
                 let _ = CloseHandle(process_handle);
                 MiscError::GetModuleHandleFailed
             })?;
@@ -292,11 +292,10 @@ pub fn inject_dll_thread_hijack(pid: u32, dll_path: &str) -> Result<(), MiscErro
             .map_err(|_| MiscError::OpenProcessFailed(pid))?;
 
         // Enumerate threads via CreateToolhelp32Snapshot to find a thread in the target process
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
-            .map_err(|_| {
-                let _ = CloseHandle(process_handle);
-                MiscError::ThreadEnumerationFailed
-            })?;
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0).map_err(|_| {
+            let _ = CloseHandle(process_handle);
+            MiscError::ThreadEnumerationFailed
+        })?;
 
         let mut thread_entry = THREADENTRY32 {
             dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
@@ -402,8 +401,8 @@ pub fn inject_dll_thread_hijack(pid: u32, dll_path: &str) -> Result<(), MiscErro
 
         // Resolve LoadLibraryW address
         let kernel32_name = CString::new("kernel32.dll").unwrap();
-        let kernel32 = GetModuleHandleA(PCSTR(kernel32_name.as_ptr() as *const u8))
-            .map_err(|_| {
+        let kernel32 =
+            GetModuleHandleA(PCSTR(kernel32_name.as_ptr() as *const u8)).map_err(|_| {
                 let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE);
                 let _ = ResumeThread(thread_handle);
                 let _ = CloseHandle(thread_handle);
@@ -435,16 +434,16 @@ pub fn inject_dll_thread_hijack(pid: u32, dll_path: &str) -> Result<(), MiscErro
         shellcode.push(0x9C);
 
         // Save volatile registers (7 pushes)
-        shellcode.push(0x50);                       // push rax
-        shellcode.push(0x51);                       // push rcx
-        shellcode.push(0x52);                       // push rdx
+        shellcode.push(0x50); // push rax
+        shellcode.push(0x51); // push rcx
+        shellcode.push(0x52); // push rdx
         shellcode.extend_from_slice(&[0x41, 0x50]); // push r8
         shellcode.extend_from_slice(&[0x41, 0x51]); // push r9
         shellcode.extend_from_slice(&[0x41, 0x52]); // push r10
         shellcode.extend_from_slice(&[0x41, 0x53]); // push r11
 
         // Save rbp (non-volatile) so we can use it as frame pointer to restore RSP later
-        shellcode.push(0x55);                       // push rbp
+        shellcode.push(0x55); // push rbp
         shellcode.extend_from_slice(&[0x48, 0x89, 0xE5]); // mov rbp, rsp
 
         // Align stack to 16 bytes, then allocate 0x20 shadow space
@@ -466,27 +465,27 @@ pub fn inject_dll_thread_hijack(pid: u32, dll_path: &str) -> Result<(), MiscErro
         shellcode.extend_from_slice(&[0x48, 0x89, 0xEC]); // mov rsp, rbp
 
         // Restore rbp
-        shellcode.push(0x5D);                       // pop rbp
+        shellcode.push(0x5D); // pop rbp
 
         // Restore volatile registers (reverse order)
         shellcode.extend_from_slice(&[0x41, 0x5B]); // pop r11
         shellcode.extend_from_slice(&[0x41, 0x5A]); // pop r10
         shellcode.extend_from_slice(&[0x41, 0x59]); // pop r9
         shellcode.extend_from_slice(&[0x41, 0x58]); // pop r8
-        shellcode.push(0x5A);                       // pop rdx
-        shellcode.push(0x59);                       // pop rcx
-        shellcode.push(0x58);                       // pop rax
+        shellcode.push(0x5A); // pop rdx
+        shellcode.push(0x59); // pop rcx
+        shellcode.push(0x58); // pop rax
 
         // popfq - restore RFLAGS
         shellcode.push(0x9D);
 
         // Jump to original RIP without clobbering any register:
         // push rax (temp save), mov rax <original_rip>, xchg [rsp] rax (swap), ret
-        shellcode.push(0x50);                       // push rax
+        shellcode.push(0x50); // push rax
         shellcode.extend_from_slice(&[0x48, 0xB8]); // mov rax, <original_rip>
         shellcode.extend_from_slice(&original_rip.to_le_bytes());
         shellcode.extend_from_slice(&[0x48, 0x87, 0x04, 0x24]); // xchg [rsp], rax
-        shellcode.push(0xC3);                       // ret
+        shellcode.push(0xC3); // ret
 
         // Write shellcode to remote memory
         if WriteProcessMemory(
@@ -550,8 +549,8 @@ pub fn inject_dll_manual_map(pid: u32, dll_path: &str) -> Result<(), MiscError> 
         return Err(MiscError::FileNotFound(dll_path.to_string()));
     }
 
-    let data = std::fs::read(dll_path)
-        .map_err(|_| MiscError::FileReadFailed(dll_path.to_string()))?;
+    let data =
+        std::fs::read(dll_path).map_err(|_| MiscError::FileReadFailed(dll_path.to_string()))?;
 
     // Parse DOS header
     if data.len() < 64 {
@@ -565,7 +564,9 @@ pub fn inject_dll_manual_map(pid: u32, dll_path: &str) -> Result<(), MiscError> 
 
     // Parse PE signature
     if data.len() < pe_offset + 4 {
-        return Err(MiscError::InvalidPE("File too small for PE signature".into()));
+        return Err(MiscError::InvalidPE(
+            "File too small for PE signature".into(),
+        ));
     }
     let pe_sig = u32::from_le_bytes([
         data[pe_offset],
@@ -580,21 +581,26 @@ pub fn inject_dll_manual_map(pid: u32, dll_path: &str) -> Result<(), MiscError> 
     // COFF header
     let coff_offset = pe_offset + 4;
     if data.len() < coff_offset + 20 {
-        return Err(MiscError::InvalidPE("File too small for COFF header".into()));
+        return Err(MiscError::InvalidPE(
+            "File too small for COFF header".into(),
+        ));
     }
-    let num_sections =
-        u16::from_le_bytes([data[coff_offset + 2], data[coff_offset + 3]]) as usize;
+    let num_sections = u16::from_le_bytes([data[coff_offset + 2], data[coff_offset + 3]]) as usize;
     let optional_header_size =
         u16::from_le_bytes([data[coff_offset + 16], data[coff_offset + 17]]) as usize;
 
     // Optional header
     let opt_offset = coff_offset + 20;
     if data.len() < opt_offset + 2 {
-        return Err(MiscError::InvalidPE("File too small for optional header".into()));
+        return Err(MiscError::InvalidPE(
+            "File too small for optional header".into(),
+        ));
     }
     let opt_magic = u16::from_le_bytes([data[opt_offset], data[opt_offset + 1]]);
     if opt_magic != 0x20b {
-        return Err(MiscError::InvalidPE("Only PE32+ (64-bit) DLLs are supported".into()));
+        return Err(MiscError::InvalidPE(
+            "Only PE32+ (64-bit) DLLs are supported".into(),
+        ));
     }
 
     // PE32+ optional header fields
@@ -799,10 +805,7 @@ pub fn inject_dll_manual_map(pid: u32, dll_path: &str) -> Result<(), MiscError> 
                     if entry_offset + 2 > size_of_image {
                         break;
                     }
-                    let entry = u16::from_le_bytes([
-                        image[entry_offset],
-                        image[entry_offset + 1],
-                    ]);
+                    let entry = u16::from_le_bytes([image[entry_offset], image[entry_offset + 1]]);
                     let reloc_type = (entry >> 12) as u8;
                     let offset = (entry & 0x0FFF) as usize;
                     let target = block_rva + offset;
@@ -822,8 +825,7 @@ pub fn inject_dll_manual_map(pid: u32, dll_path: &str) -> Result<(), MiscError> 
                                     image[target + 7],
                                 ]);
                                 let new_val = (val as i64).wrapping_add(delta) as u64;
-                                image[target..target + 8]
-                                    .copy_from_slice(&new_val.to_le_bytes());
+                                image[target..target + 8].copy_from_slice(&new_val.to_le_bytes());
                             }
                         }
                         3 => {
@@ -836,8 +838,7 @@ pub fn inject_dll_manual_map(pid: u32, dll_path: &str) -> Result<(), MiscError> 
                                     image[target + 3],
                                 ]);
                                 let new_val = (val as i32).wrapping_add(delta as i32) as u32;
-                                image[target..target + 4]
-                                    .copy_from_slice(&new_val.to_le_bytes());
+                                image[target..target + 4].copy_from_slice(&new_val.to_le_bytes());
                             }
                         }
                         0 => {} // IMAGE_REL_BASED_ABSOLUTE - padding, skip
@@ -936,10 +937,8 @@ pub fn inject_dll_manual_map(pid: u32, dll_path: &str) -> Result<(), MiscError> 
                         if hint_name_rva + 2 < size_of_image {
                             let func_name = read_cstring_from_buf(&image, hint_name_rva + 2);
                             let func_cname = CString::new(func_name.as_str()).unwrap_or_default();
-                            let addr = GetProcAddress(
-                                module,
-                                PCSTR(func_cname.as_ptr() as *const u8),
-                            );
+                            let addr =
+                                GetProcAddress(module, PCSTR(func_cname.as_ptr() as *const u8));
                             func_addr = match addr {
                                 Some(a) => a as usize as u64,
                                 None => 0,
@@ -1038,20 +1037,13 @@ pub fn inject_dll_manual_map(pid: u32, dll_path: &str) -> Result<(), MiscError> 
         let thread_start: unsafe extern "system" fn(*mut std::ffi::c_void) -> u32 =
             std::mem::transmute(shellcode_mem);
 
-        let thread_handle = CreateRemoteThread(
-            process_handle,
-            None,
-            0,
-            Some(thread_start),
-            None,
-            0,
-            None,
-        )
-        .map_err(|_| {
-            let _ = VirtualFreeEx(process_handle, shellcode_mem, 0, MEM_RELEASE);
-            let _ = CloseHandle(process_handle);
-            MiscError::CreateRemoteThreadFailed
-        })?;
+        let thread_handle =
+            CreateRemoteThread(process_handle, None, 0, Some(thread_start), None, 0, None)
+                .map_err(|_| {
+                    let _ = VirtualFreeEx(process_handle, shellcode_mem, 0, MEM_RELEASE);
+                    let _ = CloseHandle(process_handle);
+                    MiscError::CreateRemoteThreadFailed
+                })?;
 
         // Wait for DllMain to finish (10s timeout)
         let wait_result = WaitForSingleObject(thread_handle, 10_000);

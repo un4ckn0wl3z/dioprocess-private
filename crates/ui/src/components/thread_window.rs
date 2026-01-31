@@ -1,7 +1,9 @@
 //! Thread window component
 
 use dioxus::prelude::*;
-use process::{get_priority_name, get_process_threads, kill_thread, resume_thread, suspend_thread, ThreadInfo};
+use process::{
+    get_priority_name, get_process_threads, kill_thread, resume_thread, suspend_thread, ThreadInfo,
+};
 
 use crate::helpers::copy_to_clipboard;
 use crate::state::{ThreadContextMenuState, THREAD_WINDOW_STATE};
