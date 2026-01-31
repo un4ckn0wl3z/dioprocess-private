@@ -51,9 +51,12 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - 📝 Copy Path
 - 🧵 View Threads
 - 🔗 View Handles
-- � View Modules
-- 💉 Inject DLL
-- �🔄 Refresh List
+- 📦 View Modules
+- 💉 DLL Injection (submenu)
+  - 💉 LoadLibrary - Classic CreateRemoteThread + LoadLibraryW
+  - 🧵 Thread Hijack - Suspend thread, redirect RIP to shellcode
+  - 🗺️ Manual Map - Map PE sections, resolve imports, call DllMain
+- 🔄 Refresh List
 
 ### Thread View (Right-click → View Threads)
 - 🧵 View all threads of a process in a modal window
@@ -75,7 +78,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - 🔍 Filter modules by name or path
 - 📊 View module base address, size, and entry point
 - 🔬 Inspect module imports (functions imported from other DLLs)
-- 💉 Inject DLL into process
+- 💉 Inject DLL into process (LoadLibrary method)
 - ⏏️ Unload/eject modules from process
 - 📋 Copy module path
 - 📂 Open module file location
@@ -139,7 +142,8 @@ cargo build --release
 - `Win32_Security` - Process access rights
 - `Win32_System_Memory` - Virtual memory allocation (for DLL injection)
 - `Win32_System_LibraryLoader` - Module loading/unloading
-- `Win32_System_Diagnostics_Debug` - Process memory operations
+- `Win32_System_Diagnostics_Debug` - Process memory operations, thread context manipulation
+- `Win32_System_Kernel` - Thread context structures (CONTEXT)
 
 ## 📁 Project Structure
 
@@ -160,7 +164,7 @@ dioprocess/
     ├── misc/               # Library - Advanced process utilities
     │   ├── Cargo.toml
     │   └── src/
-    │       └── lib.rs      # DLL injection/unloading utilities
+    │       └── lib.rs      # DLL injection (LoadLibrary, Thread Hijack, Manual Map) & unloading
     ├── ui/                 # Library - Dioxus UI components
     │   ├── Cargo.toml
     │   └── src/
@@ -192,7 +196,7 @@ dioprocess/
 | Crate | Type | Description |
 |-------|------|-------------|
 | `process` | Library | Windows API bindings for process, thread, handle, module, and network management |
-| `misc` | Library | Advanced utilities including DLL injection and module unloading |
+| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, Manual Map) and module unloading |
 | `ui` | Library | Dioxus UI components with routing, styles, and state management |
 | `dioprocess` | Binary | Desktop application entry point with Windows manifest |
 

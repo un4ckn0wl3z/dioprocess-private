@@ -485,6 +485,9 @@ pub const CUSTOM_STYLES: &str = r#"
     .context-menu-submenu:hover > .context-menu-submenu-content {
         display: block;
     }
+    .context-menu-submenu-content .context-menu-submenu .context-menu-submenu-content {
+        z-index: 52;
+    }
 
     /* Module Import View */
     .module-import-header {

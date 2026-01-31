@@ -1,7 +1,7 @@
 //! Process tab component
 
 use dioxus::prelude::*;
-use misc::inject_dll;
+use misc::{inject_dll, inject_dll_manual_map, inject_dll_thread_hijack};
 use process::{
     get_processes, get_system_stats, kill_process, open_file_location,
     resume_process, suspend_process, ProcessInfo,
@@ -504,46 +504,146 @@ pub fn ProcessTab() -> Element {
                         }
                         div {
                             class: "context-menu-submenu-content",
-                            button {
-                                class: "context-menu-item",
-                                onclick: move |_| {
-                                    let target_pid = ctx_menu.pid;
-                                    context_menu.set(ContextMenuState::default());
+                            // DLL Injection sub-submenu
+                            div {
+                                class: "context-menu-submenu",
+                                div {
+                                    class: "context-menu-submenu-trigger",
+                                    span { "💉" }
+                                    span { "DLL Injection" }
+                                    span { class: "arrow", "▶" }
+                                }
+                                div {
+                                    class: "context-menu-submenu-content",
+                                    // LoadLibrary method
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
 
-                                    if let Some(pid) = target_pid {
-                                        spawn(async move {
-                                            let file = rfd::AsyncFileDialog::new()
-                                                .add_filter("DLL Files", &["dll"])
-                                                .set_title("Select DLL to inject")
-                                                .pick_file()
-                                                .await;
-
-                                            if let Some(file) = file {
-                                                let path = file.path().to_string_lossy().to_string();
-                                                match inject_dll(pid, &path) {
-                                                    Ok(()) => {
-                                                        status_message.set(format!(
-                                                            "✓ DLL injected into process {}",
-                                                            pid
-                                                        ));
-                                                    }
-                                                    Err(e) => {
-                                                        status_message.set(format!(
-                                                            "✗ DLL injection failed: {}",
-                                                            e
-                                                        ));
-                                                    }
-                                                }
+                                            if let Some(pid) = target_pid {
                                                 spawn(async move {
-                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                    status_message.set(String::new());
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("DLL Files", &["dll"])
+                                                        .set_title("Select DLL to inject (LoadLibrary)")
+                                                        .pick_file()
+                                                        .await;
+
+                                                    if let Some(file) = file {
+                                                        let path = file.path().to_string_lossy().to_string();
+                                                        match inject_dll(pid, &path) {
+                                                            Ok(()) => {
+                                                                status_message.set(format!(
+                                                                    "✓ DLL injected into process {} (LoadLibrary)",
+                                                                    pid
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ DLL injection failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
                                                 });
                                             }
-                                        });
+                                        },
+                                        span { "💉" }
+                                        span { "LoadLibrary" }
                                     }
-                                },
-                                span { "💉" }
-                                span { "DLL Injection" }
+
+                                    // Thread Hijack method
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("DLL Files", &["dll"])
+                                                        .set_title("Select DLL to inject (Thread Hijack)")
+                                                        .pick_file()
+                                                        .await;
+
+                                                    if let Some(file) = file {
+                                                        let path = file.path().to_string_lossy().to_string();
+                                                        match inject_dll_thread_hijack(pid, &path) {
+                                                            Ok(()) => {
+                                                                status_message.set(format!(
+                                                                    "✓ DLL injected into process {} (Thread Hijack)",
+                                                                    pid
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Thread hijack injection failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        span { "🧵" }
+                                        span { "Thread Hijack" }
+                                    }
+
+                                    // Manual Map method
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("DLL Files", &["dll"])
+                                                        .set_title("Select DLL to inject (Manual Map)")
+                                                        .pick_file()
+                                                        .await;
+
+                                                    if let Some(file) = file {
+                                                        let path = file.path().to_string_lossy().to_string();
+                                                        match inject_dll_manual_map(pid, &path) {
+                                                            Ok(()) => {
+                                                                status_message.set(format!(
+                                                                    "✓ DLL injected into process {} (Manual Map)",
+                                                                    pid
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Manual map injection failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        span { "🗺️" }
+                                        span { "Manual Map" }
+                                    }
+                                }
                             }
                         }
                     }
