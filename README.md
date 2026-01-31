@@ -51,7 +51,9 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - 📝 Copy Path
 - 🧵 View Threads
 - 🔗 View Handles
-- 🔄 Refresh List
+- � View Modules
+- 💉 Inject DLL
+- �🔄 Refresh List
 
 ### Thread View (Right-click → View Threads)
 - 🧵 View all threads of a process in a modal window
@@ -67,6 +69,17 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - ✕ Close handles (use with caution!)
 - 📋 Copy Handle value
 - Color-coded handle types (File, Registry, Process, Sync, Memory, etc.)
+
+### Module View (Right-click → View Modules)
+- 📦 View all loaded DLLs/modules of a process
+- 🔍 Filter modules by name or path
+- 📊 View module base address, size, and entry point
+- 🔬 Inspect module imports (functions imported from other DLLs)
+- 💉 Inject DLL into process
+- ⏏️ Unload/eject modules from process
+- 📋 Copy module path
+- 📂 Open module file location
+- Auto-refresh module list
 
 ### Keyboard Shortcuts
 | Key | Action |
@@ -114,30 +127,40 @@ cargo build --release
 | `sysinfo` | 0.31 | CPU/Memory system statistics |
 | `windows` | 0.58 | Windows API bindings |
 | `arboard` | 3.x | Clipboard operations |
+| `ntapi` | 0.4 | Native Windows API for process suspension |
 
 ### Windows API Features Used
-- `Win32_System_Diagnostics_ToolHelp` - Process/Thread enumeration
+- `Win32_System_Diagnostics_ToolHelp` - Process/Thread/Module enumeration
 - `Win32_System_Threading` - Process/Thread management
 - `Win32_System_ProcessStatus` - Memory information
 - `Win32_NetworkManagement_IpHelper` - Network connections (TCP/UDP tables)
 - `Win32_Networking_WinSock` - Socket address handling
 - `Win32_Foundation` - Core Windows types
 - `Win32_Security` - Process access rights
+- `Win32_System_Memory` - Virtual memory allocation (for DLL injection)
+- `Win32_System_LibraryLoader` - Module loading/unloading
+- `Win32_System_Diagnostics_Debug` - Process memory operations
 
 ## 📁 Project Structure
 
-This project uses a **Cargo workspace** with three crates:
+This project uses a **Cargo workspace** with four crates:
 
 ```
 dioprocess/
 ├── Cargo.toml              # Workspace configuration
 ├── README.md
 ├── LICENSE
+├── assets/
+│   └── dll/                # Sample DLLs for injection testing
 └── crates/
     ├── process/            # Library - Windows process/network APIs
     │   ├── Cargo.toml
     │   └── src/
-    │       └── lib.rs      # Process, thread, handle, network APIs
+    │       └── lib.rs      # Process, thread, handle, module, network APIs
+    ├── misc/               # Library - Advanced process utilities
+    │   ├── Cargo.toml
+    │   └── src/
+    │       └── lib.rs      # DLL injection/unloading utilities
     ├── ui/                 # Library - Dioxus UI components
     │   ├── Cargo.toml
     │   └── src/
@@ -152,10 +175,14 @@ dioprocess/
     │           ├── process_tab.rs  # Process list view
     │           ├── network_tab.rs  # Network connections view
     │           ├── process_row.rs  # Process table row
-    │           ├── thread_window.rs # Thread modal
-    │           └── handle_window.rs # Handle modal
+    │           ├── thread_window.rs  # Thread modal
+    │           ├── handle_window.rs  # Handle modal
+    │           └── module_window.rs  # Module modal with DLL injection
     └── dioprocess/         # Binary - Desktop application entry
         ├── Cargo.toml
+        ├── build.rs        # Windows manifest embedding
+        ├── app.manifest    # UAC elevation manifest
+        ├── resources.rc    # Windows resources
         └── src/
             └── main.rs     # Entry point, window configuration
 ```
@@ -164,9 +191,10 @@ dioprocess/
 
 | Crate | Type | Description |
 |-------|------|-------------|
-| `process` | Library | Windows API bindings for process, thread, handle, and network management |
+| `process` | Library | Windows API bindings for process, thread, handle, module, and network management |
+| `misc` | Library | Advanced utilities including DLL injection and module unloading |
 | `ui` | Library | Dioxus UI components with routing, styles, and state management |
-| `dioprocess` | Binary | Desktop application entry point |
+| `dioprocess` | Binary | Desktop application entry point with Windows manifest |
 
 ## 📄 License
 
