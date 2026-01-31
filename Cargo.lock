@@ -853,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "dioprocess"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "dioxus",
  "embed-resource",
