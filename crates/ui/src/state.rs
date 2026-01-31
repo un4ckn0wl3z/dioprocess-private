@@ -8,6 +8,9 @@ pub static THREAD_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::gl
 /// Handle window state - stores PID and process name to open in new window
 pub static HANDLE_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::global(|| None);
 
+/// Module window state - stores PID and process name to open in new window
+pub static MODULE_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::global(|| None);
+
 /// Sort column options
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum SortColumn {
@@ -51,4 +54,14 @@ pub struct HandleContextMenuState {
     pub x: i32,
     pub y: i32,
     pub handle_value: Option<u16>,
+}
+
+/// Module context menu state
+#[derive(Clone, Debug, Default)]
+pub struct ModuleContextMenuState {
+    pub visible: bool,
+    pub x: i32,
+    pub y: i32,
+    pub module_base: Option<usize>,
+    pub module_path: String,
 }

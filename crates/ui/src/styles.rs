@@ -486,6 +486,52 @@ pub const CUSTOM_STYLES: &str = r#"
         display: block;
     }
 
+    /* Module Import View */
+    .module-import-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 20px;
+        border-bottom: 1px solid rgba(34, 211, 238, 0.2);
+        background: rgba(34, 211, 238, 0.05);
+    }
+    .module-import-header button {
+        padding: 4px 12px;
+        border: 1px solid rgba(34, 211, 238, 0.3);
+        border-radius: 4px;
+        background: transparent;
+        color: #22d3ee;
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.15s;
+    }
+    .module-import-header button:hover {
+        background: rgba(34, 211, 238, 0.2);
+    }
+    .module-import-header span {
+        font-size: 15px;
+        font-weight: 600;
+        color: #22d3ee;
+    }
+    .module-import-dll {
+        padding: 8px 20px 4px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #fbbf24;
+        border-bottom: 1px solid rgba(251, 191, 36, 0.15);
+        margin-top: 8px;
+    }
+    .module-import-fn {
+        padding: 3px 20px 3px 36px;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        font-size: 12px;
+        color: #9ca3af;
+    }
+    .module-import-fn:hover {
+        color: #d1d5db;
+        background: rgba(255, 255, 255, 0.03);
+    }
+
     /* Thread Modal */
     .thread-modal-overlay {
         position: fixed;

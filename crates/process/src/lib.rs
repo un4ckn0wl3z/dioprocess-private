@@ -16,6 +16,7 @@ use windows::Win32::Networking::WinSock::AF_INET;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
     Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD,
+    Module32FirstW, Module32NextW, MODULEENTRY32W, TH32CS_SNAPMODULE, TH32CS_SNAPMODULE32,
 };
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows::Win32::System::Threading::{
@@ -806,6 +807,260 @@ fn get_tcp_connections(process_map: &HashMap<u32, (String, String)>) -> Vec<Netw
     }
 
     connections
+}
+
+/// Module information structure
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModuleInfo {
+    pub name: String,
+    pub base_address: usize,
+    pub size: u32,
+    pub path: String,
+}
+
+/// Import entry for a PE module
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportEntry {
+    pub dll_name: String,
+    pub functions: Vec<String>,
+}
+
+/// Get list of loaded modules for a specific process
+pub fn get_process_modules(pid: u32) -> Vec<ModuleInfo> {
+    let mut modules = Vec::new();
+
+    unsafe {
+        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid) {
+            Ok(handle) => handle,
+            Err(_) => return modules,
+        };
+
+        let mut entry: MODULEENTRY32W = zeroed();
+        entry.dwSize = std::mem::size_of::<MODULEENTRY32W>() as u32;
+
+        if Module32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                let name = String::from_utf16_lossy(
+                    &entry.szModule[..entry.szModule.iter().position(|&c| c == 0).unwrap_or(entry.szModule.len())]
+                );
+                let path = String::from_utf16_lossy(
+                    &entry.szExePath[..entry.szExePath.iter().position(|&c| c == 0).unwrap_or(entry.szExePath.len())]
+                );
+
+                modules.push(ModuleInfo {
+                    name,
+                    base_address: entry.modBaseAddr as usize,
+                    size: entry.modBaseSize,
+                    path,
+                });
+
+                if Module32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+
+        let _ = CloseHandle(snapshot);
+    }
+
+    modules
+}
+
+/// Get imported DLLs and functions from a PE file on disk
+pub fn get_module_imports(module_path: &str) -> Vec<ImportEntry> {
+    let mut imports = Vec::new();
+    let data = match std::fs::read(module_path) {
+        Ok(d) => d,
+        Err(_) => return imports,
+    };
+
+    // Parse DOS header
+    if data.len() < 64 {
+        return imports;
+    }
+    let dos_magic = u16::from_le_bytes([data[0], data[1]]);
+    if dos_magic != 0x5A4D {
+        // Not a valid PE ("MZ")
+        return imports;
+    }
+    let pe_offset = u32::from_le_bytes([data[60], data[61], data[62], data[63]]) as usize;
+
+    // Parse PE signature
+    if data.len() < pe_offset + 4 {
+        return imports;
+    }
+    let pe_sig = u32::from_le_bytes([data[pe_offset], data[pe_offset + 1], data[pe_offset + 2], data[pe_offset + 3]]);
+    if pe_sig != 0x00004550 {
+        // Not "PE\0\0"
+        return imports;
+    }
+
+    // COFF header starts at pe_offset + 4
+    let coff_offset = pe_offset + 4;
+    if data.len() < coff_offset + 20 {
+        return imports;
+    }
+    let optional_header_size = u16::from_le_bytes([data[coff_offset + 16], data[coff_offset + 17]]) as usize;
+
+    // Optional header starts after COFF header
+    let opt_offset = coff_offset + 20;
+    if data.len() < opt_offset + 2 {
+        return imports;
+    }
+    let opt_magic = u16::from_le_bytes([data[opt_offset], data[opt_offset + 1]]);
+
+    // Determine import directory RVA based on PE32 vs PE32+
+    let import_dir_rva;
+    let import_dir_size;
+    match opt_magic {
+        0x10b => {
+            // PE32
+            if data.len() < opt_offset + 104 + 8 {
+                return imports;
+            }
+            import_dir_rva = u32::from_le_bytes([data[opt_offset + 104], data[opt_offset + 105], data[opt_offset + 106], data[opt_offset + 107]]) as usize;
+            import_dir_size = u32::from_le_bytes([data[opt_offset + 108], data[opt_offset + 109], data[opt_offset + 110], data[opt_offset + 111]]) as usize;
+        }
+        0x20b => {
+            // PE32+ (64-bit)
+            if data.len() < opt_offset + 120 + 8 {
+                return imports;
+            }
+            import_dir_rva = u32::from_le_bytes([data[opt_offset + 120], data[opt_offset + 121], data[opt_offset + 122], data[opt_offset + 123]]) as usize;
+            import_dir_size = u32::from_le_bytes([data[opt_offset + 124], data[opt_offset + 125], data[opt_offset + 126], data[opt_offset + 127]]) as usize;
+        }
+        _ => return imports,
+    }
+
+    if import_dir_rva == 0 || import_dir_size == 0 {
+        return imports;
+    }
+
+    // Parse section headers to build RVA-to-file-offset mapping
+    let num_sections = u16::from_le_bytes([data[coff_offset + 2], data[coff_offset + 3]]) as usize;
+    let sections_offset = opt_offset + optional_header_size;
+
+    struct SectionInfo {
+        virtual_address: usize,
+        virtual_size: usize,
+        raw_data_offset: usize,
+    }
+
+    let mut sections = Vec::new();
+    for i in 0..num_sections {
+        let s_off = sections_offset + i * 40;
+        if data.len() < s_off + 40 {
+            break;
+        }
+        let virtual_size = u32::from_le_bytes([data[s_off + 8], data[s_off + 9], data[s_off + 10], data[s_off + 11]]) as usize;
+        let virtual_address = u32::from_le_bytes([data[s_off + 12], data[s_off + 13], data[s_off + 14], data[s_off + 15]]) as usize;
+        let raw_data_offset = u32::from_le_bytes([data[s_off + 20], data[s_off + 21], data[s_off + 22], data[s_off + 23]]) as usize;
+        sections.push(SectionInfo { virtual_address, virtual_size, raw_data_offset });
+    }
+
+    let rva_to_offset = |rva: usize| -> Option<usize> {
+        for s in &sections {
+            if rva >= s.virtual_address && rva < s.virtual_address + s.virtual_size {
+                return Some(rva - s.virtual_address + s.raw_data_offset);
+            }
+        }
+        None
+    };
+
+    // Parse import directory table
+    let import_dir_file_offset = match rva_to_offset(import_dir_rva) {
+        Some(off) => off,
+        None => return imports,
+    };
+
+    // Each IMAGE_IMPORT_DESCRIPTOR is 20 bytes
+    let mut desc_offset = import_dir_file_offset;
+    loop {
+        if data.len() < desc_offset + 20 {
+            break;
+        }
+
+        let ilt_rva = u32::from_le_bytes([data[desc_offset], data[desc_offset + 1], data[desc_offset + 2], data[desc_offset + 3]]) as usize;
+        let name_rva = u32::from_le_bytes([data[desc_offset + 12], data[desc_offset + 13], data[desc_offset + 14], data[desc_offset + 15]]) as usize;
+
+        // Null descriptor terminates the list
+        if name_rva == 0 && ilt_rva == 0 {
+            break;
+        }
+
+        // Read DLL name
+        let dll_name = if let Some(name_off) = rva_to_offset(name_rva) {
+            read_cstring(&data, name_off)
+        } else {
+            String::from("(unknown)")
+        };
+
+        // Read imported functions from ILT (or IAT if ILT is 0)
+        let thunk_rva = if ilt_rva != 0 {
+            ilt_rva
+        } else {
+            // Fallback to IAT (FirstThunk)
+            u32::from_le_bytes([data[desc_offset + 16], data[desc_offset + 17], data[desc_offset + 18], data[desc_offset + 19]]) as usize
+        };
+
+        let mut functions = Vec::new();
+        if let Some(mut thunk_off) = rva_to_offset(thunk_rva) {
+            let is_pe32plus = opt_magic == 0x20b;
+            let entry_size = if is_pe32plus { 8 } else { 4 };
+
+            loop {
+                if data.len() < thunk_off + entry_size {
+                    break;
+                }
+
+                let thunk_value = if is_pe32plus {
+                    u64::from_le_bytes([
+                        data[thunk_off], data[thunk_off + 1], data[thunk_off + 2], data[thunk_off + 3],
+                        data[thunk_off + 4], data[thunk_off + 5], data[thunk_off + 6], data[thunk_off + 7],
+                    ])
+                } else {
+                    u32::from_le_bytes([
+                        data[thunk_off], data[thunk_off + 1], data[thunk_off + 2], data[thunk_off + 3],
+                    ]) as u64
+                };
+
+                if thunk_value == 0 {
+                    break;
+                }
+
+                // Check ordinal flag (bit 63 for PE32+, bit 31 for PE32)
+                let ordinal_flag = if is_pe32plus { 1u64 << 63 } else { 1u64 << 31 };
+                if thunk_value & ordinal_flag != 0 {
+                    let ordinal = thunk_value & 0xFFFF;
+                    functions.push(format!("Ordinal #{}", ordinal));
+                } else {
+                    // Hint/Name table entry: 2-byte hint + null-terminated name
+                    let hint_name_rva = (thunk_value & 0x7FFFFFFF) as usize;
+                    if let Some(hn_off) = rva_to_offset(hint_name_rva) {
+                        if data.len() > hn_off + 2 {
+                            functions.push(read_cstring(&data, hn_off + 2));
+                        }
+                    }
+                }
+
+                thunk_off += entry_size;
+            }
+        }
+
+        imports.push(ImportEntry { dll_name, functions });
+        desc_offset += 20;
+    }
+
+    imports
+}
+
+/// Read a null-terminated C string from a byte buffer
+fn read_cstring(data: &[u8], offset: usize) -> String {
+    let mut end = offset;
+    while end < data.len() && data[end] != 0 {
+        end += 1;
+    }
+    String::from_utf8_lossy(&data[offset..end]).to_string()
 }
 
 /// Get UDP connections
