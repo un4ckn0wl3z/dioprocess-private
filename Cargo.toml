@@ -2,12 +2,13 @@
 resolver = "2"
 members = [
     "crates/process",
+    "crates/network",
     "crates/misc",
     "crates/ui",
     "crates/dioprocess",
 ]
 
 [workspace.package]
-version = "0.0.5"
+version = "0.0.6"
 edition = "2021"
 

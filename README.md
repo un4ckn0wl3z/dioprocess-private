@@ -133,13 +133,21 @@ cargo build --release
 | `ntapi` | 0.4 | Native Windows API for process suspension |
 
 ### Windows API Features Used
+
+**process crate:**
 - `Win32_System_Diagnostics_ToolHelp` - Process/Thread/Module enumeration
 - `Win32_System_Threading` - Process/Thread management
 - `Win32_System_ProcessStatus` - Memory information
+- `Win32_Foundation` - Core Windows types
+- `Win32_Security` - Process access rights
+- `Win32_UI_Shell` - Shell operations
+
+**network crate:**
 - `Win32_NetworkManagement_IpHelper` - Network connections (TCP/UDP tables)
 - `Win32_Networking_WinSock` - Socket address handling
 - `Win32_Foundation` - Core Windows types
-- `Win32_Security` - Process access rights
+
+**misc crate:**
 - `Win32_System_Memory` - Virtual memory allocation (for DLL injection)
 - `Win32_System_LibraryLoader` - Module loading/unloading
 - `Win32_System_Diagnostics_Debug` - Process memory operations, thread context manipulation
@@ -147,7 +155,7 @@ cargo build --release
 
 ## 📁 Project Structure
 
-This project uses a **Cargo workspace** with four crates:
+This project uses a **Cargo workspace** with five crates:
 
 ```
 dioprocess/
@@ -157,10 +165,14 @@ dioprocess/
 ├── assets/
 │   └── dll/                # Sample DLLs for injection testing
 └── crates/
-    ├── process/            # Library - Windows process/network APIs
+    ├── process/            # Library - Windows process APIs
     │   ├── Cargo.toml
     │   └── src/
-    │       └── lib.rs      # Process, thread, handle, module, network APIs
+    │       └── lib.rs      # Process, thread, handle, module APIs
+    ├── network/            # Library - Windows network APIs
+    │   ├── Cargo.toml
+    │   └── src/
+    │       └── lib.rs      # TCP/UDP network connection enumeration
     ├── misc/               # Library - Advanced process utilities
     │   ├── Cargo.toml
     │   └── src/
@@ -195,7 +207,8 @@ dioprocess/
 
 | Crate | Type | Description |
 |-------|------|-------------|
-| `process` | Library | Windows API bindings for process, thread, handle, module, and network management |
+| `process` | Library | Windows API bindings for process, thread, handle, and module management |
+| `network` | Library | Windows API bindings for TCP/UDP network connection enumeration |
 | `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, Manual Map) and module unloading |
 | `ui` | Library | Dioxus UI components with routing, styles, and state management |
 | `dioprocess` | Binary | Desktop application entry point with Windows manifest |

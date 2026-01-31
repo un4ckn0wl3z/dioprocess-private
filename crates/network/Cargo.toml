@@ -1,0 +1,15 @@
+[package]
+name = "network"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+process = { path = "../process" }
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+]

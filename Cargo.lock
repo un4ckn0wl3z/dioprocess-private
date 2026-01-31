@@ -853,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "dioprocess"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "dioxus",
  "embed-resource",
@@ -2764,7 +2764,7 @@ dependencies = [
 
 [[package]]
 name = "misc"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "windows 0.58.0",
 ]
@@ -2845,6 +2845,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys",
+]
+
+[[package]]
+name = "network"
+version = "0.0.6"
+dependencies = [
+ "process",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -3520,7 +3528,7 @@ dependencies = [
 
 [[package]]
 name = "process"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "ntapi",
  "sysinfo",
@@ -4803,11 +4811,12 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "arboard",
  "dioxus",
  "misc",
+ "network",
  "process",
  "rfd 0.15.4",
  "tokio",

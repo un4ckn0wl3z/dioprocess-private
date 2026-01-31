@@ -1,10 +1,8 @@
 //! Network connections tab component
 
 use dioxus::prelude::*;
-use process::{
-    get_network_connections, kill_process, open_file_location, NetworkConnection, Protocol,
-    TcpState,
-};
+use network::{get_network_connections, NetworkConnection, Protocol, TcpState};
+use process::{kill_process, open_file_location};
 
 use crate::helpers::copy_to_clipboard;
 
