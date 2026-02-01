@@ -1,9 +1,11 @@
 //! Memory window component
 
+use std::collections::HashMap;
+
 use dioxus::prelude::*;
 use process::{
     get_memory_protect_name, get_memory_state_name, get_memory_type_name,
-    get_process_memory_regions, read_process_memory, MemoryRegionInfo,
+    get_process_memory_regions, get_process_modules, read_process_memory, MemoryRegionInfo,
 };
 
 use crate::helpers::copy_to_clipboard;
@@ -15,6 +17,7 @@ const HEX_PAGE_SIZE: usize = 4096;
 #[component]
 pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
     let mut regions = use_signal(|| get_process_memory_regions(pid));
+    let mut modules = use_signal(|| get_process_modules(pid));
     let mut selected_region = use_signal(|| None::<usize>);
     let mut context_menu = use_signal(|| MemoryContextMenuState::default());
     let mut status_message = use_signal(|| String::new());
@@ -30,6 +33,7 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             if *auto_refresh.read() {
                 regions.set(get_process_memory_regions(pid));
+                modules.set(get_process_modules(pid));
             }
         }
     });
@@ -37,6 +41,13 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
     let ctx_menu = context_menu.read().clone();
     let filter = filter_text.read().clone();
     let show_free_val = *show_free.read();
+
+    // Build module map: base_address -> (name, path)
+    let module_map: HashMap<usize, (String, String)> = modules
+        .read()
+        .iter()
+        .map(|m| (m.base_address, (m.name.clone(), m.path.clone())))
+        .collect();
 
     // Filter regions
     let region_list: Vec<MemoryRegionInfo> = regions
@@ -56,10 +67,20 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
                 let type_name = get_memory_type_name(r.mem_type).to_lowercase();
                 let protect_name = get_memory_protect_name(r.protect).to_lowercase();
                 let query = filter.to_lowercase();
+                // Include module name in filter matching
+                let module_name = if r.mem_type == 0x1000000 {
+                    module_map
+                        .get(&r.allocation_base)
+                        .map(|(n, _)| n.to_lowercase())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
                 addr_str.contains(&query)
                     || state_name.contains(&query)
                     || type_name.contains(&query)
                     || protect_name.contains(&query)
+                    || module_name.contains(&query)
             }
         })
         .cloned()
@@ -120,7 +141,7 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
                             .collect();
 
                         rsx! {
-                            // Back button + info
+                            // Back button + dump button + info
                             div {
                                 class: "module-import-header",
                                 button {
@@ -129,6 +150,47 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
                                         hex_page.set(0);
                                     },
                                     "← Back"
+                                }
+                                button {
+                                    class: "btn btn-small btn-primary",
+                                    title: "Dump entire region to .bin file",
+                                    onclick: {
+                                        let dump_data = data.clone();
+                                        move |_| {
+                                            let dump_data = dump_data.clone();
+                                            spawn(async move {
+                                                let file = rfd::AsyncFileDialog::new()
+                                                    .add_filter("Binary", &["bin"])
+                                                    .set_file_name(format!("memory_0x{:X}.bin", base_addr))
+                                                    .set_title("Save memory dump")
+                                                    .save_file()
+                                                    .await;
+                                                if let Some(file) = file {
+                                                    let path = file.path().to_path_buf();
+                                                    match std::fs::write(&path, &dump_data) {
+                                                        Ok(()) => {
+                                                            status_message.set(format!(
+                                                                "✓ Dumped {} bytes to {}",
+                                                                dump_data.len(),
+                                                                path.display()
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ Dump failed: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    },
+                                    "💾 Dump"
                                 }
                                 span { "0x{base_addr:X} — {data_len} bytes" }
                             }
@@ -226,6 +288,7 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
                             class: "btn btn-small btn-primary",
                             onclick: move |_| {
                                 regions.set(get_process_memory_regions(pid));
+                                modules.set(get_process_modules(pid));
                             },
                             "🔄 Refresh"
                         }
@@ -247,6 +310,7 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
                                     th { class: "th", "Size" }
                                     th { class: "th", "State" }
                                     th { class: "th", "Type" }
+                                    th { class: "th", "Module" }
                                     th { class: "th", "Protection" }
                                     th { class: "th", "Actions" }
                                 }
@@ -293,6 +357,16 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
                                         let is_selected = *selected_region.read() == Some(base);
                                         let row_class = if is_selected { "thread-row selected" } else { "thread-row" };
 
+                                        // Module name for MEM_IMAGE regions
+                                        let (module_name, module_path) = if mem_type == 0x1000000 {
+                                            module_map
+                                                .get(&alloc_base)
+                                                .map(|(n, p)| (n.clone(), p.clone()))
+                                                .unwrap_or_default()
+                                        } else {
+                                            (String::new(), String::new())
+                                        };
+
                                         rsx! {
                                             tr {
                                                 key: "{base}",
@@ -323,6 +397,15 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
                                                 td { class: "cell", style: "font-family: monospace; color: #9ca3af;", "{size_display}" }
                                                 td { class: "cell {state_class}", style: "font-weight: 500;", "{state_name}" }
                                                 td { class: "cell {type_class}", "{type_name}" }
+                                                td {
+                                                    class: "cell",
+                                                    style: "font-size: 12px; color: #8b9cf7;",
+                                                    title: "{module_path}",
+                                                    {
+                                                        let display = if module_name.is_empty() { "-".to_string() } else { module_name };
+                                                        rsx! { "{display}" }
+                                                    }
+                                                }
                                                 td { class: "cell", style: "font-size: 12px; color: #d1d5db;", "{protect_name}" }
                                                 td { class: "cell cell-actions",
                                                     // Inspect button (committed only)
@@ -346,6 +429,53 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
                                                                 }
                                                             },
                                                             "🔍"
+                                                        }
+                                                    }
+                                                    // Dump button (committed only)
+                                                    if is_committed {
+                                                        button {
+                                                            class: "action-btn action-btn-primary",
+                                                            title: "Dump to .bin file",
+                                                            onclick: move |e: Event<MouseData>| {
+                                                                e.stop_propagation();
+                                                                spawn(async move {
+                                                                    let file = rfd::AsyncFileDialog::new()
+                                                                        .add_filter("Binary", &["bin"])
+                                                                        .set_file_name(format!("memory_0x{:X}.bin", base))
+                                                                        .set_title("Save memory dump")
+                                                                        .save_file()
+                                                                        .await;
+                                                                    if let Some(file) = file {
+                                                                        let read_size = size.min(1024 * 1024);
+                                                                        let data = read_process_memory(pid, base, read_size);
+                                                                        if data.is_empty() {
+                                                                            status_message.set(format!("✗ Failed to read memory at 0x{:X}", base));
+                                                                        } else {
+                                                                            let path = file.path().to_path_buf();
+                                                                            match std::fs::write(&path, &data) {
+                                                                                Ok(()) => {
+                                                                                    status_message.set(format!(
+                                                                                        "✓ Dumped {} bytes to {}",
+                                                                                        data.len(),
+                                                                                        path.display()
+                                                                                    ));
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    status_message.set(format!(
+                                                                                        "✗ Dump failed: {}",
+                                                                                        e
+                                                                                    ));
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        spawn(async move {
+                                                                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                                                            status_message.set(String::new());
+                                                                        });
+                                                                    }
+                                                                });
+                                                            },
+                                                            "💾"
                                                         }
                                                     }
                                                     // Commit button (reserved only)
@@ -468,6 +598,51 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
                                             },
                                             span { "🔍" }
                                             span { "Inspect Memory" }
+                                        }
+
+                                        button {
+                                            class: "context-menu-item",
+                                            onclick: move |_| {
+                                                context_menu.set(MemoryContextMenuState::default());
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("Binary", &["bin"])
+                                                        .set_file_name(format!("memory_0x{:X}.bin", ctx_base))
+                                                        .set_title("Save memory dump")
+                                                        .save_file()
+                                                        .await;
+                                                    if let Some(file) = file {
+                                                        let read_size = ctx_size.min(1024 * 1024);
+                                                        let data = read_process_memory(pid, ctx_base, read_size);
+                                                        if data.is_empty() {
+                                                            status_message.set(format!("✗ Failed to read memory at 0x{:X}", ctx_base));
+                                                        } else {
+                                                            let path = file.path().to_path_buf();
+                                                            match std::fs::write(&path, &data) {
+                                                                Ok(()) => {
+                                                                    status_message.set(format!(
+                                                                        "✓ Dumped {} bytes to {}",
+                                                                        data.len(),
+                                                                        path.display()
+                                                                    ));
+                                                                }
+                                                                Err(e) => {
+                                                                    status_message.set(format!(
+                                                                        "✗ Dump failed: {}",
+                                                                        e
+                                                                    ));
+                                                                }
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
+                                                });
+                                            },
+                                            span { "💾" }
+                                            span { "Dump to File" }
                                         }
                                     }
 
