@@ -1,4 +1,4 @@
-# 🖥️ DioProcess - Windows System Monitor
+# DioProcess - Windows System Monitor
 
 A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, and **Windows API**.
 
@@ -10,92 +10,104 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 ![Windows](https://img.shields.io/badge/Platform-Windows-blue?logo=windows)
 ![Dioxus](https://img.shields.io/badge/UI-Dioxus%200.6-purple)
 
-## ✨ Features
+## Features
 
-### 📑 Tab Navigation
+### Tab Navigation
 - **Processes Tab** - Monitor and manage running processes
 - **Network Tab** - View active network connections (TCP/UDP)
 - **Services Tab** - View and manage Windows services
 
 ### Process Management
-- 📋 **Process List** - View all running processes with PID, name, CPU, threads, memory, and path
-- 🔍 **Search & Filter** - Quick search by process name, PID, or executable path
-- ⚡ **Real-time Updates** - Auto-refresh every 3 seconds (toggleable)
-- ☠️ **Kill Process** - Terminate processes with a click or keyboard shortcut
-- 📊 **Sortable Columns** - Sort by PID, Name, CPU, Threads, or Memory (ascending/descending)
+- **Process List** - View all running processes with PID, name, CPU, threads, memory, and path
+- **Search & Filter** - Quick search by process name, PID, or executable path
+- **Real-time Updates** - Auto-refresh every 3 seconds (toggleable)
+- **Kill Process** - Terminate processes with a click or keyboard shortcut
+- **Sortable Columns** - Sort by PID, Name, CPU, Threads, or Memory (ascending/descending)
 
 ### Network Monitoring
-- 🌐 **Connection List** - View all TCP and UDP connections
-- 🔌 **Port Information** - Local and remote addresses with ports
-- 📡 **Connection State** - LISTEN, ESTABLISHED, TIME_WAIT, CLOSE_WAIT, etc.
-- 🔗 **Process Mapping** - See which process owns each connection
-- 🔍 **Filters** - Filter by protocol (TCP/UDP) and connection state
-- ☠️ **Kill Process** - Terminate the process using a port
-- 📂 **Open File Location** - Navigate to the executable
+- **Connection List** - View all TCP and UDP connections
+- **Port Information** - Local and remote addresses with ports
+- **Connection State** - LISTEN, ESTABLISHED, TIME_WAIT, CLOSE_WAIT, etc.
+- **Process Mapping** - See which process owns each connection
+- **Filters** - Filter by protocol (TCP/UDP) and connection state
+- **Kill Process** - Terminate the process using a port
+- **Open File Location** - Navigate to the executable
 
 ### Service Management
-- 🛠️ **Service List** - View all Windows services with name, status, start type, PID, and binary path
-- 🔍 **Search & Filter** - Filter by service name, status (Running/Stopped/Paused), or start type (Auto/Manual/Disabled)
-- ▶️ **Start Service** - Start stopped services
-- ⏹️ **Stop Service** - Stop running services
-- ➕ **Create Service** - Create new Windows services with custom configuration
-- ❌ **Delete Service** - Remove services from the system
-- 📊 **Sortable Columns** - Sort by Name, Display Name, Status, Start Type, PID, or Description
-- ⚡ **Real-time Updates** - Auto-refresh every 3 seconds (toggleable)
+- **Service List** - View all Windows services with name, status, start type, PID, and binary path
+- **Search & Filter** - Filter by service name, status (Running/Stopped/Paused), or start type (Auto/Manual/Disabled)
+- **Start Service** - Start stopped services
+- **Stop Service** - Stop running services
+- **Create Service** - Create new Windows services with custom configuration
+- **Delete Service** - Remove services from the system
+- **Sortable Columns** - Sort by Name, Display Name, Status, Start Type, PID, or Description
+- **Real-time Updates** - Auto-refresh every 3 seconds (toggleable)
 
 ### System Monitoring
-- 🖥️ **CPU Usage** - Global CPU usage with visual progress bar
-- 💾 **RAM Usage** - Memory consumption (used/total GB) with progress bar
-- ⏱️ **System Uptime** - Time since last boot
-- 📈 **Process Count** - Total number of running processes
+- **CPU Usage** - Global CPU usage with visual progress bar
+- **RAM Usage** - Memory consumption (used/total GB) with progress bar
+- **System Uptime** - Time since last boot
+- **Process Count** - Total number of running processes
 
 ### User Interface
-- 🎨 **Modern Dark Theme** - Sleek gradient design
-- 🪟 **Borderless Window** - Custom title bar with drag, minimize, maximize, close
-- 📱 **Responsive Layout** - Adapts to window resizing
-- 🔀 **Tab-based Navigation** - Switch between Processes, Network, and Services views
+- **Modern Dark Theme** - Sleek gradient design
+- **Borderless Window** - Custom title bar with drag, minimize, maximize, close
+- **Responsive Layout** - Adapts to window resizing
+- **Tab-based Navigation** - Switch between Processes, Network, and Services views
 
 ### Context Menu (Right-Click)
-- ☠️ Kill Process
-- ⏸️ Suspend Process
-- ▶️ Resume Process
-- 📂 Open File Location
-- 📋 Copy PID
-- 📝 Copy Path
-- 🧵 View Threads
-- 🔗 View Handles
-- 📦 View Modules
-- 💉 DLL Injection (submenu)
-  - 💉 LoadLibrary - Classic CreateRemoteThread + LoadLibraryW
-  - 🧵 Thread Hijack - Suspend thread, redirect RIP to shellcode
-  - 🗺️ Manual Map - Map PE sections, resolve imports, call DllMain
-- 🔄 Refresh List
+- Kill Process
+- Suspend Process
+- Resume Process
+- Open File Location
+- Copy PID
+- Copy Path
+- View Threads
+- View Handles
+- View Modules
+- View Memory
+- DLL Injection (submenu)
+  - LoadLibrary - Classic CreateRemoteThread + LoadLibraryW
+  - Thread Hijack - Suspend thread, redirect RIP to shellcode
+  - Manual Map - Map PE sections, resolve imports, call DllMain
+- Refresh List
 
-### Thread View (Right-click → View Threads)
-- 🧵 View all threads of a process in a modal window
-- ⏸️ Suspend individual threads
-- ▶️ Resume individual threads
-- ☠️ Kill threads (use with caution!)
-- 📋 Copy Thread ID
+### Thread View (Right-click > View Threads)
+- View all threads of a process in a modal window
+- Suspend individual threads
+- Resume individual threads
+- Kill threads (use with caution!)
+- Copy Thread ID
 - Auto-refresh thread list
 
-### Handle View (Right-click → View Handles)
-- 🔗 View all handles (files, registry, events, etc.) of a process
-- 🔍 Filter handles by type
-- ✕ Close handles (use with caution!)
-- 📋 Copy Handle value
+### Handle View (Right-click > View Handles)
+- View all handles (files, registry, events, etc.) of a process
+- Filter handles by type
+- Close handles (use with caution!)
+- Copy Handle value
 - Color-coded handle types (File, Registry, Process, Sync, Memory, etc.)
 
-### Module View (Right-click → View Modules)
-- 📦 View all loaded DLLs/modules of a process
-- 🔍 Filter modules by name or path
-- 📊 View module base address, size, and entry point
-- 🔬 Inspect module imports (functions imported from other DLLs)
-- 💉 Inject DLL into process (LoadLibrary method)
-- ⏏️ Unload/eject modules from process
-- 📋 Copy module path
-- 📂 Open module file location
+### Module View (Right-click > View Modules)
+- View all loaded DLLs/modules of a process
+- Filter modules by name or path
+- View module base address, size, and entry point
+- Inspect module imports (functions imported from other DLLs)
+- Inject DLL into process (LoadLibrary method)
+- Unload/eject modules from process
+- Copy module path
+- Open module file location
 - Auto-refresh module list
+
+### Memory View (Right-click > View Memory)
+- View all virtual memory regions of a process
+- Filter by address, state, type, protection, or module name
+- Module name display for MEM_IMAGE regions (shows which DLL owns the memory)
+- Hex dump viewer with pagination (4KB pages) and ASCII column
+- Memory dump to .bin file (export any committed region)
+- Commit reserved regions
+- Decommit committed regions
+- Free memory allocations
+- Auto-refresh memory list
 
 ### Keyboard Shortcuts
 | Key | Action |
@@ -104,7 +116,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 | `Delete` | Kill selected process |
 | `Escape` | Close context menu |
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 - [Rust](https://rustup.rs/) (2021 edition)
@@ -134,7 +146,7 @@ cargo run
 cargo build --release
 ```
 
-## 📦 Dependencies
+## Dependencies
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
@@ -144,7 +156,7 @@ cargo build --release
 | `windows` | 0.58 | Windows API bindings |
 | `arboard` | 3.x | Clipboard operations |
 | `ntapi` | 0.4 | Native Windows API for process suspension |
-| `rfd` | 0.15 | Native file dialogs for DLL selection |
+| `rfd` | 0.15 | Native file dialogs for DLL selection and memory dump |
 
 ### Windows API Features Used
 
@@ -152,6 +164,8 @@ cargo build --release
 - `Win32_System_Diagnostics_ToolHelp` - Process/Thread/Module enumeration
 - `Win32_System_Threading` - Process/Thread management
 - `Win32_System_ProcessStatus` - Memory information
+- `Win32_System_Memory` - Virtual memory region enumeration (VirtualQueryEx)
+- `Win32_System_Diagnostics_Debug` - Process memory reading (ReadProcessMemory)
 - `Win32_Foundation` - Core Windows types
 - `Win32_Security` - Process access rights
 - `Win32_UI_Shell` - Shell operations
@@ -167,12 +181,12 @@ cargo build --release
 - `Win32_Security` - Service access rights
 
 **misc crate:**
-- `Win32_System_Memory` - Virtual memory allocation (for DLL injection)
+- `Win32_System_Memory` - Virtual memory allocation, commit, decommit, free
 - `Win32_System_LibraryLoader` - Module loading/unloading
 - `Win32_System_Diagnostics_Debug` - Process memory operations, thread context manipulation
 - `Win32_System_Kernel` - Thread context structures (CONTEXT)
 
-## 📁 Project Structure
+## Project Structure
 
 This project uses a **Cargo workspace** with six crates:
 
@@ -187,7 +201,7 @@ dioprocess/
     ├── process/            # Library - Windows process APIs
     │   ├── Cargo.toml
     │   └── src/
-    │       └── lib.rs      # Process, thread, handle, module APIs
+    │       └── lib.rs      # Process, thread, handle, module, memory APIs
     ├── network/            # Library - Windows network APIs
     │   ├── Cargo.toml
     │   └── src/
@@ -199,7 +213,7 @@ dioprocess/
     ├── misc/               # Library - Advanced process utilities
     │   ├── Cargo.toml
     │   └── src/
-    │       └── lib.rs      # DLL injection (LoadLibrary, Thread Hijack, Manual Map) & unloading
+    │       └── lib.rs      # DLL injection (LoadLibrary, Thread Hijack, Manual Map), unloading, memory ops
     ├── ui/                 # Library - Dioxus UI components
     │   ├── Cargo.toml
     │   └── src/
@@ -217,7 +231,8 @@ dioprocess/
     │           ├── process_row.rs  # Process table row
     │           ├── thread_window.rs  # Thread modal
     │           ├── handle_window.rs  # Handle modal
-    │           └── module_window.rs  # Module modal with DLL injection
+    │           ├── module_window.rs  # Module modal with DLL injection
+    │           └── memory_window.rs  # Memory regions modal with hex dump
     └── dioprocess/         # Binary - Desktop application entry
         ├── Cargo.toml
         ├── build.rs        # Windows manifest embedding
@@ -231,24 +246,24 @@ dioprocess/
 
 | Crate | Type | Description |
 |-------|------|-------------|
-| `process` | Library | Windows API bindings for process, thread, handle, and module management |
+| `process` | Library | Windows API bindings for process, thread, handle, module, and memory management |
 | `network` | Library | Windows API bindings for TCP/UDP network connection enumeration |
 | `service` | Library | Windows API bindings for service enumeration, start, stop, create, and delete |
-| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, Manual Map) and module unloading |
+| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, Manual Map), module unloading, and memory operations |
 | `ui` | Library | Dioxus UI components with routing, styles, and state management |
 | `dioprocess` | Binary | Desktop application entry point with Windows manifest |
 
-## 📄 License
+## License
 
 This project is open source and available under the [MIT License](LICENSE).
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Feel free to:
 - Report bugs
 - Suggest features
 - Submit pull requests
 
+---
 
-
-Built with ❤️ using Rust and Dioxus
+Built with Rust and Dioxus
