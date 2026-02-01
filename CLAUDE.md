@@ -33,7 +33,8 @@ crates/
 │       │   ├── process_row.rs    # Individual process row component
 │       │   ├── thread_window.rs  # Thread inspection modal
 │       │   ├── handle_window.rs  # Handle inspection modal
-│       │   └── module_window.rs  # Module/DLL view + injection UI
+│       │   ├── module_window.rs  # Module/DLL view + injection UI
+│       │   └── memory_window.rs  # Memory regions view + hex dump + dump to file
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
 │       ├── helpers.rs            # Clipboard utilities
@@ -66,6 +67,7 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `ThreadInfo` | process | thread_id, owner_pid, base_priority, priority |
 | `HandleInfo` | process | handle_value, type, name |
 | `ModuleInfo` | process | base_address, size, path, entry_point |
+| `MemoryRegionInfo` | process | base_address, allocation_base, region_size, state, mem_type, protect |
 | `NetworkConnection` | network | protocol, local/remote addr:port, state, pid |
 | `ServiceInfo` | service | name, display_name, status, start_type, binary_path, description, pid |
 
@@ -84,7 +86,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 - **Naming:** snake_case functions, PascalCase types, SCREAMING_SNAKE_CASE constants
 - **Error handling:** Custom error enums (`MiscError`, `ServiceError`) with `Result<T, E>`
 - **Unsafe:** Used for all Windows API calls; always paired with proper resource cleanup (CloseHandle)
-- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`)
+- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`)
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
@@ -94,6 +96,15 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 1. **LoadLibrary** — Classic CreateRemoteThread + WriteProcessMemory
 2. **Thread Hijack** — Suspend thread, redirect RIP/PC to shellcode
 3. **Manual Mapping** — Parse PE, map sections, resolve imports, call DllMain
+
+## Memory window features
+
+- **Region enumeration** — Lists all virtual memory regions via `VirtualQueryEx`
+- **Module correlation** — MEM_IMAGE regions display the associated module name (ntdll.dll, kernel32.dll, etc.) with full path tooltip
+- **Hex dump viewer** — Paginated hex dump (4KB pages) with ASCII column for committed regions
+- **Memory dump** — Export any committed region to .bin file via save dialog (from action button, context menu, or hex dump view)
+- **Memory operations** — Commit reserved regions, decommit committed regions, free allocations (via misc crate)
+- **Filtering** — Filter by address, state, type, protection, or module name
 
 ## No tests
 
