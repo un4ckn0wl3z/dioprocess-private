@@ -2,6 +2,7 @@
 
 mod app;
 mod handle_window;
+mod memory_window;
 mod module_window;
 mod network_tab;
 mod process_row;
@@ -11,6 +12,7 @@ mod thread_window;
 
 pub use app::{App, Layout};
 pub use handle_window::HandleWindow;
+pub use memory_window::MemoryWindow;
 pub use module_window::ModuleWindow;
 pub use network_tab::NetworkTab;
 pub use process_row::ProcessRow;

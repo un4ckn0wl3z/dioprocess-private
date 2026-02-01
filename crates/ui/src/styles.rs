@@ -1131,4 +1131,86 @@ pub const CUSTOM_STYLES: &str = r#"
         color: white;
     }
 
+    /* Memory Window */
+    .memory-modal {
+        width: 950px;
+    }
+    .mem-state-commit { color: #4ade80; }
+    .mem-state-reserve { color: #facc15; }
+    .mem-state-free { color: #6b7280; }
+    .mem-type-image { color: #22d3ee; }
+    .mem-type-mapped { color: #a855f7; }
+    .mem-type-private { color: #fb923c; }
+
+    /* Hex dump */
+    .hex-dump-container {
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        font-size: 13px;
+        overflow-y: auto;
+        flex: 1;
+        padding: 0 20px 20px;
+    }
+    .hex-dump-header {
+        display: flex;
+        gap: 16px;
+        padding: 8px 0;
+        color: #6b7280;
+        font-weight: 600;
+        border-bottom: 1px solid rgba(34, 211, 238, 0.2);
+        position: sticky;
+        top: 0;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        z-index: 1;
+    }
+    .hex-dump-line {
+        display: flex;
+        gap: 16px;
+        padding: 2px 0;
+        transition: background 0.1s;
+    }
+    .hex-dump-line:hover {
+        background: rgba(34, 211, 238, 0.08);
+    }
+    .hex-offset {
+        color: #facc15;
+        min-width: 100px;
+    }
+    .hex-bytes {
+        color: #9ca3af;
+        min-width: 420px;
+        letter-spacing: 0.5px;
+    }
+    .hex-ascii {
+        color: #4ade80;
+        min-width: 160px;
+    }
+    .hex-pagination {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 20px;
+        border-bottom: 1px solid rgba(34, 211, 238, 0.1);
+    }
+    .hex-pagination button {
+        padding: 4px 12px;
+        border: 1px solid rgba(34, 211, 238, 0.3);
+        border-radius: 4px;
+        background: transparent;
+        color: #22d3ee;
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.15s;
+    }
+    .hex-pagination button:hover:not(:disabled) {
+        background: rgba(34, 211, 238, 0.2);
+    }
+    .hex-pagination button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    .hex-pagination span {
+        color: #9ca3af;
+        font-size: 13px;
+    }
+
 "#;

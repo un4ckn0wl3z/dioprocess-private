@@ -11,6 +11,9 @@ pub static HANDLE_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::gl
 /// Module window state - stores PID and process name to open in new window
 pub static MODULE_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::global(|| None);
 
+/// Memory window state - stores PID and process name to open in new window
+pub static MEMORY_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::global(|| None);
+
 /// Sort column options
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum SortColumn {
@@ -64,4 +67,16 @@ pub struct ModuleContextMenuState {
     pub y: i32,
     pub module_base: Option<usize>,
     pub module_path: String,
+}
+
+/// Memory context menu state
+#[derive(Clone, Debug, Default)]
+pub struct MemoryContextMenuState {
+    pub visible: bool,
+    pub x: i32,
+    pub y: i32,
+    pub base_address: usize,
+    pub allocation_base: usize,
+    pub region_size: usize,
+    pub state: u32,
 }

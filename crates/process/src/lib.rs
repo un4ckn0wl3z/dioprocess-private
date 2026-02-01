@@ -16,6 +16,13 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     Thread32First, Thread32Next, MODULEENTRY32W, PROCESSENTRY32W, TH32CS_SNAPMODULE,
     TH32CS_SNAPMODULE32, TH32CS_SNAPPROCESS, TH32CS_SNAPTHREAD, THREADENTRY32,
 };
+use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+use windows::Win32::System::Memory::{
+    VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_FREE, MEM_IMAGE, MEM_MAPPED,
+    MEM_PRIVATE, MEM_RESERVE, PAGE_EXECUTE, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
+    PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS, PAGE_NOCACHE, PAGE_READONLY,
+    PAGE_READWRITE, PAGE_WRITECOMBINE, PAGE_WRITECOPY,
+};
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows::Win32::System::Threading::GetCurrentProcess;
 use windows::Win32::System::Threading::{
@@ -972,4 +979,171 @@ fn read_cstring(data: &[u8], offset: usize) -> String {
         end += 1;
     }
     String::from_utf8_lossy(&data[offset..end]).to_string()
+}
+
+/// Memory region information structure
+#[derive(Clone, Debug, PartialEq)]
+pub struct MemoryRegionInfo {
+    pub base_address: usize,
+    pub allocation_base: usize,
+    pub region_size: usize,
+    pub state: u32,
+    pub mem_type: u32,
+    pub protect: u32,
+    pub allocation_protect: u32,
+}
+
+/// Get all virtual memory regions for a process
+pub fn get_process_memory_regions(pid: u32) -> Vec<MemoryRegionInfo> {
+    let mut regions = Vec::new();
+
+    unsafe {
+        let handle = match OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
+            Ok(h) => h,
+            Err(_) => return regions,
+        };
+
+        let mut address: usize = 0;
+        let mbi_size = std::mem::size_of::<MEMORY_BASIC_INFORMATION>();
+
+        loop {
+            let mut mbi: MEMORY_BASIC_INFORMATION = zeroed();
+            let result = VirtualQueryEx(
+                handle,
+                Some(address as *const _),
+                &mut mbi,
+                mbi_size,
+            );
+
+            if result == 0 {
+                break;
+            }
+
+            regions.push(MemoryRegionInfo {
+                base_address: mbi.BaseAddress as usize,
+                allocation_base: mbi.AllocationBase as usize,
+                region_size: mbi.RegionSize,
+                state: mbi.State.0,
+                mem_type: mbi.Type.0,
+                protect: mbi.Protect.0,
+                allocation_protect: mbi.AllocationProtect.0,
+            });
+
+            // Advance to next region
+            let next = address.checked_add(mbi.RegionSize);
+            match next {
+                Some(n) if n > address => address = n,
+                _ => break,
+            }
+        }
+
+        let _ = CloseHandle(handle);
+    }
+
+    regions
+}
+
+/// Read memory from a process at a given address
+pub fn read_process_memory(pid: u32, address: usize, size: usize) -> Vec<u8> {
+    let capped_size = size.min(1024 * 1024); // Cap at 1MB
+    let mut buffer = vec![0u8; capped_size];
+
+    unsafe {
+        let handle = match OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
+            Ok(h) => h,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut bytes_read: usize = 0;
+        let result = ReadProcessMemory(
+            handle,
+            address as *const _,
+            buffer.as_mut_ptr() as *mut _,
+            capped_size,
+            Some(&mut bytes_read),
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() || bytes_read == 0 {
+            return Vec::new();
+        }
+
+        buffer.truncate(bytes_read);
+    }
+
+    buffer
+}
+
+/// Get human-readable state name
+pub fn get_memory_state_name(state: u32) -> &'static str {
+    if state == MEM_COMMIT.0 {
+        "Commit"
+    } else if state == MEM_RESERVE.0 {
+        "Reserve"
+    } else if state == MEM_FREE.0 {
+        "Free"
+    } else {
+        "Unknown"
+    }
+}
+
+/// Get human-readable memory type name
+pub fn get_memory_type_name(mem_type: u32) -> &'static str {
+    if mem_type == MEM_PRIVATE.0 {
+        "Private"
+    } else if mem_type == MEM_MAPPED.0 {
+        "Mapped"
+    } else if mem_type == MEM_IMAGE.0 {
+        "Image"
+    } else if mem_type == 0 {
+        "-"
+    } else {
+        "Unknown"
+    }
+}
+
+/// Get human-readable protection name
+pub fn get_memory_protect_name(protect: u32) -> String {
+    if protect == 0 {
+        return "-".to_string();
+    }
+
+    let base = protect & 0xFF;
+    let base_name = if base == PAGE_NOACCESS.0 {
+        "NoAccess"
+    } else if base == PAGE_READONLY.0 {
+        "Read"
+    } else if base == PAGE_READWRITE.0 {
+        "ReadWrite"
+    } else if base == PAGE_WRITECOPY.0 {
+        "WriteCopy"
+    } else if base == PAGE_EXECUTE.0 {
+        "Execute"
+    } else if base == PAGE_EXECUTE_READ.0 {
+        "ExecuteRead"
+    } else if base == PAGE_EXECUTE_READWRITE.0 {
+        "ExecuteReadWrite"
+    } else if base == PAGE_EXECUTE_WRITECOPY.0 {
+        "ExecuteWriteCopy"
+    } else {
+        "Unknown"
+    };
+
+    let mut modifiers = Vec::new();
+    if protect & PAGE_GUARD.0 != 0 {
+        modifiers.push("Guard");
+    }
+    if protect & PAGE_NOCACHE.0 != 0 {
+        modifiers.push("NoCache");
+    }
+    if protect & PAGE_WRITECOMBINE.0 != 0 {
+        modifiers.push("WriteCombine");
+    }
+
+    if modifiers.is_empty() {
+        base_name.to_string()
+    } else {
+        format!("{} + {}", base_name, modifiers.join(" + "))
+    }
 }

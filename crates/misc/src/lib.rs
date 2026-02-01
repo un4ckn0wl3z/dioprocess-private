@@ -14,8 +14,8 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::Win32::System::Memory::{
-    VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_EXECUTE_READWRITE,
-    PAGE_READWRITE,
+    VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_DECOMMIT, MEM_RELEASE, MEM_RESERVE,
+    PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
 };
 use windows::Win32::System::Threading::{
     CreateRemoteThread, OpenProcess, OpenThread, ResumeThread, SuspendThread, WaitForSingleObject,
@@ -45,6 +45,9 @@ pub enum MiscError {
     ResumeThreadFailed(u32),
     FileReadFailed(String),
     InvalidPE(String),
+    CommitFailed(String),
+    DecommitFailed(String),
+    FreeFailed(String),
 }
 
 impl fmt::Display for MiscError {
@@ -72,6 +75,9 @@ impl fmt::Display for MiscError {
             MiscError::ResumeThreadFailed(tid) => write!(f, "Failed to resume thread {}", tid),
             MiscError::FileReadFailed(path) => write!(f, "Failed to read file: {}", path),
             MiscError::InvalidPE(msg) => write!(f, "Invalid PE file: {}", msg),
+            MiscError::CommitFailed(msg) => write!(f, "Failed to commit memory: {}", msg),
+            MiscError::DecommitFailed(msg) => write!(f, "Failed to decommit memory: {}", msg),
+            MiscError::FreeFailed(msg) => write!(f, "Failed to free memory: {}", msg),
         }
     }
 }
@@ -1069,4 +1075,66 @@ fn read_cstring_from_buf(data: &[u8], offset: usize) -> String {
         end += 1;
     }
     String::from_utf8_lossy(&data[offset..end]).to_string()
+}
+
+/// Commit a reserved memory region in a target process.
+pub fn commit_memory(pid: u32, address: usize, size: usize) -> Result<(), MiscError> {
+    unsafe {
+        let process_handle = OpenProcess(PROCESS_VM_OPERATION, false, pid)
+            .map_err(|_| MiscError::OpenProcessFailed(pid))?;
+
+        let result = VirtualAllocEx(
+            process_handle,
+            Some(address as *const _),
+            size,
+            MEM_COMMIT,
+            PAGE_READWRITE,
+        );
+
+        let _ = CloseHandle(process_handle);
+
+        if result.is_null() {
+            return Err(MiscError::CommitFailed(format!(
+                "VirtualAllocEx failed at 0x{:X}",
+                address
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+/// Decommit a committed memory region in a target process.
+pub fn decommit_memory(pid: u32, address: usize, size: usize) -> Result<(), MiscError> {
+    unsafe {
+        let process_handle = OpenProcess(PROCESS_VM_OPERATION, false, pid)
+            .map_err(|_| MiscError::OpenProcessFailed(pid))?;
+
+        let result = VirtualFreeEx(process_handle, address as *mut _, size, MEM_DECOMMIT);
+
+        let _ = CloseHandle(process_handle);
+
+        result.map_err(|e| {
+            MiscError::DecommitFailed(format!("VirtualFreeEx failed at 0x{:X}: {}", address, e))
+        })
+    }
+}
+
+/// Free an entire allocation in a target process (uses allocation_base, size must be 0).
+pub fn free_memory(pid: u32, allocation_base: usize) -> Result<(), MiscError> {
+    unsafe {
+        let process_handle = OpenProcess(PROCESS_VM_OPERATION, false, pid)
+            .map_err(|_| MiscError::OpenProcessFailed(pid))?;
+
+        let result = VirtualFreeEx(process_handle, allocation_base as *mut _, 0, MEM_RELEASE);
+
+        let _ = CloseHandle(process_handle);
+
+        result.map_err(|e| {
+            MiscError::FreeFailed(format!(
+                "VirtualFreeEx failed at 0x{:X}: {}",
+                allocation_base, e
+            ))
+        })
+    }
 }
