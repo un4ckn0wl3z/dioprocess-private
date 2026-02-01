@@ -34,7 +34,8 @@ crates/
 │       │   ├── thread_window.rs  # Thread inspection modal
 │       │   ├── handle_window.rs  # Handle inspection modal
 │       │   ├── module_window.rs  # Module/DLL view + injection UI
-│       │   └── memory_window.rs  # Memory regions view + hex dump + dump to file
+│       │   ├── memory_window.rs  # Memory regions view + hex dump + dump to file
+│       │   └── graph_window.rs   # Real-time CPU/memory performance graphs
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
 │       ├── helpers.rs            # Clipboard utilities
@@ -68,6 +69,7 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `HandleInfo` | process | handle_value, type, name |
 | `ModuleInfo` | process | base_address, size, path, entry_point |
 | `MemoryRegionInfo` | process | base_address, allocation_base, region_size, state, mem_type, protect |
+| `ProcessStats` | process | cpu_usage, memory_mb |
 | `NetworkConnection` | network | protocol, local/remote addr:port, state, pid |
 | `ServiceInfo` | service | name, display_name, status, start_type, binary_path, description, pid |
 
@@ -86,7 +88,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 - **Naming:** snake_case functions, PascalCase types, SCREAMING_SNAKE_CASE constants
 - **Error handling:** Custom error enums (`MiscError`, `ServiceError`) with `Result<T, E>`
 - **Unsafe:** Used for all Windows API calls; always paired with proper resource cleanup (CloseHandle)
-- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`)
+- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`)
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
@@ -100,6 +102,15 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 ## CSV export
 
 Each tab (Processes, Network, Services) has an "Export CSV" button that exports the current filtered list to a CSV file via save dialog. Uses `rfd::AsyncFileDialog` for native file picker.
+
+## Performance graph window
+
+Real-time CPU and memory monitoring for individual processes:
+- **SVG-based graphs** - Smooth line graphs with fill area
+- **60-second history** - Rolling window updated every second
+- **Auto-scaling** - Memory graph auto-scales based on usage
+- **Pause/Resume** - Pause updates to analyze a specific moment
+- Access via right-click context menu > "View Performance"
 
 ## Memory window features
 

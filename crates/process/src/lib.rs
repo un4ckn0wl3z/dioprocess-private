@@ -131,6 +131,39 @@ fn get_cpu_usage_map() -> HashMap<u32, f32> {
     map
 }
 
+/// Process stats for graph display
+#[derive(Clone, Debug, Default)]
+pub struct ProcessStats {
+    pub cpu_usage: f32,
+    pub memory_mb: f64,
+}
+
+/// Get CPU and memory usage for a specific process
+pub fn get_process_stats(pid: u32) -> ProcessStats {
+    let mut sys_guard = SYSTEM_INFO.lock().unwrap();
+    let sys = sys_guard.get_or_insert_with(|| {
+        System::new_with_specifics(
+            RefreshKind::new()
+                .with_processes(ProcessRefreshKind::new().with_cpu().with_memory()),
+        )
+    });
+
+    // Refresh the specific process
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]),
+        ProcessRefreshKind::new().with_cpu().with_memory(),
+    );
+
+    if let Some(process) = sys.process(sysinfo::Pid::from_u32(pid)) {
+        ProcessStats {
+            cpu_usage: process.cpu_usage(),
+            memory_mb: process.memory() as f64 / (1024.0 * 1024.0),
+        }
+    } else {
+        ProcessStats::default()
+    }
+}
+
 /// Get system statistics
 pub fn get_system_stats() -> SystemStats {
     let mut sys_guard = SYSTEM_INFO.lock().unwrap();

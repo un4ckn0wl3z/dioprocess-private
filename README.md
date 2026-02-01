@@ -69,6 +69,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - View Handles
 - View Modules
 - View Memory
+- View Performance
 - DLL Injection (submenu)
   - LoadLibrary - Classic CreateRemoteThread + LoadLibraryW
   - Thread Hijack - Suspend thread, redirect RIP to shellcode
@@ -100,6 +101,13 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - Copy module path
 - Open module file location
 - Auto-refresh module list
+
+### Performance View (Right-click > View Performance)
+- Real-time CPU usage graph with 60-second history
+- Real-time memory usage graph with auto-scaling
+- SVG-based smooth line graphs with fill area
+- Pause/Resume monitoring
+- Updates every second
 
 ### Memory View (Right-click > View Memory)
 - View all virtual memory regions of a process
@@ -235,7 +243,8 @@ dioprocess/
     │           ├── thread_window.rs  # Thread modal
     │           ├── handle_window.rs  # Handle modal
     │           ├── module_window.rs  # Module modal with DLL injection
-    │           └── memory_window.rs  # Memory regions modal with hex dump
+    │           ├── memory_window.rs  # Memory regions modal with hex dump
+    │           └── graph_window.rs   # Real-time CPU/memory graphs
     └── dioprocess/         # Binary - Desktop application entry
         ├── Cargo.toml
         ├── build.rs        # Windows manifest embedding

@@ -1213,4 +1213,96 @@ pub const CUSTOM_STYLES: &str = r#"
         font-size: 13px;
     }
 
+    /* Graph Window */
+    .graph-modal {
+        width: 500px;
+    }
+    .graph-content {
+        padding: 16px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+    .graph-controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .graph-interval {
+        color: #6b7280;
+        font-size: 12px;
+        margin-left: auto;
+    }
+    .graph-section {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .graph-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .graph-label {
+        color: #9ca3af;
+        font-size: 13px;
+        font-weight: 500;
+    }
+    .graph-value {
+        font-size: 18px;
+        font-weight: 600;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+    }
+    .graph-value-cpu {
+        color: #22d3ee;
+    }
+    .graph-value-mem {
+        color: #a855f7;
+    }
+    .graph-container {
+        position: relative;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 8px;
+    }
+    .graph-container svg {
+        display: block;
+    }
+    .graph-grid {
+        stroke: rgba(255, 255, 255, 0.1);
+        stroke-width: 1;
+    }
+    .graph-line {
+        fill: none;
+        stroke-width: 2;
+    }
+    .graph-line-cpu {
+        stroke: #22d3ee;
+    }
+    .graph-line-mem {
+        stroke: #a855f7;
+    }
+    .graph-fill {
+        opacity: 0.2;
+    }
+    .graph-fill-cpu {
+        fill: #22d3ee;
+    }
+    .graph-fill-mem {
+        fill: #a855f7;
+    }
+    .graph-y-labels {
+        position: absolute;
+        right: 12px;
+        top: 8px;
+        bottom: 8px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        font-size: 10px;
+        color: #6b7280;
+        pointer-events: none;
+    }
+
 "#;

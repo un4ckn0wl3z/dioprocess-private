@@ -1,6 +1,7 @@
 //! UI Components
 
 mod app;
+mod graph_window;
 mod handle_window;
 mod memory_window;
 mod module_window;
@@ -11,6 +12,7 @@ mod service_tab;
 mod thread_window;
 
 pub use app::{App, Layout};
+pub use graph_window::GraphWindow;
 pub use handle_window::HandleWindow;
 pub use memory_window::MemoryWindow;
 pub use module_window::ModuleWindow;

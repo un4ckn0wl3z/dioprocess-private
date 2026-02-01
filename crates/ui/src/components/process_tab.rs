@@ -7,11 +7,11 @@ use process::{
     suspend_process, ProcessInfo,
 };
 
-use super::{HandleWindow, MemoryWindow, ModuleWindow, ProcessRow, ThreadWindow};
+use super::{GraphWindow, HandleWindow, MemoryWindow, ModuleWindow, ProcessRow, ThreadWindow};
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
-    ContextMenuState, SortColumn, SortOrder, HANDLE_WINDOW_STATE, MEMORY_WINDOW_STATE,
-    MODULE_WINDOW_STATE, THREAD_WINDOW_STATE,
+    ContextMenuState, SortColumn, SortOrder, GRAPH_WINDOW_STATE, HANDLE_WINDOW_STATE,
+    MEMORY_WINDOW_STATE, MODULE_WINDOW_STATE, THREAD_WINDOW_STATE,
 };
 
 /// Process Tab component
@@ -542,6 +542,23 @@ pub fn ProcessTab() -> Element {
                         span { "View Memory" }
                     }
 
+                    button {
+                        class: "context-menu-item",
+                        onclick: move |_| {
+                            if let Some(pid) = ctx_menu.pid {
+                                let proc_name = processes.read()
+                                    .iter()
+                                    .find(|p| p.pid == pid)
+                                    .map(|p| p.name.clone())
+                                    .unwrap_or_else(|| format!("PID {}", pid));
+                                *GRAPH_WINDOW_STATE.write() = Some((pid, proc_name));
+                            }
+                            context_menu.set(ContextMenuState::default());
+                        },
+                        span { "📈" }
+                        span { "View Performance" }
+                    }
+
                     div { class: "context-menu-separator" }
 
                     button {
@@ -732,6 +749,11 @@ pub fn ProcessTab() -> Element {
             // Memory Window Modal
             if let Some((pid, proc_name)) = MEMORY_WINDOW_STATE.read().clone() {
                 MemoryWindow { pid: pid, process_name: proc_name }
+            }
+
+            // Graph Window Modal
+            if let Some((pid, proc_name)) = GRAPH_WINDOW_STATE.read().clone() {
+                GraphWindow { pid: pid, process_name: proc_name }
             }
         }
     }
