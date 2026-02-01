@@ -605,14 +605,18 @@ pub fn ServiceTab() -> Element {
                                     button {
                                         class: "create-svc-btn-browse",
                                         onclick: move |_| {
-                                            let file = rfd::FileDialog::new()
-                                                .add_filter("Executable", &["exe"])
-                                                .pick_file();
-                                            if let Some(path) = file {
-                                                let mut f = create_form.read().clone();
-                                                f.binary_path = path.to_string_lossy().into_owned();
-                                                create_form.set(f);
-                                            }
+                                            spawn(async move {
+                                                let file = rfd::AsyncFileDialog::new()
+                                                    .add_filter("Executable", &["exe"])
+                                                    .pick_file()
+                                                    .await;
+                                                if let Some(path) = file {
+                                                    let mut f = create_form.read().clone();
+                                                    f.binary_path = path.path().to_string_lossy().into_owned();
+                                                    create_form.set(f);
+                                                }
+                                            });
+
                                         },
                                         "Browse..."
                                     }
@@ -630,7 +634,7 @@ pub fn ServiceTab() -> Element {
                                         create_form.set(f);
                                     },
                                     option { value: "auto", "Automatic" }
-                                    option { value: "manual", selected: true, "Manual" }
+                                    option { value: "manual", "Manual" }
                                     option { value: "disabled", "Disabled" }
                                 }
                             }
