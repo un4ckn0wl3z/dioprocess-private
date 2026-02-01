@@ -773,7 +773,8 @@ pub const CUSTOM_STYLES: &str = r#"
 
     /* Tab Content */
     .process-tab,
-    .network-tab {
+    .network-tab,
+    .service-tab {
         flex: 1;
         display: flex;
         flex-direction: column;
@@ -931,6 +932,203 @@ pub const CUSTOM_STYLES: &str = r#"
     .about-link:active {
         color: #4ade80;
         text-decoration: underline;
+    }
+
+    /* Service Tab Styles */
+    .service-table .th {
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+    .service-table .cell {
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+    .cell-svc-name {
+        font-weight: 500;
+        max-width: 180px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .cell-svc-display {
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .cell-svc-desc {
+        font-size: 12px;
+        color: #9ca3af;
+        max-width: 250px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .cell-svc-desc:hover {
+        color: #d1d5db;
+    }
+    .cell-svc-path {
+        font-size: 12px;
+        color: #6b7280;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .cell-svc-path:hover {
+        color: #9ca3af;
+    }
+    .cell-svc-status {
+        font-size: 12px;
+        font-weight: 600;
+        width: 110px;
+    }
+    .cell-svc-start-type {
+        font-size: 12px;
+        font-weight: 500;
+        width: 100px;
+    }
+    .cell-svc-pid {
+        font-family: monospace;
+        color: #facc15;
+        width: 70px;
+        text-align: center;
+    }
+    .svc-running { color: #4ade80; }
+    .svc-stopped { color: #f87171; }
+    .svc-paused { color: #fbbf24; }
+    .svc-pending { color: #fb923c; }
+    .svc-unknown { color: #9ca3af; }
+    .svc-start-auto { color: #4ade80; }
+    .svc-start-manual { color: #60a5fa; }
+    .svc-start-disabled { color: #f87171; }
+    .svc-start-other { color: #9ca3af; }
+
+    /* Create Service Modal */
+    .create-svc-modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 100;
+    }
+    .create-svc-modal {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border: 1px solid rgba(34, 211, 238, 0.3);
+        border-radius: 12px;
+        width: 550px;
+        max-width: 90vw;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+    }
+    .create-svc-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid rgba(34, 211, 238, 0.2);
+    }
+    .create-svc-modal-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #22d3ee;
+    }
+    .create-svc-modal-close {
+        width: 32px;
+        height: 32px;
+        border: none;
+        background: transparent;
+        color: #9ca3af;
+        font-size: 16px;
+        cursor: pointer;
+        border-radius: 6px;
+        transition: all 0.15s;
+    }
+    .create-svc-modal-close:hover {
+        background: #dc2626;
+        color: white;
+    }
+    .create-svc-form {
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+    .create-svc-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .create-svc-label {
+        font-size: 13px;
+        font-weight: 500;
+        color: #9ca3af;
+    }
+    .create-svc-input {
+        padding: 10px 14px;
+        border: 1px solid rgba(34, 211, 238, 0.2);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        color: white;
+        font-size: 14px;
+        outline: none;
+        transition: border-color 0.15s;
+    }
+    .create-svc-input:focus {
+        border-color: rgba(34, 211, 238, 0.5);
+        background: rgba(255, 255, 255, 0.12);
+    }
+    .create-svc-input::placeholder {
+        color: #4b5563;
+    }
+    .create-svc-path-row {
+        display: flex;
+        gap: 8px;
+    }
+    .create-svc-path-row .create-svc-input {
+        flex: 1;
+    }
+    .create-svc-btn-browse {
+        padding: 10px 16px;
+        border: 1px solid rgba(34, 211, 238, 0.3);
+        border-radius: 8px;
+        background: rgba(34, 211, 238, 0.1);
+        color: #22d3ee;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.15s;
+        white-space: nowrap;
+    }
+    .create-svc-btn-browse:hover {
+        background: rgba(34, 211, 238, 0.2);
+    }
+    .create-svc-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 16px 20px;
+        border-top: 1px solid rgba(34, 211, 238, 0.1);
+    }
+    .btn-cancel {
+        padding: 10px 20px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        background: transparent;
+        color: #9ca3af;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .btn-cancel:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: white;
     }
 
 "#;

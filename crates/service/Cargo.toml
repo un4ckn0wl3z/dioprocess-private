@@ -1,0 +1,12 @@
+[package]
+name = "service"
+version.workspace = true
+edition.workspace = true
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_System_Services",
+    "Win32_Foundation",
+    "Win32_Security",
+]
