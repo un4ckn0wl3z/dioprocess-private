@@ -15,6 +15,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 ### 📑 Tab Navigation
 - **Processes Tab** - Monitor and manage running processes
 - **Network Tab** - View active network connections (TCP/UDP)
+- **Services Tab** - View and manage Windows services
 
 ### Process Management
 - 📋 **Process List** - View all running processes with PID, name, CPU, threads, memory, and path
@@ -32,6 +33,16 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - ☠️ **Kill Process** - Terminate the process using a port
 - 📂 **Open File Location** - Navigate to the executable
 
+### Service Management
+- 🛠️ **Service List** - View all Windows services with name, status, start type, PID, and binary path
+- 🔍 **Search & Filter** - Filter by service name, status (Running/Stopped/Paused), or start type (Auto/Manual/Disabled)
+- ▶️ **Start Service** - Start stopped services
+- ⏹️ **Stop Service** - Stop running services
+- ➕ **Create Service** - Create new Windows services with custom configuration
+- ❌ **Delete Service** - Remove services from the system
+- 📊 **Sortable Columns** - Sort by Name, Display Name, Status, Start Type, PID, or Description
+- ⚡ **Real-time Updates** - Auto-refresh every 3 seconds (toggleable)
+
 ### System Monitoring
 - 🖥️ **CPU Usage** - Global CPU usage with visual progress bar
 - 💾 **RAM Usage** - Memory consumption (used/total GB) with progress bar
@@ -42,7 +53,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - 🎨 **Modern Dark Theme** - Sleek gradient design
 - 🪟 **Borderless Window** - Custom title bar with drag, minimize, maximize, close
 - 📱 **Responsive Layout** - Adapts to window resizing
-- 🔀 **Tab-based Navigation** - Switch between Processes and Network views
+- 🔀 **Tab-based Navigation** - Switch between Processes, Network, and Services views
 
 ### Context Menu (Right-Click)
 - ☠️ Kill Process
@@ -133,6 +144,7 @@ cargo build --release
 | `windows` | 0.58 | Windows API bindings |
 | `arboard` | 3.x | Clipboard operations |
 | `ntapi` | 0.4 | Native Windows API for process suspension |
+| `rfd` | 0.15 | Native file dialogs for DLL selection |
 
 ### Windows API Features Used
 
@@ -149,6 +161,11 @@ cargo build --release
 - `Win32_Networking_WinSock` - Socket address handling
 - `Win32_Foundation` - Core Windows types
 
+**service crate:**
+- `Win32_System_Services` - Service Control Manager operations
+- `Win32_Foundation` - Core Windows types
+- `Win32_Security` - Service access rights
+
 **misc crate:**
 - `Win32_System_Memory` - Virtual memory allocation (for DLL injection)
 - `Win32_System_LibraryLoader` - Module loading/unloading
@@ -157,7 +174,7 @@ cargo build --release
 
 ## 📁 Project Structure
 
-This project uses a **Cargo workspace** with five crates:
+This project uses a **Cargo workspace** with six crates:
 
 ```
 dioprocess/
@@ -175,6 +192,10 @@ dioprocess/
     │   ├── Cargo.toml
     │   └── src/
     │       └── lib.rs      # TCP/UDP network connection enumeration
+    ├── service/            # Library - Windows service APIs
+    │   ├── Cargo.toml
+    │   └── src/
+    │       └── lib.rs      # Service enumeration, start, stop, create, delete
     ├── misc/               # Library - Advanced process utilities
     │   ├── Cargo.toml
     │   └── src/
@@ -183,7 +204,7 @@ dioprocess/
     │   ├── Cargo.toml
     │   └── src/
     │       ├── lib.rs
-    │       ├── routes.rs           # Tab routing (Process/Network)
+    │       ├── routes.rs           # Tab routing (Process/Network/Service)
     │       ├── state.rs            # Shared state types
     │       ├── helpers.rs          # Utility functions
     │       ├── styles.rs           # CSS styles
@@ -192,6 +213,7 @@ dioprocess/
     │           ├── app.rs          # Main app with routing
     │           ├── process_tab.rs  # Process list view
     │           ├── network_tab.rs  # Network connections view
+    │           ├── service_tab.rs  # Windows services view
     │           ├── process_row.rs  # Process table row
     │           ├── thread_window.rs  # Thread modal
     │           ├── handle_window.rs  # Handle modal
@@ -211,6 +233,7 @@ dioprocess/
 |-------|------|-------------|
 | `process` | Library | Windows API bindings for process, thread, handle, and module management |
 | `network` | Library | Windows API bindings for TCP/UDP network connection enumeration |
+| `service` | Library | Windows API bindings for service enumeration, start, stop, create, and delete |
 | `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, Manual Map) and module unloading |
 | `ui` | Library | Dioxus UI components with routing, styles, and state management |
 | `dioprocess` | Binary | Desktop application entry point with Windows manifest |
