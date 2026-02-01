@@ -97,6 +97,10 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 2. **Thread Hijack** — Suspend thread, redirect RIP/PC to shellcode
 3. **Manual Mapping** — Parse PE, map sections, resolve imports, call DllMain
 
+## CSV export
+
+Each tab (Processes, Network, Services) has an "Export CSV" button that exports the current filtered list to a CSV file via save dialog. Uses `rfd::AsyncFileDialog` for native file picker.
+
 ## Memory window features
 
 - **Region enumeration** — Lists all virtual memory regions via `VirtualQueryEx`

@@ -23,6 +23,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - **Real-time Updates** - Auto-refresh every 3 seconds (toggleable)
 - **Kill Process** - Terminate processes with a click or keyboard shortcut
 - **Sortable Columns** - Sort by PID, Name, CPU, Threads, or Memory (ascending/descending)
+- **Export to CSV** - Export filtered process list to CSV file
 
 ### Network Monitoring
 - **Connection List** - View all TCP and UDP connections
@@ -32,6 +33,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - **Filters** - Filter by protocol (TCP/UDP) and connection state
 - **Kill Process** - Terminate the process using a port
 - **Open File Location** - Navigate to the executable
+- **Export to CSV** - Export filtered connections to CSV file
 
 ### Service Management
 - **Service List** - View all Windows services with name, status, start type, PID, and binary path
@@ -42,6 +44,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - **Delete Service** - Remove services from the system
 - **Sortable Columns** - Sort by Name, Display Name, Status, Start Type, PID, or Description
 - **Real-time Updates** - Auto-refresh every 3 seconds (toggleable)
+- **Export to CSV** - Export filtered services to CSV file
 
 ### System Monitoring
 - **CPU Usage** - Global CPU usage with visual progress bar

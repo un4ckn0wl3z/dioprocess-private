@@ -181,6 +181,7 @@ pub fn ServiceTab() -> Element {
     let current_sort_ord = *sort_order.read();
     let ctx_menu = context_menu.read().clone();
     let form = create_form.read().clone();
+    let export_services = filtered_services.clone();
 
     let sort_indicator = |column: ServiceSortColumn| -> &'static str {
         if current_sort_col == column {
@@ -288,7 +289,54 @@ pub fn ServiceTab() -> Element {
                             start_type: "manual".to_string(),
                         });
                     },
-                    "➕ Create Service"
+                    "+ Create Service"
+                }
+
+                button {
+                    class: "btn btn-secondary",
+                    onclick: {
+                        let svcs = export_services.clone();
+                        move |_| {
+                            let svcs = svcs.clone();
+                            spawn(async move {
+                                let file = rfd::AsyncFileDialog::new()
+                                    .add_filter("CSV", &["csv"])
+                                    .set_file_name("services.csv")
+                                    .set_title("Export Services")
+                                    .save_file()
+                                    .await;
+                                if let Some(file) = file {
+                                    let path = file.path().to_path_buf();
+                                    let mut csv = String::from("Name,Display Name,Status,Start Type,PID,Binary Path,Description\n");
+                                    for s in &svcs {
+                                        csv.push_str(&format!(
+                                            "\"{}\",\"{}\",{},{},{},\"{}\",\"{}\"\n",
+                                            s.name.replace('"', "\"\""),
+                                            s.display_name.replace('"', "\"\""),
+                                            s.status,
+                                            s.start_type,
+                                            s.pid,
+                                            s.binary_path.replace('"', "\"\""),
+                                            s.description.replace('"', "\"\"")
+                                        ));
+                                    }
+                                    match std::fs::write(&path, csv) {
+                                        Ok(()) => {
+                                            status_message.set(format!("Exported {} services to {}", svcs.len(), path.display()));
+                                        }
+                                        Err(e) => {
+                                            status_message.set(format!("Export failed: {}", e));
+                                        }
+                                    }
+                                    spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                        status_message.set(String::new());
+                                    });
+                                }
+                            });
+                        }
+                    },
+                    "Export CSV"
                 }
             }
 

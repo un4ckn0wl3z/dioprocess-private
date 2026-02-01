@@ -166,6 +166,7 @@ pub fn NetworkTab() -> Element {
     let current_sort_col = *sort_column.read();
     let current_sort_ord = *sort_order.read();
     let ctx_menu = context_menu.read().clone();
+    let export_connections = filtered_connections.clone();
 
     let sort_indicator = |column: NetworkSortColumn| -> &'static str {
         if current_sort_col == column {
@@ -264,7 +265,56 @@ pub fn NetworkTab() -> Element {
                             });
                         }
                     },
-                    "☠️ Kill Process"
+                    "Kill Process"
+                }
+
+                button {
+                    class: "btn btn-secondary",
+                    onclick: {
+                        let conns = export_connections.clone();
+                        move |_| {
+                            let conns = conns.clone();
+                            spawn(async move {
+                                let file = rfd::AsyncFileDialog::new()
+                                    .add_filter("CSV", &["csv"])
+                                    .set_file_name("network_connections.csv")
+                                    .set_title("Export Network Connections")
+                                    .save_file()
+                                    .await;
+                                if let Some(file) = file {
+                                    let path = file.path().to_path_buf();
+                                    let mut csv = String::from("Protocol,Local Address,Local Port,Remote Address,Remote Port,State,PID,Process\n");
+                                    for c in &conns {
+                                        let state_str = c.state.map(|s| s.to_string()).unwrap_or_default();
+                                        csv.push_str(&format!(
+                                            "{},{},{},{},{},{},{},\"{}\"\n",
+                                            c.protocol,
+                                            c.local_addr,
+                                            c.local_port,
+                                            c.remote_addr,
+                                            c.remote_port,
+                                            state_str,
+                                            c.pid,
+                                            c.process_name.replace('"', "\"\"")
+                                        ));
+                                    }
+                                    match std::fs::write(&path, csv) {
+                                        Ok(()) => {
+                                            status_message.set(format!("Exported {} connections to {}", conns.len(), path.display()));
+                                        }
+                                        Err(e) => {
+                                            status_message.set(format!("Export failed: {}", e));
+                                        }
+                                    }
+                                    spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                        status_message.set(String::new());
+                                    });
+                                }
+                            });
+                        }
+                    },
+                    "Export CSV"
                 }
             }
 

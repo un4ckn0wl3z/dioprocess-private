@@ -117,6 +117,7 @@ pub fn ProcessTab() -> Element {
     let current_sort_col = *sort_column.read();
     let current_sort_ord = *sort_order.read();
     let ctx_menu = context_menu.read().clone();
+    let export_processes = filtered_processes.clone();
 
     let sort_indicator = |column: SortColumn| -> &'static str {
         if current_sort_col == column {
@@ -197,7 +198,53 @@ pub fn ProcessTab() -> Element {
                             });
                         }
                     },
-                    "☠️ Kill Process"
+                    "Kill Process"
+                }
+
+                button {
+                    class: "btn btn-secondary",
+                    onclick: {
+                        let procs = export_processes.clone();
+                        move |_| {
+                            let procs = procs.clone();
+                            spawn(async move {
+                                let file = rfd::AsyncFileDialog::new()
+                                    .add_filter("CSV", &["csv"])
+                                    .set_file_name("processes.csv")
+                                    .set_title("Export Processes")
+                                    .save_file()
+                                    .await;
+                                if let Some(file) = file {
+                                    let path = file.path().to_path_buf();
+                                    let mut csv = String::from("PID,Name,CPU %,Threads,Memory (MB),Path\n");
+                                    for p in &procs {
+                                        csv.push_str(&format!(
+                                            "{},\"{}\",{:.1},{},{:.2},\"{}\"\n",
+                                            p.pid,
+                                            p.name.replace('"', "\"\""),
+                                            p.cpu_usage,
+                                            p.thread_count,
+                                            p.memory_mb,
+                                            p.exe_path.replace('"', "\"\"")
+                                        ));
+                                    }
+                                    match std::fs::write(&path, csv) {
+                                        Ok(()) => {
+                                            status_message.set(format!("Exported {} processes to {}", procs.len(), path.display()));
+                                        }
+                                        Err(e) => {
+                                            status_message.set(format!("Export failed: {}", e));
+                                        }
+                                    }
+                                    spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                        status_message.set(String::new());
+                                    });
+                                }
+                            });
+                        }
+                    },
+                    "Export CSV"
                 }
             }
 
