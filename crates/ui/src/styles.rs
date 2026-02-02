@@ -1305,4 +1305,157 @@ pub const CUSTOM_STYLES: &str = r#"
         pointer-events: none;
     }
 
+    /* Create Process Modal */
+    .create-process-modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 100;
+    }
+    .create-process-modal {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border: 1px solid rgba(34, 211, 238, 0.3);
+        border-radius: 12px;
+        width: 550px;
+        max-width: 90vw;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+    }
+    .create-process-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid rgba(34, 211, 238, 0.2);
+    }
+    .create-process-modal-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #22d3ee;
+    }
+    .create-process-modal-close {
+        width: 32px;
+        height: 32px;
+        border: none;
+        background: transparent;
+        color: #9ca3af;
+        font-size: 16px;
+        cursor: pointer;
+        border-radius: 6px;
+        transition: all 0.15s;
+    }
+    .create-process-modal-close:hover {
+        background: #dc2626;
+        color: white;
+    }
+    .create-process-form {
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+    .create-process-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .create-process-label {
+        font-size: 13px;
+        font-weight: 500;
+        color: #9ca3af;
+    }
+    .create-process-input {
+        padding: 10px 14px;
+        border: 1px solid rgba(34, 211, 238, 0.2);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        color: white;
+        font-size: 14px;
+        outline: none;
+        transition: border-color 0.15s;
+    }
+    .create-process-input:focus {
+        border-color: rgba(34, 211, 238, 0.5);
+        background: rgba(255, 255, 255, 0.12);
+    }
+    .create-process-input::placeholder {
+        color: #4b5563;
+    }
+    .create-process-path-row {
+        display: flex;
+        gap: 8px;
+    }
+    .create-process-path-row .create-process-input {
+        flex: 1;
+    }
+    .create-process-btn-browse {
+        padding: 10px 16px;
+        border: 1px solid rgba(34, 211, 238, 0.3);
+        border-radius: 8px;
+        background: rgba(34, 211, 238, 0.1);
+        color: #22d3ee;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.15s;
+        white-space: nowrap;
+    }
+    .create-process-btn-browse:hover {
+        background: rgba(34, 211, 238, 0.2);
+    }
+    .create-process-radio-group {
+        display: flex;
+        gap: 24px;
+    }
+    .create-process-radio-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #d1d5db;
+        font-size: 14px;
+        cursor: pointer;
+    }
+    .create-process-radio-label input[type="radio"] {
+        accent-color: #22d3ee;
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+    }
+    .create-process-checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #d1d5db;
+        font-size: 14px;
+        cursor: pointer;
+    }
+    .create-process-status {
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 14px;
+    }
+    .create-process-status-success {
+        background: rgba(74, 222, 128, 0.15);
+        color: #4ade80;
+        border: 1px solid rgba(74, 222, 128, 0.3);
+    }
+    .create-process-status-error {
+        background: rgba(248, 113, 113, 0.15);
+        color: #f87171;
+        border: 1px solid rgba(248, 113, 113, 0.3);
+    }
+    .create-process-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 16px 20px;
+        border-top: 1px solid rgba(34, 211, 238, 0.1);
+    }
+
 "#;

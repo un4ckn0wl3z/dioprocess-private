@@ -7,11 +7,14 @@ use process::{
     suspend_process, ProcessInfo,
 };
 
-use super::{GraphWindow, HandleWindow, MemoryWindow, ModuleWindow, ProcessRow, ThreadWindow};
+use super::{
+    CreateProcessWindow, GraphWindow, HandleWindow, MemoryWindow, ModuleWindow, ProcessRow,
+    ThreadWindow,
+};
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
-    ContextMenuState, SortColumn, SortOrder, GRAPH_WINDOW_STATE, HANDLE_WINDOW_STATE,
-    MEMORY_WINDOW_STATE, MODULE_WINDOW_STATE, THREAD_WINDOW_STATE,
+    ContextMenuState, SortColumn, SortOrder, CREATE_PROCESS_WINDOW_STATE, GRAPH_WINDOW_STATE,
+    HANDLE_WINDOW_STATE, MEMORY_WINDOW_STATE, MODULE_WINDOW_STATE, THREAD_WINDOW_STATE,
 };
 
 /// Process Tab component
@@ -245,6 +248,14 @@ pub fn ProcessTab() -> Element {
                         }
                     },
                     "Export CSV"
+                }
+
+                button {
+                    class: "btn btn-secondary",
+                    onclick: move |_| {
+                        *CREATE_PROCESS_WINDOW_STATE.write() = true;
+                    },
+                    "Create Process"
                 }
             }
 
@@ -810,6 +821,11 @@ pub fn ProcessTab() -> Element {
             // Graph Window Modal
             if let Some((pid, proc_name)) = GRAPH_WINDOW_STATE.read().clone() {
                 GraphWindow { pid: pid, process_name: proc_name }
+            }
+
+            // Create Process Window Modal
+            if *CREATE_PROCESS_WINDOW_STATE.read() {
+                CreateProcessWindow {}
             }
         }
     }

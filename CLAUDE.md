@@ -22,7 +22,7 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
-├── misc/          # DLL injection (4 methods), module unloading, memory ops
+├── misc/          # DLL injection (4 methods), process creation, process hollowing, module unloading, memory ops
 ├── ui/            # Dioxus components, routing, state, styles
 │   └── src/
 │       ├── components/
@@ -35,7 +35,8 @@ crates/
 │       │   ├── handle_window.rs  # Handle inspection modal
 │       │   ├── module_window.rs  # Module/DLL view + injection UI
 │       │   ├── memory_window.rs  # Memory regions view + hex dump + dump to file
-│       │   └── graph_window.rs   # Real-time CPU/memory performance graphs
+│       │   ├── graph_window.rs   # Real-time CPU/memory performance graphs
+│       │   └── create_process_window.rs  # Process creation + hollowing modal
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
 │       ├── helpers.rs            # Clipboard utilities
@@ -88,7 +89,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 - **Naming:** snake_case functions, PascalCase types, SCREAMING_SNAKE_CASE constants
 - **Error handling:** Custom error enums (`MiscError`, `ServiceError`) with `Result<T, E>`
 - **Unsafe:** Used for all Windows API calls; always paired with proper resource cleanup (CloseHandle)
-- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`)
+- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`)
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
@@ -100,6 +101,11 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 2. **Thread Hijack** — Suspend thread, redirect RIP/PC to shellcode
 3. **APC Queue** — QueueUserAPC + LoadLibraryW on all threads; fires when a thread enters alertable wait
 4. **Manual Mapping** — Parse PE, map sections, resolve imports, call DllMain
+
+## Process creation methods (misc crate)
+
+1. **Normal CreateProcess** — Launch executable via `CreateProcessW`, optionally suspended
+2. **Process Hollowing** — Create host process suspended, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, map payload PE sections, apply base relocations, update PEB ImageBaseAddress, set thread context entry point (RCX), resume thread
 
 ## CSV export
 
@@ -122,6 +128,16 @@ Real-time CPU and memory monitoring for individual processes:
 - **Memory dump** — Export any committed region to .bin file via save dialog (from action button, context menu, or hex dump view)
 - **Memory operations** — Commit reserved regions, decommit committed regions, free allocations (via misc crate)
 - **Filtering** — Filter by address, state, type, protection, or module name
+
+## Create process window
+
+Access via "Create Process" button in the process tab toolbar:
+- **Technique selector** — Choose between Normal (CreateProcess) or Process Hollowing
+- **Normal mode** — Select executable, optional arguments, optional "create suspended" checkbox
+- **Hollowing mode** — Select host executable and payload PE (64-bit only)
+- **File picker** — Native file dialog filtered to .exe files
+- **Status feedback** — Success shows PID/TID, errors show detailed message
+- Uses `misc::create_process()` and `misc::hollow_process()` functions
 
 ## No tests
 

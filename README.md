@@ -24,6 +24,9 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - **Kill Process** - Terminate processes with a click or keyboard shortcut
 - **Sortable Columns** - Sort by PID, Name, CPU, Threads, or Memory (ascending/descending)
 - **Export to CSV** - Export filtered process list to CSV file
+- **Create Process** - Launch new processes with two techniques:
+  - **Normal (CreateProcess)** - Standard process creation, optionally suspended
+  - **Process Hollowing** - Create host process suspended, replace its image with a payload PE
 
 ### Network Monitoring
 - **Connection List** - View all TCP and UDP connections
@@ -125,6 +128,19 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - Free memory allocations
 - Auto-refresh memory list
 
+### Create Process (Button in toolbar)
+- **Normal Mode (CreateProcess)**
+  - Launch any executable with optional command line arguments
+  - Option to create the process in a suspended state
+  - Returns PID and Thread ID on success
+- **Process Hollowing Mode**
+  - Select a host executable (will be created suspended)
+  - Select a payload PE (64-bit executable)
+  - Unmaps the host's original image and replaces it with the payload
+  - Applies base relocations if needed
+  - Updates PEB and thread context, then resumes execution
+  - Useful for advanced process manipulation and security research
+
 ### Keyboard Shortcuts
 | Key | Action |
 |-----|--------|
@@ -199,8 +215,10 @@ cargo build --release
 **misc crate:**
 - `Win32_System_Memory` - Virtual memory allocation, commit, decommit, free
 - `Win32_System_LibraryLoader` - Module loading/unloading
+- `Win32_System_Threading` - Process creation (CreateProcessW), termination
 - `Win32_System_Diagnostics_Debug` - Process memory operations, thread context manipulation
 - `Win32_System_Kernel` - Thread context structures (CONTEXT)
+- `ntapi` - Native API for NtQueryInformationProcess, NtUnmapViewOfSection (process hollowing)
 
 ## Project Structure
 
@@ -229,7 +247,7 @@ dioprocess/
     ├── misc/               # Library - Advanced process utilities
     │   ├── Cargo.toml
     │   └── src/
-    │       └── lib.rs      # DLL injection (LoadLibrary, Thread Hijack, APC Queue, Manual Map), unloading, memory ops
+    │       └── lib.rs      # DLL injection, process creation, process hollowing, unloading, memory ops
     ├── ui/                 # Library - Dioxus UI components
     │   ├── Cargo.toml
     │   └── src/
@@ -240,16 +258,17 @@ dioprocess/
     │       ├── styles.rs           # CSS styles
     │       └── components/
     │           ├── mod.rs
-    │           ├── app.rs          # Main app with routing
-    │           ├── process_tab.rs  # Process list view
-    │           ├── network_tab.rs  # Network connections view
-    │           ├── service_tab.rs  # Windows services view
-    │           ├── process_row.rs  # Process table row
-    │           ├── thread_window.rs  # Thread modal
-    │           ├── handle_window.rs  # Handle modal
-    │           ├── module_window.rs  # Module modal with DLL injection
-    │           ├── memory_window.rs  # Memory regions modal with hex dump
-    │           └── graph_window.rs   # Real-time CPU/memory graphs
+    │           ├── app.rs               # Main app with routing
+    │           ├── process_tab.rs       # Process list view
+    │           ├── network_tab.rs       # Network connections view
+    │           ├── service_tab.rs       # Windows services view
+    │           ├── process_row.rs       # Process table row
+    │           ├── thread_window.rs     # Thread modal
+    │           ├── handle_window.rs     # Handle modal
+    │           ├── module_window.rs     # Module modal with DLL injection
+    │           ├── memory_window.rs     # Memory regions modal with hex dump
+    │           ├── graph_window.rs      # Real-time CPU/memory graphs
+    │           └── create_process_window.rs  # Process creation modal
     └── dioprocess/         # Binary - Desktop application entry
         ├── Cargo.toml
         ├── build.rs        # Windows manifest embedding
@@ -266,7 +285,7 @@ dioprocess/
 | `process` | Library | Windows API bindings for process, thread, handle, module, and memory management |
 | `network` | Library | Windows API bindings for TCP/UDP network connection enumeration |
 | `service` | Library | Windows API bindings for service enumeration, start, stop, create, and delete |
-| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, APC Queue, Manual Map), module unloading, and memory operations |
+| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, APC Queue, Manual Map), process creation, process hollowing, module unloading, and memory operations |
 | `ui` | Library | Dioxus UI components with routing, styles, and state management |
 | `dioprocess` | Binary | Desktop application entry point with Windows manifest |
 

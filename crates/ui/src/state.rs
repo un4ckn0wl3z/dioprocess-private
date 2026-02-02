@@ -17,6 +17,9 @@ pub static MEMORY_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::gl
 /// Graph window state - stores PID and process name to open in new window
 pub static GRAPH_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::global(|| None);
 
+/// Create process window state - controls visibility of create process modal
+pub static CREATE_PROCESS_WINDOW_STATE: GlobalSignal<bool> = Signal::global(|| false);
+
 /// Sort column options
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum SortColumn {
