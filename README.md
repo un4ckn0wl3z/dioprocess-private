@@ -83,6 +83,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
     - Thread Hijack - Suspend thread, redirect RIP to shellcode
     - APC Queue - QueueUserAPC + LoadLibraryW on all threads
     - Manual Map - Map PE sections, resolve imports, call DllMain
+  - Steal Token - Steal process token and launch a new process under its security context
 
 ### Thread View (Right-click > View Threads)
 - View all threads of a process in a modal window
@@ -140,6 +141,14 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
   - Applies base relocations if needed
   - Updates PEB and thread context, then resumes execution
   - Useful for advanced process manipulation and security research
+
+### Token Thief (Right-click > Miscellaneous > Steal Token)
+- Select a target process whose token you want to steal
+- Pick an executable to launch under the stolen token's security context
+- Optionally provide command line arguments
+- Opens the target process, duplicates its primary token, enables SeAssignPrimaryTokenPrivilege, impersonates, and creates a new process via CreateProcessAsUserW
+- Returns the new process PID and Thread ID on success
+- Useful for privilege escalation research and security testing
 
 ### Keyboard Shortcuts
 | Key | Action |
@@ -215,9 +224,10 @@ cargo build --release
 **misc crate:**
 - `Win32_System_Memory` - Virtual memory allocation, commit, decommit, free
 - `Win32_System_LibraryLoader` - Module loading/unloading
-- `Win32_System_Threading` - Process creation (CreateProcessW), termination
+- `Win32_System_Threading` - Process creation (CreateProcessW, CreateProcessAsUserW), termination, token access (OpenProcessToken)
 - `Win32_System_Diagnostics_Debug` - Process memory operations, thread context manipulation
 - `Win32_System_Kernel` - Thread context structures (CONTEXT)
+- `Win32_Security` - Token duplication, privilege adjustment, impersonation (DuplicateTokenEx, AdjustTokenPrivileges, ImpersonateLoggedOnUser)
 - `ntapi` - Native API for NtQueryInformationProcess, NtUnmapViewOfSection (process hollowing)
 
 ## Project Structure
@@ -247,7 +257,7 @@ dioprocess/
     ├── misc/               # Library - Advanced process utilities
     │   ├── Cargo.toml
     │   └── src/
-    │       └── lib.rs      # DLL injection, process creation, process hollowing, unloading, memory ops
+    │       └── lib.rs      # DLL injection, process creation, process hollowing, token theft, unloading, memory ops
     ├── ui/                 # Library - Dioxus UI components
     │   ├── Cargo.toml
     │   └── src/
@@ -268,7 +278,8 @@ dioprocess/
     │           ├── module_window.rs     # Module modal with DLL injection
     │           ├── memory_window.rs     # Memory regions modal with hex dump
     │           ├── graph_window.rs      # Real-time CPU/memory graphs
-    │           └── create_process_window.rs  # Process creation modal
+    │           ├── create_process_window.rs  # Process creation modal
+    │           └── token_thief_window.rs     # Token theft modal
     └── dioprocess/         # Binary - Desktop application entry
         ├── Cargo.toml
         ├── build.rs        # Windows manifest embedding
@@ -285,7 +296,7 @@ dioprocess/
 | `process` | Library | Windows API bindings for process, thread, handle, module, and memory management |
 | `network` | Library | Windows API bindings for TCP/UDP network connection enumeration |
 | `service` | Library | Windows API bindings for service enumeration, start, stop, create, and delete |
-| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, APC Queue, Manual Map), process creation, process hollowing, module unloading, and memory operations |
+| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, APC Queue, Manual Map), process creation, process hollowing, token theft, module unloading, and memory operations |
 | `ui` | Library | Dioxus UI components with routing, styles, and state management |
 | `dioprocess` | Binary | Desktop application entry point with Windows manifest |
 

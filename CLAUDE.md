@@ -22,7 +22,7 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
-├── misc/          # DLL injection (4 methods), process creation, process hollowing, module unloading, memory ops
+├── misc/          # DLL injection (4 methods), process creation, process hollowing, token theft, module unloading, memory ops
 ├── ui/            # Dioxus components, routing, state, styles
 │   └── src/
 │       ├── components/
@@ -36,7 +36,8 @@ crates/
 │       │   ├── module_window.rs  # Module/DLL view + injection UI
 │       │   ├── memory_window.rs  # Memory regions view + hex dump + dump to file
 │       │   ├── graph_window.rs   # Real-time CPU/memory performance graphs
-│       │   └── create_process_window.rs  # Process creation + hollowing modal
+│       │   ├── create_process_window.rs  # Process creation + hollowing modal
+│       │   └── token_thief_window.rs    # Token theft + impersonation modal
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
 │       ├── helpers.rs            # Clipboard utilities
@@ -55,7 +56,7 @@ UI Layer (ui crate — Dioxus components + signals)
     ├── process crate  → Windows API (ToolHelp32, Threading, ProcessStatus)
     ├── network crate  → Windows API (IpHelper, WinSock)
     ├── service crate  → Windows API (Services / SCM)
-    └── misc crate     → Windows API (Memory, LibraryLoader, Debug)
+    └── misc crate     → Windows API (Memory, LibraryLoader, Debug, Security)
 ```
 
 UI components call library functions directly. Libraries wrap unsafe Windows API calls and return typed Rust structs. Dioxus signals provide reactive state with 3-second auto-refresh.
@@ -89,7 +90,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 - **Naming:** snake_case functions, PascalCase types, SCREAMING_SNAKE_CASE constants
 - **Error handling:** Custom error enums (`MiscError`, `ServiceError`) with `Result<T, E>`
 - **Unsafe:** Used for all Windows API calls; always paired with proper resource cleanup (CloseHandle)
-- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`)
+- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`)
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
@@ -106,6 +107,10 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 
 1. **Normal CreateProcess** — Launch executable via `CreateProcessW`, optionally suspended
 2. **Process Hollowing** — Create host process suspended, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, map payload PE sections, apply base relocations, update PEB ImageBaseAddress, set thread context entry point (RCX), resume thread
+
+## Token theft (misc crate)
+
+`steal_token(pid, exe_path, args)` — Open target process with `PROCESS_QUERY_LIMITED_INFORMATION`, obtain its primary token via `OpenProcessToken`, duplicate as a primary token with `DuplicateTokenEx(SecurityAnonymous, TokenPrimary)`, enable `SeAssignPrimaryTokenPrivilege` via `AdjustTokenPrivileges`, impersonate with `ImpersonateLoggedOnUser`, spawn a new process under that token via `CreateProcessAsUserW`, then `RevertToSelf`. Access via right-click context menu > Miscellaneous > Steal Token.
 
 ## CSV export
 
@@ -138,6 +143,15 @@ Access via "Create Process" button in the process tab toolbar:
 - **File picker** — Native file dialog filtered to .exe files
 - **Status feedback** — Success shows PID/TID, errors show detailed message
 - Uses `misc::create_process()` and `misc::hollow_process()` functions
+
+## Token thief window
+
+Access via right-click context menu > Miscellaneous > Steal Token:
+- **Source display** — Shows the target process name and PID whose token will be stolen
+- **Executable picker** — Select the executable to launch under the stolen token
+- **Arguments input** — Optional command line arguments
+- **Status feedback** — Success shows new PID/TID, errors show detailed message
+- Uses `misc::steal_token()` function
 
 ## No tests
 
