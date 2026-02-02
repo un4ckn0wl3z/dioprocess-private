@@ -92,6 +92,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
+- **Context menu positioning:** CSS `clamp()` keeps the menu within viewport bounds; submenus are bottom-anchored to avoid overflow
 
 ## DLL injection methods (misc crate)
 
