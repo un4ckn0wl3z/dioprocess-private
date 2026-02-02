@@ -108,7 +108,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 
 1. **Normal CreateProcess** — Launch executable via `CreateProcessW`, optionally suspended
 2. **Process Hollowing** — Create host process suspended, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, map payload PE sections, apply base relocations, update PEB ImageBaseAddress, set thread context entry point (RCX), resume thread
-3. **Process Ghosting** — Create temp file, mark for deletion, write payload, create SEC_IMAGE section, close file (deleted), create process from orphaned section via `NtCreateProcessEx`, set up PEB and parameters, create thread at entry point
+3. **Process Ghosting** — Create unique temp file, mark for deletion with `NtSetInformationFile(FileDispositionInformationEx)`, write payload, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, set up PEB process parameters with `RtlCreateProcessParametersEx`, create initial thread via `NtCreateThreadEx` with PE stack sizes
 
 ## Token theft (misc crate)
 
@@ -157,13 +157,28 @@ Access via right-click context menu > Miscellaneous > Steal Token:
 
 ## Process ghosting (misc crate)
 
-`ghost_process(exe_path)` — Creates a process whose backing file no longer exists on disk. Reads the payload PE, creates a temp file, marks it for deletion via `NtSetInformationFile(FileDispositionInformation)`, writes the payload, creates an image section via `CreateFileMappingW(SEC_IMAGE)`, closes the file handle (triggering deletion while the section survives), then creates a process from the orphaned section via `NtCreateProcessEx`. Sets up PEB process parameters with pointer relocation and creates the initial thread at `ImageBase + EntryPointRVA`. Access via "Ghost Process" button in the process tab toolbar.
+`ghost_process(exe_path)` — Creates a process whose backing file no longer exists on disk. Algorithm:
+
+1. Read payload PE, validate 64-bit PE32+ format
+2. Resolve NT functions dynamically (`NtSetInformationFile`, `NtCreateSection`, `NtCreateProcessEx`, `NtCreateThreadEx`, `RtlCreateProcessParametersEx`, `RtlDestroyProcessParameters`)
+3. Create unique temp file (`Ghost_{timestamp}.tmp`), mark for deletion via `NtSetInformationFile(FileDispositionInformationEx)` with POSIX semantics (fallback to legacy FileDispositionInformation)
+4. Write payload to temp file, create image section via `NtCreateSection(SEC_IMAGE)`
+5. Close file handle (triggering deletion while section survives)
+6. Create process from orphaned section via `NtCreateProcessEx`
+7. Query PEB, read ImageBaseAddress and remote PE header for entry point RVA and stack sizes
+8. Set up process parameters via `RtlCreateProcessParametersEx` with NT path format (`\??\C:\...`), relocate pointer fields for remote address space
+9. Write parameters to remote process, update `PEB.ProcessParameters`
+10. Create initial thread via `NtCreateThreadEx` with proper stack reserve/commit from PE header
+11. Clean up local resources with `RtlDestroyProcessParameters`
+
+Access via "Ghost Process" button in the process tab toolbar.
 
 ## Ghost process window
 
 Access via "Ghost Process" button in the process tab toolbar:
 - **Payload picker** — Select the 64-bit executable to ghost
-- **Status feedback** — Success shows new PID, errors show detailed message
+- **Status feedback** — Success shows new PID, errors show detailed NT status codes
+- **Implementation details** — Uses `NtCreateSection`, `NtCreateProcessEx`, `NtCreateThreadEx` for proper process/thread creation
 - Uses `misc::ghost_process()` function
 
 ## No tests

@@ -145,9 +145,12 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 ### Ghost Process (Button in toolbar)
 - Create a process whose backing file is deleted from disk
 - Select a 64-bit payload executable
-- Creates temp file, marks for deletion, writes payload, creates image section
+- Creates unique temp file, marks for deletion via `NtSetInformationFile`
+- Writes payload, creates image section via `NtCreateSection(SEC_IMAGE)`
 - File is deleted while the section survives
-- Process is created from the orphaned section
+- Process is created from the orphaned section via `NtCreateProcessEx`
+- Sets up PEB process parameters with `RtlCreateProcessParametersEx`
+- Creates initial thread via `NtCreateThreadEx` with proper stack sizes from PE header
 - Returns PID on success
 
 ### Token Thief (Right-click > Miscellaneous > Steal Token)
@@ -160,9 +163,12 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 
 ### Process Ghost (Right-click > Miscellaneous > Process Ghost)
 - Select a 64-bit payload executable to ghost
-- Creates a temp file, marks it for deletion, writes the payload, creates a SEC_IMAGE section
-- Closes the file handle (triggering deletion), then creates a process from the orphaned section via NtCreateProcessEx
-- Sets up PEB process parameters and creates the initial thread
+- Creates a unique temp file (`Ghost_{timestamp}.tmp`), marks it for deletion via `NtSetInformationFile`
+- Writes the payload, creates a `SEC_IMAGE` section via `NtCreateSection`
+- Closes the file handle (triggering deletion while section survives)
+- Creates a process from the orphaned section via `NtCreateProcessEx`
+- Sets up PEB process parameters with `RtlCreateProcessParametersEx` (NT path format, pointer relocation)
+- Creates the initial thread via `NtCreateThreadEx` with stack reserve/commit from PE header
 - The resulting process runs with no backing file on disk
 - Returns the ghosted process PID on success
 - Useful for process evasion research and security testing
