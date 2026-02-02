@@ -11,6 +11,7 @@ mod process_row;
 mod process_tab;
 mod service_tab;
 mod thread_window;
+mod token_thief_window;
 
 pub use app::{App, Layout};
 pub use create_process_window::CreateProcessWindow;
@@ -23,3 +24,4 @@ pub use process_row::ProcessRow;
 pub use process_tab::ProcessTab;
 pub use service_tab::ServiceTab;
 pub use thread_window::ThreadWindow;
+pub use token_thief_window::TokenThiefWindow;

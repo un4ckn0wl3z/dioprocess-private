@@ -9,12 +9,13 @@ use process::{
 
 use super::{
     CreateProcessWindow, GraphWindow, HandleWindow, MemoryWindow, ModuleWindow, ProcessRow,
-    ThreadWindow,
+    ThreadWindow, TokenThiefWindow,
 };
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
     ContextMenuState, SortColumn, SortOrder, CREATE_PROCESS_WINDOW_STATE, GRAPH_WINDOW_STATE,
     HANDLE_WINDOW_STATE, MEMORY_WINDOW_STATE, MODULE_WINDOW_STATE, THREAD_WINDOW_STATE,
+    TOKEN_THIEF_WINDOW_STATE,
 };
 
 /// Process Tab component
@@ -793,6 +794,24 @@ pub fn ProcessTab() -> Element {
                                     }
                                 }
                             }
+
+                            // Steal Token button
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    if let Some(pid) = ctx_menu.pid {
+                                        let proc_name = processes.read()
+                                            .iter()
+                                            .find(|p| p.pid == pid)
+                                            .map(|p| p.name.clone())
+                                            .unwrap_or_else(|| format!("PID {}", pid));
+                                        *TOKEN_THIEF_WINDOW_STATE.write() = Some((pid, proc_name));
+                                    }
+                                    context_menu.set(ContextMenuState::default());
+                                },
+                                span { "🔑" }
+                                span { "Steal Token" }
+                            }
                         }
                     }
                 }
@@ -826,6 +845,11 @@ pub fn ProcessTab() -> Element {
             // Create Process Window Modal
             if *CREATE_PROCESS_WINDOW_STATE.read() {
                 CreateProcessWindow {}
+            }
+
+            // Token Thief Window Modal
+            if let Some((pid, proc_name)) = TOKEN_THIEF_WINDOW_STATE.read().clone() {
+                TokenThiefWindow { pid: pid, process_name: proc_name }
             }
         }
     }
