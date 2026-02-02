@@ -23,6 +23,9 @@ pub static CREATE_PROCESS_WINDOW_STATE: GlobalSignal<bool> = Signal::global(|| f
 /// Token thief window state - stores PID and process name to open token thief modal
 pub static TOKEN_THIEF_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::global(|| None);
 
+/// Ghost process window state - controls visibility of ghost process modal
+pub static GHOST_PROCESS_WINDOW_STATE: GlobalSignal<bool> = Signal::global(|| false);
+
 /// Sort column options
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum SortColumn {

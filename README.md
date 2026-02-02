@@ -84,6 +84,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
     - APC Queue - QueueUserAPC + LoadLibraryW on all threads
     - Manual Map - Map PE sections, resolve imports, call DllMain
   - Steal Token - Steal process token and launch a new process under its security context
+  - Process Ghost - Create a process whose backing file is deleted from disk
 
 ### Thread View (Right-click > View Threads)
 - View all threads of a process in a modal window
@@ -149,6 +150,15 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - Opens the target process, duplicates its primary token, enables SeAssignPrimaryTokenPrivilege, impersonates, and creates a new process via CreateProcessAsUserW
 - Returns the new process PID and Thread ID on success
 - Useful for privilege escalation research and security testing
+
+### Process Ghost (Right-click > Miscellaneous > Process Ghost)
+- Select a 64-bit payload executable to ghost
+- Creates a temp file, marks it for deletion, writes the payload, creates a SEC_IMAGE section
+- Closes the file handle (triggering deletion), then creates a process from the orphaned section via NtCreateProcessEx
+- Sets up PEB process parameters and creates the initial thread
+- The resulting process runs with no backing file on disk
+- Returns the ghosted process PID on success
+- Useful for process evasion research and security testing
 
 ### Keyboard Shortcuts
 | Key | Action |
@@ -227,6 +237,8 @@ cargo build --release
 - `Win32_System_Threading` - Process creation (CreateProcessW, CreateProcessAsUserW), termination, token access (OpenProcessToken)
 - `Win32_System_Diagnostics_Debug` - Process memory operations, thread context manipulation
 - `Win32_System_Kernel` - Thread context structures (CONTEXT)
+- `Win32_Storage_FileSystem` - File creation (CreateFileW, WriteFile) for process ghosting temp files
+- `Win32_System_IO` - I/O status block types for NtSetInformationFile
 - `Win32_Security` - Token duplication, privilege adjustment, impersonation (DuplicateTokenEx, AdjustTokenPrivileges, ImpersonateLoggedOnUser)
 - `ntapi` - Native API for NtQueryInformationProcess, NtUnmapViewOfSection (process hollowing)
 
@@ -257,7 +269,7 @@ dioprocess/
     ├── misc/               # Library - Advanced process utilities
     │   ├── Cargo.toml
     │   └── src/
-    │       └── lib.rs      # DLL injection, process creation, process hollowing, token theft, unloading, memory ops
+    │       └── lib.rs      # DLL injection, process creation, process hollowing, process ghosting, token theft, unloading, memory ops
     ├── ui/                 # Library - Dioxus UI components
     │   ├── Cargo.toml
     │   └── src/
@@ -279,7 +291,8 @@ dioprocess/
     │           ├── memory_window.rs     # Memory regions modal with hex dump
     │           ├── graph_window.rs      # Real-time CPU/memory graphs
     │           ├── create_process_window.rs  # Process creation modal
-    │           └── token_thief_window.rs     # Token theft modal
+    │           ├── token_thief_window.rs     # Token theft modal
+    │           └── ghost_process_window.rs   # Process ghosting modal
     └── dioprocess/         # Binary - Desktop application entry
         ├── Cargo.toml
         ├── build.rs        # Windows manifest embedding
@@ -296,7 +309,7 @@ dioprocess/
 | `process` | Library | Windows API bindings for process, thread, handle, module, and memory management |
 | `network` | Library | Windows API bindings for TCP/UDP network connection enumeration |
 | `service` | Library | Windows API bindings for service enumeration, start, stop, create, and delete |
-| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, APC Queue, Manual Map), process creation, process hollowing, token theft, module unloading, and memory operations |
+| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, APC Queue, Manual Map), process creation, process hollowing, process ghosting, token theft, module unloading, and memory operations |
 | `ui` | Library | Dioxus UI components with routing, styles, and state management |
 | `dioprocess` | Binary | Desktop application entry point with Windows manifest |
 

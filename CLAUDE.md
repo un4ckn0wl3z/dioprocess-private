@@ -37,7 +37,8 @@ crates/
 │       │   ├── memory_window.rs  # Memory regions view + hex dump + dump to file
 │       │   ├── graph_window.rs   # Real-time CPU/memory performance graphs
 │       │   ├── create_process_window.rs  # Process creation + hollowing modal
-│       │   └── token_thief_window.rs    # Token theft + impersonation modal
+│       │   ├── token_thief_window.rs    # Token theft + impersonation modal
+│       │   └── ghost_process_window.rs  # Process ghosting modal
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
 │       ├── helpers.rs            # Clipboard utilities
@@ -90,7 +91,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 - **Naming:** snake_case functions, PascalCase types, SCREAMING_SNAKE_CASE constants
 - **Error handling:** Custom error enums (`MiscError`, `ServiceError`) with `Result<T, E>`
 - **Unsafe:** Used for all Windows API calls; always paired with proper resource cleanup (CloseHandle)
-- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`)
+- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`)
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
@@ -107,6 +108,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 
 1. **Normal CreateProcess** — Launch executable via `CreateProcessW`, optionally suspended
 2. **Process Hollowing** — Create host process suspended, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, map payload PE sections, apply base relocations, update PEB ImageBaseAddress, set thread context entry point (RCX), resume thread
+3. **Process Ghosting** — Create temp file, mark for deletion, write payload, create SEC_IMAGE section, close file (deleted), create process from orphaned section via `NtCreateProcessEx`, set up PEB and parameters, create thread at entry point
 
 ## Token theft (misc crate)
 
@@ -152,6 +154,17 @@ Access via right-click context menu > Miscellaneous > Steal Token:
 - **Arguments input** — Optional command line arguments
 - **Status feedback** — Success shows new PID/TID, errors show detailed message
 - Uses `misc::steal_token()` function
+
+## Process ghosting (misc crate)
+
+`ghost_process(exe_path)` — Creates a process whose backing file no longer exists on disk. Reads the payload PE, creates a temp file, marks it for deletion via `NtSetInformationFile(FileDispositionInformation)`, writes the payload, creates an image section via `CreateFileMappingW(SEC_IMAGE)`, closes the file handle (triggering deletion while the section survives), then creates a process from the orphaned section via `NtCreateProcessEx`. Sets up PEB process parameters with pointer relocation and creates the initial thread at `ImageBase + EntryPointRVA`. Access via right-click context menu > Miscellaneous > Process Ghost.
+
+## Ghost process window
+
+Access via right-click context menu > Miscellaneous > Process Ghost:
+- **Payload picker** — Select the 64-bit executable to ghost
+- **Status feedback** — Success shows new PID, errors show detailed message
+- Uses `misc::ghost_process()` function
 
 ## No tests
 

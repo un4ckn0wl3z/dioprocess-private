@@ -8,14 +8,14 @@ use process::{
 };
 
 use super::{
-    CreateProcessWindow, GraphWindow, HandleWindow, MemoryWindow, ModuleWindow, ProcessRow,
-    ThreadWindow, TokenThiefWindow,
+    CreateProcessWindow, GhostProcessWindow, GraphWindow, HandleWindow, MemoryWindow,
+    ModuleWindow, ProcessRow, ThreadWindow, TokenThiefWindow,
 };
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
-    ContextMenuState, SortColumn, SortOrder, CREATE_PROCESS_WINDOW_STATE, GRAPH_WINDOW_STATE,
-    HANDLE_WINDOW_STATE, MEMORY_WINDOW_STATE, MODULE_WINDOW_STATE, THREAD_WINDOW_STATE,
-    TOKEN_THIEF_WINDOW_STATE,
+    ContextMenuState, SortColumn, SortOrder, CREATE_PROCESS_WINDOW_STATE,
+    GHOST_PROCESS_WINDOW_STATE, GRAPH_WINDOW_STATE, HANDLE_WINDOW_STATE, MEMORY_WINDOW_STATE,
+    MODULE_WINDOW_STATE, THREAD_WINDOW_STATE, TOKEN_THIEF_WINDOW_STATE,
 };
 
 /// Process Tab component
@@ -257,6 +257,14 @@ pub fn ProcessTab() -> Element {
                         *CREATE_PROCESS_WINDOW_STATE.write() = true;
                     },
                     "Create Process"
+                }
+
+                button {
+                    class: "btn btn-secondary",
+                    onclick: move |_| {
+                        *GHOST_PROCESS_WINDOW_STATE.write() = true;
+                    },
+                    "Process Ghosting"
                 }
             }
 
@@ -851,6 +859,12 @@ pub fn ProcessTab() -> Element {
             if let Some((pid, proc_name)) = TOKEN_THIEF_WINDOW_STATE.read().clone() {
                 TokenThiefWindow { pid: pid, process_name: proc_name }
             }
+
+            // Create Ghosting Window Modal
+            if *GHOST_PROCESS_WINDOW_STATE.read() {
+                GhostProcessWindow {}
+            }
+
         }
     }
 }
