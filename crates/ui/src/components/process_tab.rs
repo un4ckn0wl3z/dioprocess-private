@@ -1,7 +1,7 @@
 //! Process tab component
 
 use dioxus::prelude::*;
-use misc::{inject_dll, inject_dll_manual_map, inject_dll_thread_hijack};
+use misc::{inject_dll, inject_dll_apc_queue, inject_dll_manual_map, inject_dll_thread_hijack};
 use process::{
     get_processes, get_system_stats, kill_process, open_file_location, resume_process,
     suspend_process, ProcessInfo,
@@ -680,6 +680,49 @@ pub fn ProcessTab() -> Element {
                                         },
                                         span { "🧵" }
                                         span { "Thread Hijack" }
+                                    }
+
+                                    // APC Queue method
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("DLL Files", &["dll"])
+                                                        .set_title("Select DLL to inject (APC Queue)")
+                                                        .pick_file()
+                                                        .await;
+
+                                                    if let Some(file) = file {
+                                                        let path = file.path().to_string_lossy().to_string();
+                                                        match inject_dll_apc_queue(pid, &path) {
+                                                            Ok(()) => {
+                                                                status_message.set(format!(
+                                                                    "✓ DLL injected into process {} (APC Queue)",
+                                                                    pid
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ APC queue injection failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        span { "📬" }
+                                        span { "APC Queue" }
                                     }
 
                                     // Manual Map method

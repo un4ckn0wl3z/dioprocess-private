@@ -22,7 +22,7 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
-├── misc/          # DLL injection (3 methods), module unloading, memory ops
+├── misc/          # DLL injection (4 methods), module unloading, memory ops
 ├── ui/            # Dioxus components, routing, state, styles
 │   └── src/
 │       ├── components/
@@ -97,7 +97,8 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 
 1. **LoadLibrary** — Classic CreateRemoteThread + WriteProcessMemory
 2. **Thread Hijack** — Suspend thread, redirect RIP/PC to shellcode
-3. **Manual Mapping** — Parse PE, map sections, resolve imports, call DllMain
+3. **APC Queue** — QueueUserAPC + LoadLibraryW on all threads; fires when a thread enters alertable wait
+4. **Manual Mapping** — Parse PE, map sections, resolve imports, call DllMain
 
 ## CSV export
 

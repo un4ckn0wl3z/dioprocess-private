@@ -73,6 +73,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - DLL Injection (submenu)
   - LoadLibrary - Classic CreateRemoteThread + LoadLibraryW
   - Thread Hijack - Suspend thread, redirect RIP to shellcode
+  - APC Queue - QueueUserAPC + LoadLibraryW on all threads
   - Manual Map - Map PE sections, resolve imports, call DllMain
 - Refresh List
 
@@ -224,7 +225,7 @@ dioprocess/
     ├── misc/               # Library - Advanced process utilities
     │   ├── Cargo.toml
     │   └── src/
-    │       └── lib.rs      # DLL injection (LoadLibrary, Thread Hijack, Manual Map), unloading, memory ops
+    │       └── lib.rs      # DLL injection (LoadLibrary, Thread Hijack, APC Queue, Manual Map), unloading, memory ops
     ├── ui/                 # Library - Dioxus UI components
     │   ├── Cargo.toml
     │   └── src/
@@ -261,7 +262,7 @@ dioprocess/
 | `process` | Library | Windows API bindings for process, thread, handle, module, and memory management |
 | `network` | Library | Windows API bindings for TCP/UDP network connection enumeration |
 | `service` | Library | Windows API bindings for service enumeration, start, stop, create, and delete |
-| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, Manual Map), module unloading, and memory operations |
+| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, APC Queue, Manual Map), module unloading, and memory operations |
 | `ui` | Library | Dioxus UI components with routing, styles, and state management |
 | `dioprocess` | Binary | Desktop application entry point with Windows manifest |
 
