@@ -473,7 +473,7 @@ pub const CUSTOM_STYLES: &str = r#"
         display: none;
         position: absolute;
         left: 100%;
-        top: 0;
+        bottom: 0;
         background: #1e293b;
         border: 1px solid rgba(34, 211, 238, 0.3);
         border-radius: 8px;

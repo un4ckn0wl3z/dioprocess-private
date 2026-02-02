@@ -355,7 +355,7 @@ pub fn ProcessTab() -> Element {
             if ctx_menu.visible {
                 div {
                     class: "context-menu",
-                    style: "left: {ctx_menu.x}px; top: {ctx_menu.y}px;",
+                    style: "left: {ctx_menu.x}px; top: clamp(5px, {ctx_menu.y}px, calc(100vh - 380px));",
                     onclick: move |e| e.stop_propagation(),
 
                     button {

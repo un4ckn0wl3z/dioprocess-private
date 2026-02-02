@@ -59,6 +59,8 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - **Tab-based Navigation** - Switch between Processes, Network, and Services views
 
 ### Context Menu (Right-Click)
+- Auto-repositions to stay within viewport on small windows (CSS `clamp`)
+- Submenus open upward (bottom-anchored) to avoid clipping
 - Kill Process
 - Suspend Process
 - Resume Process
