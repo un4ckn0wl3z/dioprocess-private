@@ -84,7 +84,6 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
     - APC Queue - QueueUserAPC + LoadLibraryW on all threads
     - Manual Map - Map PE sections, resolve imports, call DllMain
   - Steal Token - Steal process token and launch a new process under its security context
-  - Process Ghost - Create a process whose backing file is deleted from disk
 
 ### Thread View (Right-click > View Threads)
 - View all threads of a process in a modal window
@@ -142,6 +141,14 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
   - Applies base relocations if needed
   - Updates PEB and thread context, then resumes execution
   - Useful for advanced process manipulation and security research
+
+### Ghost Process (Button in toolbar)
+- Create a process whose backing file is deleted from disk
+- Select a 64-bit payload executable
+- Creates temp file, marks for deletion, writes payload, creates image section
+- File is deleted while the section survives
+- Process is created from the orphaned section
+- Returns PID on success
 
 ### Token Thief (Right-click > Miscellaneous > Steal Token)
 - Select a target process whose token you want to steal

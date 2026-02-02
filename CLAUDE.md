@@ -157,11 +157,11 @@ Access via right-click context menu > Miscellaneous > Steal Token:
 
 ## Process ghosting (misc crate)
 
-`ghost_process(exe_path)` — Creates a process whose backing file no longer exists on disk. Reads the payload PE, creates a temp file, marks it for deletion via `NtSetInformationFile(FileDispositionInformation)`, writes the payload, creates an image section via `CreateFileMappingW(SEC_IMAGE)`, closes the file handle (triggering deletion while the section survives), then creates a process from the orphaned section via `NtCreateProcessEx`. Sets up PEB process parameters with pointer relocation and creates the initial thread at `ImageBase + EntryPointRVA`. Access via right-click context menu > Miscellaneous > Process Ghost.
+`ghost_process(exe_path)` — Creates a process whose backing file no longer exists on disk. Reads the payload PE, creates a temp file, marks it for deletion via `NtSetInformationFile(FileDispositionInformation)`, writes the payload, creates an image section via `CreateFileMappingW(SEC_IMAGE)`, closes the file handle (triggering deletion while the section survives), then creates a process from the orphaned section via `NtCreateProcessEx`. Sets up PEB process parameters with pointer relocation and creates the initial thread at `ImageBase + EntryPointRVA`. Access via "Ghost Process" button in the process tab toolbar.
 
 ## Ghost process window
 
-Access via right-click context menu > Miscellaneous > Process Ghost:
+Access via "Ghost Process" button in the process tab toolbar:
 - **Payload picker** — Select the 64-bit executable to ghost
 - **Status feedback** — Success shows new PID, errors show detailed message
 - Uses `misc::ghost_process()` function
