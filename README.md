@@ -161,18 +161,6 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - Returns the new process PID and Thread ID on success
 - Useful for privilege escalation research and security testing
 
-### Process Ghost (Right-click > Miscellaneous > Process Ghost)
-- Select a 64-bit payload executable to ghost
-- Creates a unique temp file (`Ghost_{timestamp}.tmp`), marks it for deletion via `NtSetInformationFile`
-- Writes the payload, creates a `SEC_IMAGE` section via `NtCreateSection`
-- Closes the file handle (triggering deletion while section survives)
-- Creates a process from the orphaned section via `NtCreateProcessEx`
-- Sets up PEB process parameters with `RtlCreateProcessParametersEx` (NT path format, pointer relocation)
-- Creates the initial thread via `NtCreateThreadEx` with stack reserve/commit from PE header
-- The resulting process runs with no backing file on disk
-- Returns the ghosted process PID on success
-- Useful for process evasion research and security testing
-
 ### Keyboard Shortcuts
 | Key | Action |
 |-----|--------|
