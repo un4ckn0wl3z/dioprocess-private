@@ -65,17 +65,19 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - Open File Location
 - Copy PID
 - Copy Path
-- View Threads
-- View Handles
-- View Modules
-- View Memory
-- View Performance
-- DLL Injection (submenu)
-  - LoadLibrary - Classic CreateRemoteThread + LoadLibraryW
-  - Thread Hijack - Suspend thread, redirect RIP to shellcode
-  - APC Queue - QueueUserAPC + LoadLibraryW on all threads
-  - Manual Map - Map PE sections, resolve imports, call DllMain
+- Inspect (submenu)
+  - Threads
+  - Handles
+  - Modules
+  - Memory
+  - Performance
 - Refresh List
+- Miscellaneous (submenu)
+  - DLL Injection (submenu)
+    - LoadLibrary - Classic CreateRemoteThread + LoadLibraryW
+    - Thread Hijack - Suspend thread, redirect RIP to shellcode
+    - APC Queue - QueueUserAPC + LoadLibraryW on all threads
+    - Manual Map - Map PE sections, resolve imports, call DllMain
 
 ### Thread View (Right-click > View Threads)
 - View all threads of a process in a modal window

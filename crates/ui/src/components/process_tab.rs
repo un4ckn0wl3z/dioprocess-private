@@ -474,89 +474,102 @@ pub fn ProcessTab() -> Element {
 
                     div { class: "context-menu-separator" }
 
-                    button {
-                        class: "context-menu-item",
-                        onclick: move |_| {
-                            if let Some(pid) = ctx_menu.pid {
-                                let proc_name = processes.read()
-                                    .iter()
-                                    .find(|p| p.pid == pid)
-                                    .map(|p| p.name.clone())
-                                    .unwrap_or_else(|| format!("PID {}", pid));
-                                *THREAD_WINDOW_STATE.write() = Some((pid, proc_name));
+                    // Inspect submenu
+                    div {
+                        class: "context-menu-submenu",
+                        div {
+                            class: "context-menu-submenu-trigger",
+                            span { "🔍" }
+                            span { "Inspect" }
+                            span { class: "arrow", "▶" }
+                        }
+                        div {
+                            class: "context-menu-submenu-content",
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    if let Some(pid) = ctx_menu.pid {
+                                        let proc_name = processes.read()
+                                            .iter()
+                                            .find(|p| p.pid == pid)
+                                            .map(|p| p.name.clone())
+                                            .unwrap_or_else(|| format!("PID {}", pid));
+                                        *THREAD_WINDOW_STATE.write() = Some((pid, proc_name));
+                                    }
+                                    context_menu.set(ContextMenuState::default());
+                                },
+                                span { "🧵" }
+                                span { "Threads" }
                             }
-                            context_menu.set(ContextMenuState::default());
-                        },
-                        span { "🧵" }
-                        span { "View Threads" }
-                    }
 
-                    button {
-                        class: "context-menu-item",
-                        onclick: move |_| {
-                            if let Some(pid) = ctx_menu.pid {
-                                let proc_name = processes.read()
-                                    .iter()
-                                    .find(|p| p.pid == pid)
-                                    .map(|p| p.name.clone())
-                                    .unwrap_or_else(|| format!("PID {}", pid));
-                                *HANDLE_WINDOW_STATE.write() = Some((pid, proc_name));
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    if let Some(pid) = ctx_menu.pid {
+                                        let proc_name = processes.read()
+                                            .iter()
+                                            .find(|p| p.pid == pid)
+                                            .map(|p| p.name.clone())
+                                            .unwrap_or_else(|| format!("PID {}", pid));
+                                        *HANDLE_WINDOW_STATE.write() = Some((pid, proc_name));
+                                    }
+                                    context_menu.set(ContextMenuState::default());
+                                },
+                                span { "🔗" }
+                                span { "Handles" }
                             }
-                            context_menu.set(ContextMenuState::default());
-                        },
-                        span { "🔗" }
-                        span { "View Handles" }
-                    }
 
-                    button {
-                        class: "context-menu-item",
-                        onclick: move |_| {
-                            if let Some(pid) = ctx_menu.pid {
-                                let proc_name = processes.read()
-                                    .iter()
-                                    .find(|p| p.pid == pid)
-                                    .map(|p| p.name.clone())
-                                    .unwrap_or_else(|| format!("PID {}", pid));
-                                *MODULE_WINDOW_STATE.write() = Some((pid, proc_name));
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    if let Some(pid) = ctx_menu.pid {
+                                        let proc_name = processes.read()
+                                            .iter()
+                                            .find(|p| p.pid == pid)
+                                            .map(|p| p.name.clone())
+                                            .unwrap_or_else(|| format!("PID {}", pid));
+                                        *MODULE_WINDOW_STATE.write() = Some((pid, proc_name));
+                                    }
+                                    context_menu.set(ContextMenuState::default());
+                                },
+                                span { "📦" }
+                                span { "Modules" }
                             }
-                            context_menu.set(ContextMenuState::default());
-                        },
-                        span { "📦" }
-                        span { "View Modules" }
-                    }
 
-                    button {
-                        class: "context-menu-item",
-                        onclick: move |_| {
-                            if let Some(pid) = ctx_menu.pid {
-                                let proc_name = processes.read()
-                                    .iter()
-                                    .find(|p| p.pid == pid)
-                                    .map(|p| p.name.clone())
-                                    .unwrap_or_else(|| format!("PID {}", pid));
-                                *MEMORY_WINDOW_STATE.write() = Some((pid, proc_name));
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    if let Some(pid) = ctx_menu.pid {
+                                        let proc_name = processes.read()
+                                            .iter()
+                                            .find(|p| p.pid == pid)
+                                            .map(|p| p.name.clone())
+                                            .unwrap_or_else(|| format!("PID {}", pid));
+                                        *MEMORY_WINDOW_STATE.write() = Some((pid, proc_name));
+                                    }
+                                    context_menu.set(ContextMenuState::default());
+                                },
+                                span { "🧠" }
+                                span { "Memory" }
                             }
-                            context_menu.set(ContextMenuState::default());
-                        },
-                        span { "🧠" }
-                        span { "View Memory" }
-                    }
 
-                    button {
-                        class: "context-menu-item",
-                        onclick: move |_| {
-                            if let Some(pid) = ctx_menu.pid {
-                                let proc_name = processes.read()
-                                    .iter()
-                                    .find(|p| p.pid == pid)
-                                    .map(|p| p.name.clone())
-                                    .unwrap_or_else(|| format!("PID {}", pid));
-                                *GRAPH_WINDOW_STATE.write() = Some((pid, proc_name));
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    if let Some(pid) = ctx_menu.pid {
+                                        let proc_name = processes.read()
+                                            .iter()
+                                            .find(|p| p.pid == pid)
+                                            .map(|p| p.name.clone())
+                                            .unwrap_or_else(|| format!("PID {}", pid));
+                                        *GRAPH_WINDOW_STATE.write() = Some((pid, proc_name));
+                                    }
+                                    context_menu.set(ContextMenuState::default());
+                                },
+                                span { "📈" }
+                                span { "Performance" }
                             }
-                            context_menu.set(ContextMenuState::default());
-                        },
-                        span { "📈" }
-                        span { "View Performance" }
+                        }
                     }
 
                     div { class: "context-menu-separator" }

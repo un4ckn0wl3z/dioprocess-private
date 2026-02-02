@@ -111,7 +111,7 @@ Real-time CPU and memory monitoring for individual processes:
 - **60-second history** - Rolling window updated every second
 - **Auto-scaling** - Memory graph auto-scales based on usage
 - **Pause/Resume** - Pause updates to analyze a specific moment
-- Access via right-click context menu > "View Performance"
+- Access via right-click context menu > Inspect > "Performance"
 
 ## Memory window features
 
