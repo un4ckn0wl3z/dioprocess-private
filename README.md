@@ -337,4 +337,4 @@ Contributions are welcome! Feel free to:
 
 ---
 
-Built with Rust and Dioxus
+Built with ❤️ in Rust and Dioxus
