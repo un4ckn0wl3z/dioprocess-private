@@ -1,3 +1,6 @@
-// Application manifest for UAC elevation
+// Application manifest (UAC)
 #define RT_MANIFEST 24
 1 RT_MANIFEST "app.manifest"
+
+// Application icon
+IDI_ICON1 ICON "icon.ico"

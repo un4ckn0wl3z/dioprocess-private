@@ -1,6 +1,8 @@
 //! Windows Process Monitor
 //! A desktop application built with Dioxus and windows-rs
 #![windows_subsystem = "windows"]
+use std::env;
+
 use dioxus::desktop::{LogicalSize, WindowBuilder};
 use ui::App;
 
@@ -23,10 +25,12 @@ fn random_title() -> String {
 }
 
 fn main() {
+    let user_data_dir = env::var("LOCALAPPDATA").expect("env var LOCALAPPDATA not found");
     dioxus::LaunchBuilder::desktop()
         .with_cfg(
             dioxus::desktop::Config::new()
                 .with_disable_context_menu(true)
+                .with_data_directory(user_data_dir)
                 .with_window(
                     WindowBuilder::new()
                         .with_title(random_title())

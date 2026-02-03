@@ -39,17 +39,19 @@ pub fn Layout() -> Element {
 
     let about_message = format!(
         r#"
-    DioProcess is a modern Windows system monitor
-    built with Rust, Dioxus, and Windows APIs.
+    DioProcess
+    Advanced Windows System Monitor & Process Analysis Tool
+    
+    Advanced process & system control features
+    (for research, security testing & OS internals exploration)
 
-    Process • Network • Threads • Modules
-    Injection • Inspection • Control
+    Built with Rust • Dioxus 0.6 • Native Windows APIs
+    Requires administrator privileges
 
     Version: {}
     "#,
         version
     );
-
     rsx! {
             style { {CUSTOM_STYLES} }
 
@@ -209,6 +211,18 @@ pub fn Layout() -> Element {
                             target: "_blank",
                             class: "about-link",
                             "un4ckn0wl3z.dev"
+                        }
+                    }
+
+
+                    span {
+                        style: "padding: 10px; color: #e5e7eb;",
+                        "Discord (Damned Software): "
+                        a {
+                            href: "https://discord.gg/zsqrEfCReh",
+                            target: "_blank",
+                            class: "about-link",
+                            "https://discord.gg/zsqrEfCReh"
                         }
                     }
 
