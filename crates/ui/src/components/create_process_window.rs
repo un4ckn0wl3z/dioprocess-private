@@ -13,6 +13,7 @@ pub fn CreateProcessWindow() -> Element {
     let mut payload_path = use_signal(|| String::new());
     let mut args = use_signal(|| String::new());
     let mut suspended = use_signal(|| false);
+    let mut block_dlls = use_signal(|| false);
     let mut parent_pid = use_signal(|| String::new());
     let mut status_message = use_signal(|| String::new());
     let mut status_is_error = use_signal(|| false);
@@ -32,6 +33,7 @@ pub fn CreateProcessWindow() -> Element {
         let current_payload = payload_path.read().clone();
         let current_args = args.read().clone();
         let current_suspended = *suspended.read();
+        let current_block_dlls = *block_dlls.read();
         let current_parent_pid = parent_pid.read().clone();
 
         // Validate inputs
@@ -66,22 +68,24 @@ pub fn CreateProcessWindow() -> Element {
 
         spawn(async move {
             let result = if current_technique == "normal" {
-                create_process(&current_exe, &current_args, current_suspended)
+                create_process(&current_exe, &current_args, current_suspended, current_block_dlls)
                     .map(|(pid, tid)| {
+                        let suffix = if current_block_dlls { " [BlockDll]" } else { "" };
                         if current_suspended {
-                            format!("Process created (suspended): PID {} TID {}", pid, tid)
+                            format!("Process created (suspended){}: PID {} TID {}", suffix, pid, tid)
                         } else {
-                            format!("Process created: PID {} TID {}", pid, tid)
+                            format!("Process created{}: PID {} TID {}", suffix, pid, tid)
                         }
                     })
             } else if current_technique == "ppid_spoofing" {
                 let ppid: u32 = current_parent_pid.parse().unwrap();
-                create_ppid_spoofed_process(ppid, &current_exe, &current_args, current_suspended)
+                create_ppid_spoofed_process(ppid, &current_exe, &current_args, current_suspended, current_block_dlls)
                     .map(|(pid, tid)| {
+                        let suffix = if current_block_dlls { " [BlockDll]" } else { "" };
                         if current_suspended {
-                            format!("Process created (suspended) with PPID {}: PID {} TID {}", ppid, pid, tid)
+                            format!("Process created (suspended) with PPID {}{}: PID {} TID {}", ppid, suffix, pid, tid)
                         } else {
-                            format!("Process created with PPID {}: PID {} TID {}", ppid, pid, tid)
+                            format!("Process created with PPID {}{}: PID {} TID {}", ppid, suffix, pid, tid)
                         }
                     })
             } else {
@@ -284,6 +288,21 @@ pub fn CreateProcessWindow() -> Element {
                                     onchange: move |e| suspended.set(e.checked()),
                                 }
                                 span { "Create suspended" }
+                            }
+                        }
+                    }
+
+                    // Block DLL policy checkbox (for normal and ppid_spoofing modes)
+                    if current_technique == "normal" || current_technique == "ppid_spoofing" {
+                        div { class: "create-process-field",
+                            label { class: "create-process-checkbox-label",
+                                input {
+                                    r#type: "checkbox",
+                                    class: "checkbox",
+                                    checked: *block_dlls.read(),
+                                    onchange: move |e| block_dlls.set(e.checked()),
+                                }
+                                span { "Block non-Microsoft DLLs" }
                             }
                         }
                     }

