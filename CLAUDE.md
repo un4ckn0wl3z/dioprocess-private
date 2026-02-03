@@ -112,7 +112,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 
 1. **Normal CreateProcess** — Launch executable via `CreateProcessW`, optionally suspended
 2. **Process Hollowing** — Create host process suspended, get PEB address via thread context Rdx, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, write PE headers and sections individually, apply base relocations if needed, patch PEB ImageBaseAddress, fix per-section memory permissions via `VirtualProtectEx` (R/RW/RX/RWX based on section characteristics), hijack thread entry point (RCX), resume thread
-3. **Process Ghosting** — Create unique temp file, mark for deletion with `NtSetInformationFile(FileDispositionInformationEx)`, write payload, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, set up PEB process parameters with `RtlCreateProcessParametersEx`, create initial thread via `NtCreateThreadEx` with PE stack sizes
+3. **Process Ghosting** — Create temp file, open via `NtOpenFile` with DELETE permission, mark for deletion with `NtSetInformationFile(FileDispositionInformation)`, write payload via `NtWriteFile`, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, retrieve environment via `CreateEnvironmentBlock`, set up PEB process parameters with `RtlCreateProcessParametersEx` (NORMALIZED), allocate at exact params address in remote process via `NtAllocateVirtualMemory` (no pointer relocation), write params and environment via `NtWriteVirtualMemory` with two-scenario layout handling, create initial thread via `NtCreateThreadEx`
 
 ## Token theft (misc crate)
 
@@ -163,17 +163,21 @@ Access via right-click context menu > Miscellaneous > Steal Token:
 
 `ghost_process(exe_path)` — Creates a process whose backing file no longer exists on disk. Algorithm:
 
-1. Read payload PE, validate 64-bit PE32+ format
-2. Resolve NT functions dynamically (`NtSetInformationFile`, `NtCreateSection`, `NtCreateProcessEx`, `NtCreateThreadEx`, `RtlCreateProcessParametersEx`, `RtlDestroyProcessParameters`)
-3. Create unique temp file (`Ghost_{timestamp}.tmp`), mark for deletion via `NtSetInformationFile(FileDispositionInformationEx)` with POSIX semantics (fallback to legacy FileDispositionInformation)
-4. Write payload to temp file, create image section via `NtCreateSection(SEC_IMAGE)`
-5. Close file handle (triggering deletion while section survives)
-6. Create process from orphaned section via `NtCreateProcessEx`
-7. Query PEB, read ImageBaseAddress and remote PE header for entry point RVA and stack sizes
-8. Set up process parameters via `RtlCreateProcessParametersEx` with NT path format (`\??\C:\...`), relocate pointer fields for remote address space
-9. Write parameters to remote process, update `PEB.ProcessParameters`
-10. Create initial thread via `NtCreateThreadEx` with proper stack reserve/commit from PE header
-11. Clean up local resources with `RtlDestroyProcessParameters`
+1. Read payload PE, validate 64-bit PE32+ format, extract entry point RVA from local buffer
+2. Resolve NT functions dynamically (`NtOpenFile`, `NtSetInformationFile`, `NtWriteFile`, `NtCreateSection`, `NtCreateProcessEx`, `NtQueryInformationProcess`, `NtReadVirtualMemory`, `NtAllocateVirtualMemory`, `NtWriteVirtualMemory`, `RtlCreateProcessParametersEx`, `RtlDestroyProcessParameters`, `NtCreateThreadEx`) and userenv.dll functions (`CreateEnvironmentBlock`, `DestroyEnvironmentBlock`)
+3. Create temp file (`PG_{timestamp}.tmp`), open via `NtOpenFile` with DELETE permission
+4. Mark for deletion via `NtSetInformationFile(FileDispositionInformation)`
+5. Write payload via `NtWriteFile`, create image section via `NtCreateSection(SEC_IMAGE)`
+6. Close file handle (triggering deletion while section survives)
+7. Create process from orphaned section via `NtCreateProcessEx`
+8. Retrieve environment block via `CreateEnvironmentBlock` from userenv.dll
+9. Set up process parameters via `RtlCreateProcessParametersEx` with `RTL_USER_PROC_PARAMS_NORMALIZED` flag
+10. Query PEB via `NtQueryInformationProcess` + `NtReadVirtualMemory`, get ImageBaseAddress
+11. Calculate env + params memory range handling two scenarios (environment before or after parameters)
+12. Allocate at exact params address in remote process via `NtAllocateVirtualMemory` (no pointer relocation needed since params are NORMALIZED)
+13. Write params and environment separately via `NtWriteVirtualMemory`, update `PEB.ProcessParameters`
+14. Create initial thread via `NtCreateThreadEx` at entry point
+15. Clean up local resources with `RtlDestroyProcessParameters` and `DestroyEnvironmentBlock`
 
 Access via "Ghost Process" button in the process tab toolbar.
 
@@ -182,7 +186,7 @@ Access via "Ghost Process" button in the process tab toolbar.
 Access via "Ghost Process" button in the process tab toolbar:
 - **Payload picker** — Select the 64-bit executable to ghost
 - **Status feedback** — Success shows new PID, errors show detailed NT status codes
-- **Implementation details** — Uses `NtCreateSection`, `NtCreateProcessEx`, `NtCreateThreadEx` for proper process/thread creation
+- **Implementation details** — Uses `NtOpenFile`, `NtWriteFile`, `NtCreateSection`, `NtCreateProcessEx`, `NtAllocateVirtualMemory`, `NtWriteVirtualMemory`, `NtCreateThreadEx` for full NT API process/thread creation
 - Uses `misc::ghost_process()` function
 
 ## No tests

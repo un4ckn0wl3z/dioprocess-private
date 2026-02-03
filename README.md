@@ -149,12 +149,17 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 ### Ghost Process (Button in toolbar)
 - Create a process whose backing file is deleted from disk
 - Select a 64-bit payload executable
-- Creates unique temp file, marks for deletion via `NtSetInformationFile`
-- Writes payload, creates image section via `NtCreateSection(SEC_IMAGE)`
+- Creates temp file, opens via `NtOpenFile` with DELETE permission
+- Marks for deletion via `NtSetInformationFile(FileDispositionInformation)`
+- Writes payload via `NtWriteFile`, creates image section via `NtCreateSection(SEC_IMAGE)`
 - File is deleted while the section survives
 - Process is created from the orphaned section via `NtCreateProcessEx`
-- Sets up PEB process parameters with `RtlCreateProcessParametersEx`
-- Creates initial thread via `NtCreateThreadEx` with proper stack sizes from PE header
+- Retrieves environment block via `CreateEnvironmentBlock` from userenv.dll
+- Sets up PEB process parameters with `RtlCreateProcessParametersEx` (NORMALIZED)
+- Allocates parameters at exact address in remote process via `NtAllocateVirtualMemory` (no pointer relocation needed)
+- Writes parameters and environment separately via `NtWriteVirtualMemory`
+- Handles two memory layout scenarios (environment before or after parameters)
+- Creates initial thread via `NtCreateThreadEx`
 - Returns PID on success
 
 ### Token Thief (Right-click > Miscellaneous > Steal Token)
@@ -238,14 +243,14 @@ cargo build --release
 
 **misc crate:**
 - `Win32_System_Memory` - Virtual memory allocation, commit, decommit, free
-- `Win32_System_LibraryLoader` - Module loading/unloading
+- `Win32_System_LibraryLoader` - Module loading/unloading, dynamic NT API resolution (GetProcAddress)
 - `Win32_System_Threading` - Process creation (CreateProcessW, CreateProcessAsUserW), termination, token access (OpenProcessToken)
 - `Win32_System_Diagnostics_Debug` - Process memory operations, thread context manipulation
 - `Win32_System_Kernel` - Thread context structures (CONTEXT)
-- `Win32_Storage_FileSystem` - File creation (CreateFileW, WriteFile) for process ghosting temp files
-- `Win32_System_IO` - I/O status block types for NtSetInformationFile
 - `Win32_Security` - Token duplication, privilege adjustment, impersonation (DuplicateTokenEx, AdjustTokenPrivileges, ImpersonateLoggedOnUser)
-- `ntapi` - Native API for NtQueryInformationProcess, NtUnmapViewOfSection (process hollowing)
+- `ntapi` - Native API for NtUnmapViewOfSection (process hollowing), NtMapViewOfSection (remote mapping injection)
+- `ntdll` (dynamic) - NtOpenFile, NtSetInformationFile, NtWriteFile, NtCreateSection, NtCreateProcessEx, NtQueryInformationProcess, NtReadVirtualMemory, NtAllocateVirtualMemory, NtWriteVirtualMemory, NtCreateThreadEx, RtlCreateProcessParametersEx (process ghosting)
+- `userenv.dll` (dynamic) - CreateEnvironmentBlock, DestroyEnvironmentBlock (process ghosting)
 
 ## Project Structure
 
