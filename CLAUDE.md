@@ -111,8 +111,9 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 ## Process creation methods (misc crate)
 
 1. **Normal CreateProcess** — Launch executable via `CreateProcessW`, optionally suspended
-2. **Process Hollowing** — Create host process suspended, get PEB address via thread context Rdx, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, write PE headers and sections individually, apply base relocations if needed, patch PEB ImageBaseAddress, fix per-section memory permissions via `VirtualProtectEx` (R/RW/RX/RWX based on section characteristics), hijack thread entry point (RCX), resume thread
-3. **Process Ghosting** — Create temp file, open via `NtOpenFile` with DELETE permission, mark for deletion with `NtSetInformationFile(FileDispositionInformation)`, write payload via `NtWriteFile`, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, retrieve environment via `CreateEnvironmentBlock`, set up PEB process parameters with `RtlCreateProcessParametersEx` (NORMALIZED), allocate at exact params address in remote process via `NtAllocateVirtualMemory` (no pointer relocation), write params and environment via `NtWriteVirtualMemory` with two-scenario layout handling, create initial thread via `NtCreateThreadEx`
+2. **PPID Spoofing** — Open handle to target parent process, set up `STARTUPINFOEXW` with `InitializeProcThreadAttributeList` + `UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_PARENT_PROCESS)`, create process via `CreateProcessW` with `EXTENDED_STARTUPINFO_PRESENT` flag; the new process appears as a child of the specified parent PID
+3. **Process Hollowing** — Create host process suspended, get PEB address via thread context Rdx, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, write PE headers and sections individually, apply base relocations if needed, patch PEB ImageBaseAddress, fix per-section memory permissions via `VirtualProtectEx` (R/RW/RX/RWX based on section characteristics), hijack thread entry point (RCX), resume thread
+4. **Process Ghosting** — Create temp file, open via `NtOpenFile` with DELETE permission, mark for deletion with `NtSetInformationFile(FileDispositionInformation)`, write payload via `NtWriteFile`, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, retrieve environment via `CreateEnvironmentBlock`, set up PEB process parameters with `RtlCreateProcessParametersEx` (NORMALIZED), allocate at exact params address in remote process via `NtAllocateVirtualMemory` (no pointer relocation), write params and environment via `NtWriteVirtualMemory` with two-scenario layout handling, create initial thread via `NtCreateThreadEx`
 
 ## Token theft (misc crate)
 
@@ -155,12 +156,13 @@ Real-time CPU and memory monitoring for individual processes:
 ## Create process window
 
 Access via "Create Process" button in the process tab toolbar:
-- **Technique selector** — Choose between Normal (CreateProcess) or Process Hollowing
+- **Technique selector** — Choose between Normal (CreateProcess), PPID Spoofing, or Process Hollowing
 - **Normal mode** — Select executable, optional arguments, optional "create suspended" checkbox
+- **PPID Spoofing mode** — Select executable, enter parent PID to spoof, optional arguments, optional "create suspended" checkbox
 - **Hollowing mode** — Select host executable and payload PE (64-bit only)
 - **File picker** — Native file dialog filtered to .exe files
 - **Status feedback** — Success shows PID/TID, errors show detailed message
-- Uses `misc::create_process()` and `misc::hollow_process()` functions
+- Uses `misc::create_process()`, `misc::create_ppid_spoofed_process()`, and `misc::hollow_process()` functions
 
 ## Token thief window
 

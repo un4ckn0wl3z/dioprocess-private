@@ -1,7 +1,7 @@
 //! Create Process Window component
 
 use dioxus::prelude::*;
-use misc::{create_process, hollow_process};
+use misc::{create_process, create_ppid_spoofed_process, hollow_process};
 
 use crate::state::CREATE_PROCESS_WINDOW_STATE;
 
@@ -13,6 +13,7 @@ pub fn CreateProcessWindow() -> Element {
     let mut payload_path = use_signal(|| String::new());
     let mut args = use_signal(|| String::new());
     let mut suspended = use_signal(|| false);
+    let mut parent_pid = use_signal(|| String::new());
     let mut status_message = use_signal(|| String::new());
     let mut status_is_error = use_signal(|| false);
     let mut is_running = use_signal(|| false);
@@ -31,6 +32,7 @@ pub fn CreateProcessWindow() -> Element {
         let current_payload = payload_path.read().clone();
         let current_args = args.read().clone();
         let current_suspended = *suspended.read();
+        let current_parent_pid = parent_pid.read().clone();
 
         // Validate inputs
         if current_exe.is_empty() {
@@ -45,6 +47,20 @@ pub fn CreateProcessWindow() -> Element {
             return;
         }
 
+        if current_technique == "ppid_spoofing" && current_parent_pid.is_empty() {
+            status_message.set("Please enter a parent PID".to_string());
+            status_is_error.set(true);
+            return;
+        }
+
+        if current_technique == "ppid_spoofing" {
+            if current_parent_pid.parse::<u32>().is_err() {
+                status_message.set("Parent PID must be a valid number".to_string());
+                status_is_error.set(true);
+                return;
+            }
+        }
+
         is_running.set(true);
         status_message.set(String::new());
 
@@ -56,6 +72,16 @@ pub fn CreateProcessWindow() -> Element {
                             format!("Process created (suspended): PID {} TID {}", pid, tid)
                         } else {
                             format!("Process created: PID {} TID {}", pid, tid)
+                        }
+                    })
+            } else if current_technique == "ppid_spoofing" {
+                let ppid: u32 = current_parent_pid.parse().unwrap();
+                create_ppid_spoofed_process(ppid, &current_exe, &current_args, current_suspended)
+                    .map(|(pid, tid)| {
+                        if current_suspended {
+                            format!("Process created (suspended) with PPID {}: PID {} TID {}", ppid, pid, tid)
+                        } else {
+                            format!("Process created with PPID {}: PID {} TID {}", ppid, pid, tid)
                         }
                     })
             } else {
@@ -156,6 +182,16 @@ pub fn CreateProcessWindow() -> Element {
                                 input {
                                     r#type: "radio",
                                     name: "technique",
+                                    value: "ppid_spoofing",
+                                    checked: current_technique == "ppid_spoofing",
+                                    onchange: move |_| technique.set("ppid_spoofing".to_string()),
+                                }
+                                span { "PPID Spoofing" }
+                            }
+                            label { class: "create-process-radio-label",
+                                input {
+                                    r#type: "radio",
+                                    name: "technique",
                                     value: "hollowing",
                                     checked: current_technique == "hollowing",
                                     onchange: move |_| technique.set("hollowing".to_string()),
@@ -211,6 +247,20 @@ pub fn CreateProcessWindow() -> Element {
                         }
                     }
 
+                    // Parent PID (only for ppid_spoofing)
+                    if current_technique == "ppid_spoofing" {
+                        div { class: "create-process-field",
+                            label { class: "create-process-label", "Parent PID" }
+                            input {
+                                class: "create-process-input",
+                                r#type: "text",
+                                placeholder: "PID of the spoofed parent process...",
+                                value: "{parent_pid}",
+                                oninput: move |e| parent_pid.set(e.value().clone()),
+                            }
+                        }
+                    }
+
                     // Arguments
                     div { class: "create-process-field",
                         label { class: "create-process-label", "Arguments" }
@@ -223,8 +273,8 @@ pub fn CreateProcessWindow() -> Element {
                         }
                     }
 
-                    // Suspended checkbox (only for normal mode)
-                    if current_technique == "normal" {
+                    // Suspended checkbox (for normal and ppid_spoofing modes)
+                    if current_technique == "normal" || current_technique == "ppid_spoofing" {
                         div { class: "create-process-field",
                             label { class: "create-process-checkbox-label",
                                 input {

