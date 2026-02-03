@@ -82,6 +82,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
     - LoadLibrary - Classic CreateRemoteThread + LoadLibraryW
     - Thread Hijack - Suspend thread, redirect RIP to shellcode
     - APC Queue - QueueUserAPC + LoadLibraryW on all threads
+    - EarlyBird - Suspended remote thread + APC, guaranteed execution on resume
     - Manual Map - Map PE sections, resolve imports, call DllMain
   - Steal Token - Steal process token and launch a new process under its security context
 
