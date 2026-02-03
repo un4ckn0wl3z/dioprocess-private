@@ -1,5 +1,7 @@
 //! Process tab component
 
+use std::collections::{HashMap, HashSet};
+
 use dioxus::prelude::*;
 use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack};
 use process::{
@@ -13,11 +15,170 @@ use super::{
 };
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
-    ContextMenuState, SortColumn, SortOrder, CREATE_PROCESS_WINDOW_STATE,
+    ContextMenuState, ProcessViewMode, SortColumn, SortOrder, CREATE_PROCESS_WINDOW_STATE,
     FUNCTION_STOMPING_WINDOW_STATE, GHOST_PROCESS_WINDOW_STATE, GRAPH_WINDOW_STATE,
     HANDLE_WINDOW_STATE, MEMORY_WINDOW_STATE, MODULE_WINDOW_STATE, THREAD_WINDOW_STATE,
     TOKEN_THIEF_WINDOW_STATE,
 };
+
+/// A row in the tree view with metadata for rendering connectors
+#[derive(Clone)]
+struct TreeRow {
+    process: ProcessInfo,
+    depth: usize,
+    is_last: bool,
+    ancestor_is_last: Vec<bool>,
+    has_children: bool,
+    is_expanded: bool,
+}
+
+/// Build tree rows from a flat process list
+fn build_tree_rows(
+    all_processes: &[ProcessInfo],
+    search_query: &str,
+    sort_column: SortColumn,
+    sort_order: SortOrder,
+    expanded_pids: &HashSet<u32>,
+) -> Vec<TreeRow> {
+    let pid_set: HashSet<u32> = all_processes.iter().map(|p| p.pid).collect();
+
+    // Build children map: parent_pid -> list of children
+    let mut children_map: HashMap<u32, Vec<&ProcessInfo>> = HashMap::new();
+    let mut roots: Vec<&ProcessInfo> = Vec::new();
+
+    for p in all_processes {
+        if p.parent_pid == 0 || !pid_set.contains(&p.parent_pid) {
+            roots.push(p);
+        } else {
+            children_map.entry(p.parent_pid).or_default().push(p);
+        }
+    }
+
+    // Determine which PIDs are visible when searching
+    let query = search_query.to_lowercase();
+    let has_search = !query.is_empty();
+    let visible_pids: HashSet<u32> = if has_search {
+        // Find all matching PIDs
+        let mut matching: HashSet<u32> = HashSet::new();
+        for p in all_processes {
+            if p.name.to_lowercase().contains(&query)
+                || p.pid.to_string().contains(&query)
+                || p.exe_path.to_lowercase().contains(&query)
+            {
+                matching.insert(p.pid);
+            }
+        }
+        // Add all ancestors of matching PIDs
+        let parent_map: HashMap<u32, u32> = all_processes.iter().map(|p| (p.pid, p.parent_pid)).collect();
+        let mut visible = matching.clone();
+        for &pid in &matching {
+            let mut current = pid;
+            while let Some(&parent) = parent_map.get(&current) {
+                if parent == 0 || !pid_set.contains(&parent) || visible.contains(&parent) {
+                    break;
+                }
+                visible.insert(parent);
+                current = parent;
+            }
+        }
+        visible
+    } else {
+        pid_set.clone()
+    };
+
+    let sort_fn = |a: &&ProcessInfo, b: &&ProcessInfo| -> std::cmp::Ordering {
+        let cmp = match sort_column {
+            SortColumn::Pid => a.pid.cmp(&b.pid),
+            SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            SortColumn::Memory => a.memory_mb.partial_cmp(&b.memory_mb).unwrap_or(std::cmp::Ordering::Equal),
+            SortColumn::Threads => a.thread_count.cmp(&b.thread_count),
+            SortColumn::Cpu => a.cpu_usage.partial_cmp(&b.cpu_usage).unwrap_or(std::cmp::Ordering::Equal),
+        };
+        match sort_order {
+            SortOrder::Ascending => cmp,
+            SortOrder::Descending => cmp.reverse(),
+        }
+    };
+
+    // Sort roots and children
+    roots.sort_by(sort_fn);
+    for children in children_map.values_mut() {
+        children.sort_by(sort_fn);
+    }
+
+    // DFS traversal
+    let mut result = Vec::new();
+
+    fn visit(
+        process: &ProcessInfo,
+        depth: usize,
+        is_last: bool,
+        ancestor_is_last: Vec<bool>,
+        children_map: &HashMap<u32, Vec<&ProcessInfo>>,
+        expanded_pids: &HashSet<u32>,
+        visible_pids: &HashSet<u32>,
+        has_search: bool,
+        result: &mut Vec<TreeRow>,
+    ) {
+        if !visible_pids.contains(&process.pid) {
+            return;
+        }
+
+        let children: Vec<&ProcessInfo> = children_map
+            .get(&process.pid)
+            .map(|c| c.iter().filter(|p| visible_pids.contains(&p.pid)).copied().collect())
+            .unwrap_or_default();
+        let has_children = !children.is_empty();
+        let is_expanded = expanded_pids.contains(&process.pid);
+
+        result.push(TreeRow {
+            process: process.clone(),
+            depth,
+            is_last,
+            ancestor_is_last: ancestor_is_last.clone(),
+            has_children,
+            is_expanded,
+        });
+
+        if is_expanded || (has_search && has_children) {
+            let count = children.len();
+            for (i, child) in children.iter().enumerate() {
+                let child_is_last = i == count - 1;
+                let mut child_ancestors = ancestor_is_last.clone();
+                child_ancestors.push(is_last);
+                visit(
+                    child,
+                    depth + 1,
+                    child_is_last,
+                    child_ancestors,
+                    children_map,
+                    expanded_pids,
+                    visible_pids,
+                    has_search,
+                    result,
+                );
+            }
+        }
+    }
+
+    let root_count = roots.len();
+    for (i, root) in roots.iter().enumerate() {
+        let is_last = i == root_count - 1;
+        visit(
+            root,
+            0,
+            is_last,
+            Vec::new(),
+            &children_map,
+            expanded_pids,
+            &visible_pids,
+            has_search,
+            &mut result,
+        );
+    }
+
+    result
+}
 
 /// Process Tab component
 #[component]
@@ -31,6 +192,8 @@ pub fn ProcessTab() -> Element {
     let mut selected_pid = use_signal(|| None::<u32>);
     let mut status_message = use_signal(|| String::new());
     let mut context_menu = use_signal(|| ContextMenuState::default());
+    let mut view_mode = use_signal(|| ProcessViewMode::Flat);
+    let mut expanded_pids = use_signal(|| HashSet::<u32>::new());
 
     // Auto-refresh every 3 seconds
     use_future(move || async move {
@@ -267,6 +430,36 @@ pub fn ProcessTab() -> Element {
                     },
                     "Process Ghosting"
                 }
+
+                button {
+                    class: if *view_mode.read() == ProcessViewMode::Tree { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| {
+                        let current = *view_mode.read();
+                        match current {
+                            ProcessViewMode::Flat => view_mode.set(ProcessViewMode::Tree),
+                            ProcessViewMode::Tree => view_mode.set(ProcessViewMode::Flat),
+                        }
+                    },
+                    "Tree View"
+                }
+
+                if *view_mode.read() == ProcessViewMode::Tree {
+                    button {
+                        class: "btn btn-secondary",
+                        onclick: move |_| {
+                            let all_pids: HashSet<u32> = processes.read().iter().map(|p| p.pid).collect();
+                            expanded_pids.set(all_pids);
+                        },
+                        "Expand All"
+                    }
+                    button {
+                        class: "btn btn-secondary",
+                        onclick: move |_| {
+                            expanded_pids.set(HashSet::new());
+                        },
+                        "Collapse All"
+                    }
+                }
             }
 
             // Process table
@@ -343,29 +536,82 @@ pub fn ProcessTab() -> Element {
                         }
                     }
                     tbody {
-                        for process in filtered_processes {
-                            ProcessRow {
-                                process: process.clone(),
-                                is_selected: *selected_pid.read() == Some(process.pid),
-                                max_memory: max_memory,
-                                on_select: move |pid: u32| {
-                                    let current = *selected_pid.read();
-                                    if current == Some(pid) {
-                                        selected_pid.set(None);
-                                    } else {
-                                        selected_pid.set(Some(pid));
+                        if *view_mode.read() == ProcessViewMode::Tree {
+                            {
+                                let tree_rows = build_tree_rows(
+                                    &processes.read(),
+                                    &search_query.read(),
+                                    *sort_column.read(),
+                                    *sort_order.read(),
+                                    &expanded_pids.read(),
+                                );
+                                rsx! {
+                                    for row in tree_rows {
+                                        ProcessRow {
+                                            process: row.process.clone(),
+                                            is_selected: *selected_pid.read() == Some(row.process.pid),
+                                            max_memory: max_memory,
+                                            on_select: move |pid: u32| {
+                                                let current = *selected_pid.read();
+                                                if current == Some(pid) {
+                                                    selected_pid.set(None);
+                                                } else {
+                                                    selected_pid.set(Some(pid));
+                                                }
+                                            },
+                                            on_context_menu: move |(x, y, pid, path): (i32, i32, u32, String)| {
+                                                selected_pid.set(Some(pid));
+                                                context_menu.set(ContextMenuState {
+                                                    visible: true,
+                                                    x,
+                                                    y,
+                                                    pid: Some(pid),
+                                                    exe_path: path,
+                                                });
+                                            },
+                                            tree_depth: Some(row.depth),
+                                            tree_is_last: Some(row.is_last),
+                                            tree_ancestor_is_last: Some(row.ancestor_is_last.clone()),
+                                            tree_has_children: Some(row.has_children),
+                                            tree_is_expanded: Some(row.is_expanded),
+                                            on_toggle_expand: move |pid: u32| {
+                                                let mut set = expanded_pids.read().clone();
+                                                if set.contains(&pid) {
+                                                    set.remove(&pid);
+                                                } else {
+                                                    set.insert(pid);
+                                                }
+                                                expanded_pids.set(set);
+                                            },
+                                        }
                                     }
-                                },
-                                on_context_menu: move |(x, y, pid, path): (i32, i32, u32, String)| {
-                                    selected_pid.set(Some(pid));
-                                    context_menu.set(ContextMenuState {
-                                        visible: true,
-                                        x,
-                                        y,
-                                        pid: Some(pid),
-                                        exe_path: path,
-                                    });
-                                },
+                                }
+                            }
+                        } else {
+                            for process in filtered_processes {
+                                ProcessRow {
+                                    process: process.clone(),
+                                    is_selected: *selected_pid.read() == Some(process.pid),
+                                    max_memory: max_memory,
+                                    on_select: move |pid: u32| {
+                                        let current = *selected_pid.read();
+                                        if current == Some(pid) {
+                                            selected_pid.set(None);
+                                        } else {
+                                            selected_pid.set(Some(pid));
+                                        }
+                                    },
+                                    on_context_menu: move |(x, y, pid, path): (i32, i32, u32, String)| {
+                                        selected_pid.set(Some(pid));
+                                        context_menu.set(ContextMenuState {
+                                            visible: true,
+                                            x,
+                                            y,
+                                            pid: Some(pid),
+                                            exe_path: path,
+                                        });
+                                    },
+                                }
                             }
                         }
                     }

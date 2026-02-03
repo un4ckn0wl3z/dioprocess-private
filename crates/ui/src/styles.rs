@@ -264,6 +264,78 @@ pub const CUSTOM_STYLES: &str = r#"
         opacity: 0.5;
         cursor: not-allowed;
     }
+    .btn-secondary {
+        background: linear-gradient(to bottom right, #334155, #1e293b);
+        color: #e2e8f0;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+    }
+    .btn-secondary:hover {
+        background: linear-gradient(to bottom right, #475569, #334155);
+        border-color: rgba(148, 163, 184, 0.5);
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+    }
+    .btn-secondary:active {
+        transform: translateY(0);
+    }
+    .btn-secondary.active {
+        background: linear-gradient(to bottom right, #164e63, #0e7490);
+        border-color: rgba(34, 211, 238, 0.5);
+        color: #22d3ee;
+    }
+
+    /* Tree View */
+    .tree-name-container {
+        display: flex;
+        align-items: center;
+        white-space: nowrap;
+        overflow: hidden;
+    }
+    .tree-guide {
+        display: inline-block;
+        width: 20px;
+        text-align: center;
+        color: rgba(148, 163, 184, 0.4);
+        font-family: monospace;
+        flex-shrink: 0;
+        user-select: none;
+    }
+    .tree-connector {
+        display: inline-block;
+        width: 20px;
+        text-align: center;
+        color: rgba(148, 163, 184, 0.4);
+        font-family: monospace;
+        flex-shrink: 0;
+        user-select: none;
+    }
+    .tree-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        color: #22d3ee;
+        cursor: pointer;
+        flex-shrink: 0;
+        user-select: none;
+        border-radius: 3px;
+        font-size: 10px;
+        transition: background 0.15s;
+    }
+    .tree-toggle:hover {
+        background: rgba(34, 211, 238, 0.15);
+    }
+    .tree-toggle-placeholder {
+        display: inline-block;
+        width: 18px;
+        flex-shrink: 0;
+    }
+    .tree-process-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        padding-left: 4px;
+    }
 
     /* Table */
     .table-container {

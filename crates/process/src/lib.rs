@@ -39,6 +39,7 @@ static SYSTEM_INFO: Mutex<Option<System>> = Mutex::new(None);
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProcessInfo {
     pub pid: u32,
+    pub parent_pid: u32,
     pub name: String,
     pub memory_mb: f64,
     pub thread_count: u32,
@@ -90,6 +91,7 @@ pub fn get_processes() -> Vec<ProcessInfo> {
 
                 processes.push(ProcessInfo {
                     pid: entry.th32ProcessID,
+                    parent_pid: entry.th32ParentProcessID,
                     name,
                     memory_mb,
                     thread_count: entry.cntThreads,

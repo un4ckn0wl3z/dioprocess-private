@@ -22,6 +22,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - **Search & Filter** - Quick search by process name, PID, or executable path
 - **Real-time Updates** - Auto-refresh every 3 seconds (toggleable)
 - **Kill Process** - Terminate processes with a click or keyboard shortcut
+- **Tree View** - Toggle between flat list and parent-child tree hierarchy with expand/collapse, box-drawing connectors, and search-aware ancestor display
 - **Sortable Columns** - Sort by PID, Name, CPU, Threads, or Memory (ascending/descending)
 - **Export to CSV** - Export filtered process list to CSV file
 - **Create Process** - Launch new processes with two techniques:

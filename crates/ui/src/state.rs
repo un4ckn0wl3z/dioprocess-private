@@ -30,6 +30,13 @@ pub static FUNCTION_STOMPING_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
 /// Ghost process window state - controls visibility of ghost process modal
 pub static GHOST_PROCESS_WINDOW_STATE: GlobalSignal<bool> = Signal::global(|| false);
 
+/// Process view mode - flat list or tree hierarchy
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ProcessViewMode {
+    Flat,
+    Tree,
+}
+
 /// Sort column options
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum SortColumn {

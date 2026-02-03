@@ -67,7 +67,7 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 
 | Struct | Crate | Fields (key) |
 |--------|-------|------|
-| `ProcessInfo` | process | pid, name, memory, threads, cpu, exe_path |
+| `ProcessInfo` | process | pid, parent_pid, name, memory, threads, cpu, exe_path |
 | `SystemStats` | process | cpu_percent, memory_gb, process_count, uptime |
 | `ThreadInfo` | process | thread_id, owner_pid, base_priority, priority |
 | `HandleInfo` | process | handle_value, type, name |
@@ -92,7 +92,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 - **Naming:** snake_case functions, PascalCase types, SCREAMING_SNAKE_CASE constants
 - **Error handling:** Custom error enums (`MiscError`, `ServiceError`) with `Result<T, E>`
 - **Unsafe:** Used for all Windows API calls; always paired with proper resource cleanup (CloseHandle)
-- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `FUNCTION_STOMPING_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`)
+- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `FUNCTION_STOMPING_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`); local signals for view mode (`ProcessViewMode::Flat`/`Tree`) and expanded PIDs (`HashSet<u32>`)
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
@@ -117,6 +117,18 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 ## Token theft (misc crate)
 
 `steal_token(pid, exe_path, args)` — Open target process with `PROCESS_QUERY_LIMITED_INFORMATION`, obtain its primary token via `OpenProcessToken`, duplicate as a primary token with `DuplicateTokenEx(SecurityAnonymous, TokenPrimary)`, enable `SeAssignPrimaryTokenPrivilege` via `AdjustTokenPrivileges`, impersonate with `ImpersonateLoggedOnUser`, spawn a new process under that token via `CreateProcessAsUserW`, then `RevertToSelf`. Access via right-click context menu > Miscellaneous > Steal Token.
+
+## Process tree view
+
+Toggleable tree view in the Process tab showing parent-child process relationships:
+- **Toggle** — "Tree View" button in the toolbar switches between flat list and tree hierarchy
+- **Parent tracking** — `ProcessInfo.parent_pid` captured from `PROCESSENTRY32W.th32ParentProcessID`
+- **Tree building** — UI-side only (`build_tree_rows()` in `process_tab.rs`); builds `HashMap<u32, Vec<ProcessInfo>>` children map, identifies roots (parent_pid == 0 or parent not in process list), DFS pre-order traversal producing `Vec<TreeRow>` with depth/connector metadata
+- **Tree connectors** — Unicode box-drawing chars (│ ├ └ ─) rendered as `<span>` elements in the Name cell via `ProcessRow` tree props
+- **Expand/collapse** — Per-node toggle (▶/▼ arrows), plus "Expand All" / "Collapse All" toolbar buttons; state stored in `expanded_pids: Signal<HashSet<u32>>` and survives auto-refresh
+- **Search in tree mode** — Shows matching processes plus all ancestors up to root to preserve hierarchy context; children of matching nodes auto-expand
+- **Sorting in tree mode** — Siblings sorted within their group using the active sort column/order, not globally
+- **Orphaned processes** — Processes whose parent PID is no longer in the process list become tree roots
 
 ## CSV export
 
