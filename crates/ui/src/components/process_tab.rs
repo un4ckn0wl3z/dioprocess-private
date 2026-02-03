@@ -8,14 +8,15 @@ use process::{
 };
 
 use super::{
-    CreateProcessWindow, GhostProcessWindow, GraphWindow, HandleWindow, MemoryWindow,
-    ModuleWindow, ProcessRow, ThreadWindow, TokenThiefWindow,
+    CreateProcessWindow, FunctionStompingWindow, GhostProcessWindow, GraphWindow, HandleWindow,
+    MemoryWindow, ModuleWindow, ProcessRow, ThreadWindow, TokenThiefWindow,
 };
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
     ContextMenuState, SortColumn, SortOrder, CREATE_PROCESS_WINDOW_STATE,
-    GHOST_PROCESS_WINDOW_STATE, GRAPH_WINDOW_STATE, HANDLE_WINDOW_STATE, MEMORY_WINDOW_STATE,
-    MODULE_WINDOW_STATE, THREAD_WINDOW_STATE, TOKEN_THIEF_WINDOW_STATE,
+    FUNCTION_STOMPING_WINDOW_STATE, GHOST_PROCESS_WINDOW_STATE, GRAPH_WINDOW_STATE,
+    HANDLE_WINDOW_STATE, MEMORY_WINDOW_STATE, MODULE_WINDOW_STATE, THREAD_WINDOW_STATE,
+    TOKEN_THIEF_WINDOW_STATE,
 };
 
 /// Process Tab component
@@ -844,6 +845,24 @@ pub fn ProcessTab() -> Element {
                                         span { "Remote Mapping" }
                                     }
 
+                                    // Function Stomping method (opens dedicated window)
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            if let Some(pid) = ctx_menu.pid {
+                                                let proc_name = processes.read()
+                                                    .iter()
+                                                    .find(|p| p.pid == pid)
+                                                    .map(|p| p.name.clone())
+                                                    .unwrap_or_else(|| format!("PID {}", pid));
+                                                *FUNCTION_STOMPING_WINDOW_STATE.write() = Some((pid, proc_name));
+                                            }
+                                            context_menu.set(ContextMenuState::default());
+                                        },
+                                        span { "🦶" }
+                                        span { "Function Stomping" }
+                                    }
+
                                     // Manual Map method
                                     button {
                                         class: "context-menu-item",
@@ -944,6 +963,11 @@ pub fn ProcessTab() -> Element {
             // Token Thief Window Modal
             if let Some((pid, proc_name)) = TOKEN_THIEF_WINDOW_STATE.read().clone() {
                 TokenThiefWindow { pid: pid, process_name: proc_name }
+            }
+
+            // Function Stomping Window Modal
+            if let Some((pid, proc_name)) = FUNCTION_STOMPING_WINDOW_STATE.read().clone() {
+                FunctionStompingWindow { pid: pid, process_name: proc_name }
             }
 
             // Create Ghosting Window Modal

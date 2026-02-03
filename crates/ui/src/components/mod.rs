@@ -2,6 +2,7 @@
 
 mod app;
 mod create_process_window;
+mod function_stomping_window;
 mod ghost_process_window;
 mod graph_window;
 mod handle_window;
@@ -16,6 +17,7 @@ mod token_thief_window;
 
 pub use app::{App, Layout};
 pub use create_process_window::CreateProcessWindow;
+pub use function_stomping_window::FunctionStompingWindow;
 pub use ghost_process_window::GhostProcessWindow;
 pub use graph_window::GraphWindow;
 pub use handle_window::HandleWindow;

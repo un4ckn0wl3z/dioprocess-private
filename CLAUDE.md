@@ -22,7 +22,7 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
-├── misc/          # DLL injection (6 methods), process creation, process hollowing, token theft, module unloading, memory ops
+├── misc/          # DLL injection (7 methods), process creation, process hollowing, token theft, module unloading, memory ops
 ├── ui/            # Dioxus components, routing, state, styles
 │   └── src/
 │       ├── components/
@@ -38,6 +38,7 @@ crates/
 │       │   ├── graph_window.rs   # Real-time CPU/memory performance graphs
 │       │   ├── create_process_window.rs  # Process creation + hollowing modal
 │       │   ├── token_thief_window.rs    # Token theft + impersonation modal
+│       │   ├── function_stomping_window.rs  # Function stomping injection modal
 │       │   └── ghost_process_window.rs  # Process ghosting modal
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
@@ -91,7 +92,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 - **Naming:** snake_case functions, PascalCase types, SCREAMING_SNAKE_CASE constants
 - **Error handling:** Custom error enums (`MiscError`, `ServiceError`) with `Result<T, E>`
 - **Unsafe:** Used for all Windows API calls; always paired with proper resource cleanup (CloseHandle)
-- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`)
+- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `FUNCTION_STOMPING_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`)
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
@@ -104,7 +105,8 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 3. **APC Queue** — QueueUserAPC + LoadLibraryW on all threads; fires when a thread enters alertable wait
 4. **EarlyBird** — CreateRemoteThread suspended + QueueUserAPC before thread runs; APC fires during LdrInitializeThunk guaranteeing execution
 5. **Remote Mapping** — CreateFileMappingW + MapViewOfFile locally + NtMapViewOfSection remotely; avoids VirtualAllocEx/WriteProcessMemory entirely
-6. **Manual Mapping** — Parse PE, map sections, resolve imports, call DllMain
+6. **Function Stomping** — Overwrite a sacrificial function (default: setupapi.dll!SetupScanFileQueueA) in the remote process with LoadLibraryW shellcode; avoids new executable memory allocation
+7. **Manual Mapping** — Parse PE, map sections, resolve imports, call DllMain
 
 ## Process creation methods (misc crate)
 
