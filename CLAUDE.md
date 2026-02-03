@@ -111,7 +111,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 ## Process creation methods (misc crate)
 
 1. **Normal CreateProcess** — Launch executable via `CreateProcessW`, optionally suspended
-2. **Process Hollowing** — Create host process suspended, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, map payload PE sections, apply base relocations, update PEB ImageBaseAddress, set thread context entry point (RCX), resume thread
+2. **Process Hollowing** — Create host process suspended, get PEB address via thread context Rdx, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, write PE headers and sections individually, apply base relocations if needed, patch PEB ImageBaseAddress, fix per-section memory permissions via `VirtualProtectEx` (R/RW/RX/RWX based on section characteristics), hijack thread entry point (RCX), resume thread
 3. **Process Ghosting** — Create unique temp file, mark for deletion with `NtSetInformationFile(FileDispositionInformationEx)`, write payload, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, set up PEB process parameters with `RtlCreateProcessParametersEx`, create initial thread via `NtCreateThreadEx` with PE stack sizes
 
 ## Token theft (misc crate)

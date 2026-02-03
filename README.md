@@ -140,10 +140,11 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
 - **Process Hollowing Mode**
   - Select a host executable (will be created suspended)
   - Select a payload PE (64-bit executable)
-  - Unmaps the host's original image and replaces it with the payload
-  - Applies base relocations if needed
-  - Updates PEB and thread context, then resumes execution
-  - Useful for advanced process manipulation and security research
+  - Unmaps the host's original image and writes PE headers + sections individually
+  - Applies base relocations if allocation differs from preferred base
+  - Patches PEB ImageBaseAddress via thread context Rdx register
+  - Sets proper per-section memory permissions (R/RW/RX/RWX) based on section characteristics
+  - Hijacks thread entry point via Rcx, then resumes execution
 
 ### Ghost Process (Button in toolbar)
 - Create a process whose backing file is deleted from disk
