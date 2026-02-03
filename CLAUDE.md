@@ -22,7 +22,7 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
-├── misc/          # DLL injection (5 methods), process creation, process hollowing, token theft, module unloading, memory ops
+├── misc/          # DLL injection (6 methods), process creation, process hollowing, token theft, module unloading, memory ops
 ├── ui/            # Dioxus components, routing, state, styles
 │   └── src/
 │       ├── components/
@@ -103,7 +103,8 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 2. **Thread Hijack** — Suspend thread, redirect RIP/PC to shellcode
 3. **APC Queue** — QueueUserAPC + LoadLibraryW on all threads; fires when a thread enters alertable wait
 4. **EarlyBird** — CreateRemoteThread suspended + QueueUserAPC before thread runs; APC fires during LdrInitializeThunk guaranteeing execution
-5. **Manual Mapping** — Parse PE, map sections, resolve imports, call DllMain
+5. **Remote Mapping** — CreateFileMappingW + MapViewOfFile locally + NtMapViewOfSection remotely; avoids VirtualAllocEx/WriteProcessMemory entirely
+6. **Manual Mapping** — Parse PE, map sections, resolve imports, call DllMain
 
 ## Process creation methods (misc crate)
 

@@ -83,6 +83,7 @@ A modern, lightweight Windows system monitor built with **Rust**, **Dioxus**, an
     - Thread Hijack - Suspend thread, redirect RIP to shellcode
     - APC Queue - QueueUserAPC + LoadLibraryW on all threads
     - EarlyBird - Suspended remote thread + APC, guaranteed execution on resume
+    - Remote Mapping - File mapping shared into remote process, no VirtualAllocEx/WriteProcessMemory
     - Manual Map - Map PE sections, resolve imports, call DllMain
   - Steal Token - Steal process token and launch a new process under its security context
 
@@ -311,7 +312,7 @@ dioprocess/
 | `process` | Library | Windows API bindings for process, thread, handle, module, and memory management |
 | `network` | Library | Windows API bindings for TCP/UDP network connection enumeration |
 | `service` | Library | Windows API bindings for service enumeration, start, stop, create, and delete |
-| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, APC Queue, Manual Map), process creation, process hollowing, process ghosting, token theft, module unloading, and memory operations |
+| `misc` | Library | Advanced utilities including DLL injection (LoadLibrary, Thread Hijack, APC Queue, EarlyBird, Remote Mapping, Manual Map), process creation, process hollowing, process ghosting, token theft, module unloading, and memory operations |
 | `ui` | Library | Dioxus UI components with routing, styles, and state management |
 | `dioprocess` | Binary | Desktop application entry point with Windows manifest |
 
