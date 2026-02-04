@@ -23,6 +23,27 @@ crates/
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
 ├── misc/          # DLL injection (7 methods), process creation, process hollowing, token theft, module unloading, memory ops
+│   └── src/
+│       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
+│       ├── error.rs                    # MiscError enum, Display, Error impls
+│       ├── injection/
+│       │   ├── mod.rs                  # Re-exports all injection functions
+│       │   ├── loadlibrary.rs          # inject_dll()
+│       │   ├── thread_hijack.rs        # inject_dll_thread_hijack()
+│       │   ├── apc_queue.rs            # inject_dll_apc_queue()
+│       │   ├── earlybird.rs            # inject_dll_earlybird()
+│       │   ├── remote_mapping.rs       # inject_dll_remote_mapping()
+│       │   ├── function_stomping.rs    # inject_dll_function_stomping()
+│       │   └── manual_map.rs           # inject_dll_manual_map()
+│       ├── memory.rs                   # commit_memory(), decommit_memory(), free_memory()
+│       ├── module.rs                   # unload_module()
+│       ├── process/
+│       │   ├── mod.rs                  # Re-exports all process functions
+│       │   ├── create.rs               # create_process()
+│       │   ├── ppid_spoof.rs           # create_ppid_spoofed_process()
+│       │   ├── hollow.rs               # hollow_process()
+│       │   └── ghost.rs                # ghost_process()
+│       └── token.rs                    # steal_token()
 ├── ui/            # Dioxus components, routing, state, styles
 │   └── src/
 │       ├── components/
@@ -100,22 +121,28 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 
 ## DLL injection methods (misc crate)
 
-1. **LoadLibrary** — Classic CreateRemoteThread + WriteProcessMemory
-2. **Thread Hijack** — Suspend thread, redirect RIP/PC to shellcode
-3. **APC Queue** — QueueUserAPC + LoadLibraryW on all threads; fires when a thread enters alertable wait
-4. **EarlyBird** — CreateRemoteThread suspended + QueueUserAPC before thread runs; APC fires during LdrInitializeThunk guaranteeing execution
-5. **Remote Mapping** — CreateFileMappingW + MapViewOfFile locally + NtMapViewOfSection remotely; avoids VirtualAllocEx/WriteProcessMemory entirely
-6. **Function Stomping** — Overwrite a sacrificial function (default: setupapi.dll!SetupScanFileQueueA) in the remote process with LoadLibraryW shellcode; avoids new executable memory allocation
-7. **Manual Mapping** — Parse PE, map sections, resolve imports, call DllMain
+Each injection method is in its own file under `crates/misc/src/injection/`:
+
+1. **LoadLibrary** (`loadlibrary.rs`) — Classic CreateRemoteThread + WriteProcessMemory
+2. **Thread Hijack** (`thread_hijack.rs`) — Suspend thread, redirect RIP/PC to shellcode
+3. **APC Queue** (`apc_queue.rs`) — QueueUserAPC + LoadLibraryW on all threads; fires when a thread enters alertable wait
+4. **EarlyBird** (`earlybird.rs`) — CreateRemoteThread suspended + QueueUserAPC before thread runs; APC fires during LdrInitializeThunk guaranteeing execution
+5. **Remote Mapping** (`remote_mapping.rs`) — CreateFileMappingW + MapViewOfFile locally + NtMapViewOfSection remotely; avoids VirtualAllocEx/WriteProcessMemory entirely
+6. **Function Stomping** (`function_stomping.rs`) — Overwrite a sacrificial function (default: setupapi.dll!SetupScanFileQueueA) in the remote process with LoadLibraryW shellcode; avoids new executable memory allocation
+7. **Manual Mapping** (`manual_map.rs`) — Parse PE, map sections, resolve imports with LoadLibraryA fallback, apply per-section memory protections (PAGE_EXECUTE_READ for .text, PAGE_READWRITE for .data, etc.), FlushInstructionCache, call DllMain via shellcode
 
 ## Process creation methods (misc crate)
 
-1. **Normal CreateProcess** — Launch executable via `CreateProcessW`, optionally suspended, optionally with Block DLL Policy
-2. **PPID Spoofing** — Open handle to target parent process, set up `STARTUPINFOEXW` with `InitializeProcThreadAttributeList` + `UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_PARENT_PROCESS)`, create process via `CreateProcessW` with `EXTENDED_STARTUPINFO_PRESENT` flag; the new process appears as a child of the specified parent PID; optionally combined with Block DLL Policy
-3. **Process Hollowing** — Create host process suspended, get PEB address via thread context Rdx, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, write PE headers and sections individually, apply base relocations if needed, patch PEB ImageBaseAddress, fix per-section memory permissions via `VirtualProtectEx` (R/RW/RX/RWX based on section characteristics), hijack thread entry point (RCX), resume thread
-4. **Process Ghosting** — Create temp file, open via `NtOpenFile` with DELETE permission, mark for deletion with `NtSetInformationFile(FileDispositionInformation)`, write payload via `NtWriteFile`, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, retrieve environment via `CreateEnvironmentBlock`, set up PEB process parameters with `RtlCreateProcessParametersEx` (NORMALIZED), allocate at exact params address in remote process via `NtAllocateVirtualMemory` (no pointer relocation), write params and environment via `NtWriteVirtualMemory` with two-scenario layout handling, create initial thread via `NtCreateThreadEx`
+Each process creation method is in its own file under `crates/misc/src/process/`:
+
+1. **Normal CreateProcess** (`create.rs`) — Launch executable via `CreateProcessW`, optionally suspended, optionally with Block DLL Policy
+2. **PPID Spoofing** (`ppid_spoof.rs`) — Open handle to target parent process, set up `STARTUPINFOEXW` with `InitializeProcThreadAttributeList` + `UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_PARENT_PROCESS)`, create process via `CreateProcessW` with `EXTENDED_STARTUPINFO_PRESENT` flag; the new process appears as a child of the specified parent PID; optionally combined with Block DLL Policy
+3. **Process Hollowing** (`hollow.rs`) — Create host process suspended, get PEB address via thread context Rdx, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, write PE headers and sections individually, apply base relocations if needed, patch PEB ImageBaseAddress, fix per-section memory permissions via `VirtualProtectEx` (R/RW/RX/RWX based on section characteristics), hijack thread entry point (RCX), resume thread
+4. **Process Ghosting** (`ghost.rs`) — Create temp file, open via `NtOpenFile` with DELETE permission, mark for deletion with `NtSetInformationFile(FileDispositionInformation)`, write payload via `NtWriteFile`, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, retrieve environment via `CreateEnvironmentBlock`, set up PEB process parameters with `RtlCreateProcessParametersEx` (NORMALIZED), allocate at exact params address in remote process via `NtAllocateVirtualMemory` (no pointer relocation), write params and environment via `NtWriteVirtualMemory` with two-scenario layout handling, create initial thread via `NtCreateThreadEx`
 
 ## Token theft (misc crate)
+
+Located in `crates/misc/src/token.rs`:
 
 `steal_token(pid, exe_path, args)` — Open target process with `PROCESS_QUERY_LIMITED_INFORMATION`, obtain its primary token via `OpenProcessToken`, duplicate as a primary token with `DuplicateTokenEx(SecurityAnonymous, TokenPrimary)`, enable `SeAssignPrimaryTokenPrivilege` via `AdjustTokenPrivileges`, impersonate with `ImpersonateLoggedOnUser`, spawn a new process under that token via `CreateProcessAsUserW`, then `RevertToSelf`. Access via right-click context menu > Miscellaneous > Steal Token.
 
@@ -174,6 +201,8 @@ Access via right-click context menu > Miscellaneous > Steal Token:
 - Uses `misc::steal_token()` function
 
 ## Process ghosting (misc crate)
+
+Located in `crates/misc/src/process/ghost.rs`:
 
 `ghost_process(exe_path)` — Creates a process whose backing file no longer exists on disk. Algorithm:
 

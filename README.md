@@ -33,6 +33,14 @@ crates/
 ├── network/       # GetExtendedTcpTable / GetUdpTable → PID mapping
 ├── service/       # SCM: EnumServicesStatusEx, Start/Stop/Create/Delete service
 ├── misc/          # DLL injection (7 methods), process hollowing, ghosting, token theft, NT syscalls
+│   └── src/
+│       ├── lib.rs              # Module declarations + pub use re-exports
+│       ├── error.rs            # MiscError enum
+│       ├── injection/          # 7 injection techniques (each in own file)
+│       ├── memory.rs           # commit/decommit/free memory
+│       ├── module.rs           # unload_module
+│       ├── process/            # create, ppid_spoof, hollow, ghost
+│       └── token.rs            # steal_token
 ├── ui/            # Dioxus components, router, global signals, dark theme
 └── dioprocess/    # Binary crate — entry point, custom window, manifest embedding
 ```
@@ -47,7 +55,7 @@ crates/
 4. **EarlyBird** — Suspended `CreateRemoteThread` → `QueueUserAPC` before first run
 5. **Remote Mapping** — `CreateFileMapping` + `NtMapViewOfSection` (no `VirtualAllocEx`)
 6. **Function Stomping** — Overwrite sacrificial function (e.g. `setupapi!SetupScanFileQueueA`) with shellcode
-7. **Manual Mapping** — PE parsing, section mapping, import resolution, TLS, call `DllMain`
+7. **Manual Mapping** — PE parsing, section mapping, import resolution, per-section memory protections, `FlushInstructionCache`, call `DllMain`
 
 ### Process Creation & Stealth
 
