@@ -90,6 +90,7 @@ fn build_tree_rows(
         let cmp = match sort_column {
             SortColumn::Pid => a.pid.cmp(&b.pid),
             SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            SortColumn::Arch => a.arch.to_string().cmp(&b.arch.to_string()),
             SortColumn::Memory => a.memory_mb.partial_cmp(&b.memory_mb).unwrap_or(std::cmp::Ordering::Equal),
             SortColumn::Threads => a.thread_count.cmp(&b.thread_count),
             SortColumn::Cpu => a.cpu_usage.partial_cmp(&b.cpu_usage).unwrap_or(std::cmp::Ordering::Equal),
@@ -263,6 +264,7 @@ pub fn ProcessTab() -> Element {
         let cmp = match *sort_column.read() {
             SortColumn::Pid => a.pid.cmp(&b.pid),
             SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            SortColumn::Arch => a.arch.to_string().cmp(&b.arch.to_string()),
             SortColumn::Memory => a
                 .memory_mb
                 .partial_cmp(&b.memory_mb)
@@ -384,12 +386,13 @@ pub fn ProcessTab() -> Element {
                                     .await;
                                 if let Some(file) = file {
                                     let path = file.path().to_path_buf();
-                                    let mut csv = String::from("PID,Name,CPU %,Threads,Memory (MB),Path\n");
+                                    let mut csv = String::from("PID,Name,Arch,CPU %,Threads,Memory (MB),Path\n");
                                     for p in &procs {
                                         csv.push_str(&format!(
-                                            "{},\"{}\",{:.1},{},{:.2},\"{}\"\n",
+                                            "{},\"{}\",{},{:.1},{},{:.2},\"{}\"\n",
                                             p.pid,
                                             p.name.replace('"', "\"\""),
+                                            p.arch,
                                             p.cpu_usage,
                                             p.thread_count,
                                             p.memory_mb,
@@ -492,6 +495,19 @@ pub fn ProcessTab() -> Element {
                                     }
                                 },
                                 "Name{sort_indicator(SortColumn::Name)}"
+                            }
+                            th {
+                                class: "th sortable",
+                                onclick: move |_| {
+                                    if *sort_column.read() == SortColumn::Arch {
+                                        let new_order = if *sort_order.read() == SortOrder::Ascending { SortOrder::Descending } else { SortOrder::Ascending };
+                                        sort_order.set(new_order);
+                                    } else {
+                                        sort_column.set(SortColumn::Arch);
+                                        sort_order.set(SortOrder::Descending);
+                                    }
+                                },
+                                "Arch{sort_indicator(SortColumn::Arch)}"
                             }
                             th {
                                 class: "th sortable",

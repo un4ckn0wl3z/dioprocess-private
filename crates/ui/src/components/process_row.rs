@@ -100,6 +100,7 @@ pub fn ProcessRow(
                     "{process.name}"
                 }
             }
+            td { class: "cell cell-arch", "{process.arch}" }
             td { class: "cell cell-cpu {cpu_class}", "{process.cpu_usage:.1}%" }
             td { class: "cell cell-threads", "{process.thread_count}" }
             td { class: "cell cell-memory",

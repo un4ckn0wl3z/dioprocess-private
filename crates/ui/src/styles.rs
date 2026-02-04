@@ -401,6 +401,13 @@ pub const CUSTOM_STYLES: &str = r#"
     .cell-name {
         font-weight: 500;
     }
+    .cell-arch {
+        font-family: monospace;
+        font-size: 12px;
+        width: 50px;
+        text-align: center;
+        color: #60a5fa;
+    }
     .cell-cpu {
         font-family: monospace;
         width: 80px;

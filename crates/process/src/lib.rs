@@ -26,14 +26,33 @@ use windows::Win32::System::Memory::{
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows::Win32::System::Threading::GetCurrentProcess;
 use windows::Win32::System::Threading::{
-    GetThreadPriority, OpenProcess, OpenThread, QueryFullProcessImageNameW, ResumeThread,
-    SuspendThread, TerminateProcess, TerminateThread, PROCESS_DUP_HANDLE, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_READ,
-    THREAD_QUERY_INFORMATION, THREAD_SUSPEND_RESUME, THREAD_TERMINATE,
+    GetThreadPriority, IsWow64Process, OpenProcess, OpenThread, QueryFullProcessImageNameW,
+    ResumeThread, SuspendThread, TerminateProcess, TerminateThread, PROCESS_DUP_HANDLE,
+    PROCESS_NAME_WIN32, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_READ, THREAD_QUERY_INFORMATION,
+    THREAD_SUSPEND_RESUME, THREAD_TERMINATE,
 };
 
 /// Global system info for CPU tracking (needs to persist between calls)
 static SYSTEM_INFO: Mutex<Option<System>> = Mutex::new(None);
+
+/// Process architecture
+#[derive(Clone, Debug, PartialEq, Copy)]
+pub enum ProcessArch {
+    X64,
+    X86,
+    Unknown,
+}
+
+impl std::fmt::Display for ProcessArch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProcessArch::X64 => write!(f, "x64"),
+            ProcessArch::X86 => write!(f, "x86"),
+            ProcessArch::Unknown => write!(f, "-"),
+        }
+    }
+}
 
 /// Process information structure
 #[derive(Clone, Debug, PartialEq)]
@@ -45,6 +64,7 @@ pub struct ProcessInfo {
     pub thread_count: u32,
     pub exe_path: String,
     pub cpu_usage: f32,
+    pub arch: ProcessArch,
 }
 
 /// System statistics
@@ -88,6 +108,7 @@ pub fn get_processes() -> Vec<ProcessInfo> {
 
                 let (memory_mb, exe_path) = get_process_details(entry.th32ProcessID);
                 let cpu_usage = cpu_map.get(&entry.th32ProcessID).copied().unwrap_or(0.0);
+                let arch = get_process_arch(entry.th32ProcessID);
 
                 processes.push(ProcessInfo {
                     pid: entry.th32ProcessID,
@@ -97,6 +118,7 @@ pub fn get_processes() -> Vec<ProcessInfo> {
                     thread_count: entry.cntThreads,
                     exe_path,
                     cpu_usage,
+                    arch,
                 });
 
                 // Get the next process
@@ -196,6 +218,32 @@ pub fn get_system_stats() -> SystemStats {
         cpu_usage: sys.global_cpu_usage(),
         process_count: sys.processes().len(),
         uptime_seconds: System::uptime(),
+    }
+}
+
+/// Get process architecture (x64 or x86)
+fn get_process_arch(pid: u32) -> ProcessArch {
+    unsafe {
+        let handle = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(h) => h,
+            Err(_) => return ProcessArch::Unknown,
+        };
+
+        let mut is_wow64: BOOL = BOOL(0);
+        let result = IsWow64Process(handle, &mut is_wow64);
+        let _ = CloseHandle(handle);
+
+        if result.is_ok() {
+            // On 64-bit Windows: WoW64 = true means 32-bit process
+            // On 64-bit Windows: WoW64 = false means 64-bit process
+            if is_wow64.as_bool() {
+                ProcessArch::X86
+            } else {
+                ProcessArch::X64
+            }
+        } else {
+            ProcessArch::Unknown
+        }
     }
 }
 

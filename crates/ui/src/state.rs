@@ -42,6 +42,7 @@ pub enum ProcessViewMode {
 pub enum SortColumn {
     Pid,
     Name,
+    Arch,
     Memory,
     Threads,
     Cpu,
