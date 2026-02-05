@@ -19,6 +19,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 - Windows Service enumeration, start/stop/create/delete (Service Control Manager)
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
 - **DLL Unhooking** — restore hooked DLLs (ntdll, kernel32, kernelbase, user32, advapi32, ws2_32) by replacing .text section from disk
+- **Hook Detection** — scan IAT (Import Address Table) entries for inline hooks (E9/E8/EB opcodes) and compare with original DLL bytes from disk
 - Advanced process creation & masquerading:
   - Normal `CreateProcessW` (suspended option)
   - PPID spoofing (`PROC_THREAD_ATTRIBUTE_PARENT_PROCESS`)
@@ -33,7 +34,7 @@ crates/
 ├── process/       # ToolHelp32, NtQueryInformationThread, VirtualQueryEx, modules, memory regions
 ├── network/       # GetExtendedTcpTable / GetUdpTable → PID mapping
 ├── service/       # SCM: EnumServicesStatusEx, Start/Stop/Create/Delete service
-├── misc/          # DLL injection (7 methods), process hollowing, ghosting, token theft, NT syscalls
+├── misc/          # DLL injection (7 methods), process hollowing, ghosting, token theft, hook scanning, NT syscalls
 │   └── src/
 │       ├── lib.rs              # Module declarations + pub use re-exports
 │       ├── error.rs            # MiscError enum
@@ -42,7 +43,8 @@ crates/
 │       ├── module.rs           # unload_module
 │       ├── process/            # create, ppid_spoof, hollow, ghost
 │       ├── token.rs            # steal_token
-│       └── unhook.rs           # DLL unhooking (local + remote process)
+│       ├── unhook.rs           # DLL unhooking (local + remote process)
+│       └── hook_scanner.rs     # IAT hook detection (E9/E8/EB inline hooks)
 ├── ui/            # Dioxus components, router, global signals, dark theme
 └── dioprocess/    # Binary crate — entry point, custom window, manifest embedding
 ```
@@ -74,6 +76,17 @@ Restore hooked DLLs in **any process** by reading a clean copy from `System32` a
 - Read clean DLL from disk, make .text writable, copy clean bytes, restore protection
 - Supports: `ntdll.dll`, `kernel32.dll`, `kernelbase.dll`, `user32.dll`, `advapi32.dll`, `ws2_32.dll`
 - **Test suite** included in `assets/unhook_test/` with MinHook-based hook DLL
+
+### Hook Detection
+
+Scan process IAT (Import Address Table) for inline hooks by comparing imported function bytes with original DLL from disk:
+- Parse PE Import Directory to enumerate all imported DLLs and functions
+- Read first 16 bytes of each imported function from process memory
+- Detect hooks via JMP (E9), CALL (E8), or short JMP (EB) opcodes at function entry
+- Read original DLL from System32 and compare function bytes
+- Works for **all** imported DLLs: ntdll, kernel32, user32, ws2_32, advapi32, etc.
+- Displays hook location, memory vs disk bytes, and target module
+- Accessed via context menu: **Inspect → Hook Scan**
 
 ### Token Theft
 

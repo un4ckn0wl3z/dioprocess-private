@@ -16,7 +16,7 @@ crates/
 ├── process/     # Process enumeration (ToolHelp32, threads, handles, modules, memory)
 ├── network/     # TCP/UDP via IP Helper API
 ├── service/     # SCM operations (enumerate, start/stop, create/delete)
-├── misc/        # Low-level ops: injection/, process/, token.rs, unhook.rs
+├── misc/        # Low-level ops: injection/, process/, token.rs, unhook.rs, hook_scanner.rs
 ├── ui/          # Dioxus components, routing, state signals, styles
 └── dioprocess/  # Binary entry point + UAC manifest embedding
 ```
@@ -73,6 +73,7 @@ pub fn SomeWindow() -> Element {
 | Injection techniques | `crates/misc/src/injection/*.rs` |
 | Process creation (hollow, ghost) | `crates/misc/src/process/*.rs` |
 | DLL unhooking | `crates/misc/src/unhook.rs` |
+| Hook detection | `crates/misc/src/hook_scanner.rs` |
 | UI component patterns | `crates/ui/src/components/process_tab.rs` |
 | Global state signals | `crates/ui/src/state.rs` |
 | UAC manifest | `crates/dioprocess/app.manifest` |

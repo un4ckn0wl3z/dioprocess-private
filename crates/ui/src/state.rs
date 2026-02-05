@@ -27,6 +27,10 @@ pub static TOKEN_THIEF_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signa
 pub static FUNCTION_STOMPING_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
     Signal::global(|| None);
 
+/// Hook Scan window state - stores PID and process name to open hook scan modal
+pub static HOOK_SCAN_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
+    Signal::global(|| None);
+
 /// Ghost process window state - controls visibility of ghost process modal
 pub static GHOST_PROCESS_WINDOW_STATE: GlobalSignal<bool> = Signal::global(|| false);
 

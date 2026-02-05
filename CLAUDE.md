@@ -22,11 +22,12 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
-├── misc/          # DLL injection (7 methods), DLL unhooking, process creation, process hollowing, token theft, module unloading, memory ops
+├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, token theft, module unloading, memory ops
 │   └── src/
 │       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
 │       ├── error.rs                    # MiscError enum, Display, Error impls
 │       ├── unhook.rs                   # DLL unhooking (restore .text from disk)
+│       ├── hook_scanner.rs             # IAT hook detection (E9/E8/EB inline hooks)
 │       ├── injection/
 │       │   ├── mod.rs                  # Re-exports all injection functions
 │       │   ├── loadlibrary.rs          # inject_dll()
@@ -61,7 +62,8 @@ crates/
 │       │   ├── create_process_window.rs  # Process creation + hollowing modal
 │       │   ├── token_thief_window.rs    # Token theft + impersonation modal
 │       │   ├── function_stomping_window.rs  # Function stomping injection modal
-│       │   └── ghost_process_window.rs  # Process ghosting modal
+│       │   ├── ghost_process_window.rs  # Process ghosting modal
+│       │   └── hook_scan_window.rs      # IAT hook detection modal
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
 │       ├── helpers.rs            # Clipboard utilities
@@ -272,6 +274,19 @@ Access via "Ghost Process" button in the process tab toolbar:
 - **Status feedback** — Success shows new PID, errors show detailed NT status codes
 - **Implementation details** — Uses `NtOpenFile`, `NtWriteFile`, `NtCreateSection`, `NtCreateProcessEx`, `NtAllocateVirtualMemory`, `NtWriteVirtualMemory`, `NtCreateThreadEx` for full NT API process/thread creation
 - Uses `misc::ghost_process()` function
+
+## Hook scan window
+
+Access via right-click context menu > Inspect > Hook Scan:
+- **IAT parsing** — Walks the Import Directory (PE data directory index 1) to enumerate all imported DLLs and functions
+- **Import Descriptor parsing** — Reads 20-byte Import Descriptors, follows FirstThunk to actual IAT entries
+- **Hook detection** — Checks first 16 bytes of each imported function for inline hook opcodes (E9=JMP, E8=CALL, EB=short JMP)
+- **Disk comparison** — Reads original DLL from System32, parses PE to find function offset, compares memory vs disk bytes
+- **Multi-DLL support** — Works for all imported DLLs: ntdll.dll, kernel32.dll, user32.dll, ws2_32.dll, advapi32.dll, etc.
+- **Results table** — Shows module name, memory address, hook type (IAT Hook), bytes comparison (memory vs disk), and description
+- **Filtering** — Filter by address or region name
+- **Status feedback** — Shows hook count or clean status
+- Uses `misc::scan_process_hooks()` function from `hook_scanner.rs`
 
 ## No tests
 

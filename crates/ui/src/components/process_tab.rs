@@ -11,14 +11,14 @@ use process::{
 
 use super::{
     CreateProcessWindow, FunctionStompingWindow, GhostProcessWindow, GraphWindow, HandleWindow,
-    MemoryWindow, ModuleWindow, ProcessRow, ThreadWindow, TokenThiefWindow,
+    HookScanWindow, MemoryWindow, ModuleWindow, ProcessRow, ThreadWindow, TokenThiefWindow,
 };
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
     ContextMenuState, ProcessViewMode, SortColumn, SortOrder, CREATE_PROCESS_WINDOW_STATE,
     FUNCTION_STOMPING_WINDOW_STATE, GHOST_PROCESS_WINDOW_STATE, GRAPH_WINDOW_STATE,
-    HANDLE_WINDOW_STATE, MEMORY_WINDOW_STATE, MODULE_WINDOW_STATE, THREAD_WINDOW_STATE,
-    TOKEN_THIEF_WINDOW_STATE,
+    HANDLE_WINDOW_STATE, HOOK_SCAN_WINDOW_STATE, MEMORY_WINDOW_STATE, MODULE_WINDOW_STATE,
+    THREAD_WINDOW_STATE, TOKEN_THIEF_WINDOW_STATE,
 };
 
 /// A row in the tree view with metadata for rendering connectors
@@ -852,6 +852,23 @@ pub fn ProcessTab() -> Element {
                                 span { "📈" }
                                 span { "Performance" }
                             }
+
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    if let Some(pid) = ctx_menu.pid {
+                                        let proc_name = processes.read()
+                                            .iter()
+                                            .find(|p| p.pid == pid)
+                                            .map(|p| p.name.clone())
+                                            .unwrap_or_else(|| format!("PID {}", pid));
+                                        *HOOK_SCAN_WINDOW_STATE.write() = Some((pid, proc_name));
+                                    }
+                                    context_menu.set(ContextMenuState::default());
+                                },
+                                span { "🔍" }
+                                span { "Hook Scan" }
+                            }
                         }
                     }
 
@@ -1457,6 +1474,11 @@ pub fn ProcessTab() -> Element {
             // Graph Window Modal
             if let Some((pid, proc_name)) = GRAPH_WINDOW_STATE.read().clone() {
                 GraphWindow { pid: pid, process_name: proc_name }
+            }
+
+            // Hook Scan Window Modal
+            if let Some((pid, proc_name)) = HOOK_SCAN_WINDOW_STATE.read().clone() {
+                HookScanWindow { pid: pid, process_name: proc_name }
             }
 
             // Create Process Window Modal
