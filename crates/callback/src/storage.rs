@@ -79,6 +79,16 @@ impl EventStorage {
              CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);",
         )?;
 
+        // Create process name cache table (PID → name mapping)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS process_names (
+                pid INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+            )",
+            [],
+        )?;
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             write_buffer: Arc::new(Mutex::new(Vec::with_capacity(DEFAULT_BATCH_SIZE))),
@@ -124,12 +134,54 @@ impl EventStorage {
         }
     }
 
-    fn flush_events(&self, events: Vec<CallbackEvent>) {
+    fn flush_events(&self, mut events: Vec<CallbackEvent>) {
         let conn = self.conn.lock();
+
+        // Step 1: Cache process names from ProcessCreate events
+        Self::cache_process_names(&conn, &events);
+
+        // Step 2: Resolve <PID X> placeholders from cache
+        Self::resolve_process_names(&conn, &mut events);
+
+        // Step 3: Insert events
         if let Err(e) = Self::insert_events_batch(&conn, &events) {
             eprintln!("Failed to flush events: {}", e);
         }
         *self.last_flush.lock() = Instant::now();
+    }
+
+    /// Cache process names from ProcessCreate events
+    fn cache_process_names(conn: &Connection, events: &[CallbackEvent]) {
+        let mut stmt = match conn.prepare_cached(
+            "INSERT OR REPLACE INTO process_names (pid, name, updated_at) VALUES (?, ?, strftime('%s', 'now'))"
+        ) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        for event in events {
+            // Only cache from ProcessCreate events with valid names
+            if event.event_type == EventType::ProcessCreate
+                && !event.process_name.starts_with("<PID")
+            {
+                let _ = stmt.execute(params![event.process_id, &event.process_name]);
+            }
+        }
+    }
+
+    /// Resolve <PID X> placeholders using cached process names
+    fn resolve_process_names(conn: &Connection, events: &mut [CallbackEvent]) {
+        for event in events.iter_mut() {
+            if event.process_name.starts_with("<PID") {
+                if let Ok(name) = conn.query_row(
+                    "SELECT name FROM process_names WHERE pid = ?",
+                    params![event.process_id],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    event.process_name = name;
+                }
+            }
+        }
     }
 
     fn insert_events_batch(conn: &Connection, events: &[CallbackEvent]) -> SqlResult<()> {
@@ -290,6 +342,12 @@ impl EventStorage {
 
         let _ = conn.execute(
             "DELETE FROM events WHERE created_at < ?",
+            params![cutoff as i64],
+        );
+
+        // Also cleanup old process name cache entries
+        let _ = conn.execute(
+            "DELETE FROM process_names WHERE updated_at < ?",
             params![cutoff as i64],
         );
     }
