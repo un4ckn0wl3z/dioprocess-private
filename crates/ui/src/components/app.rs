@@ -36,6 +36,7 @@ pub fn Layout() -> Element {
     let is_process_tab = matches!(route, Route::ProcessTab {});
     let is_network_tab = matches!(route, Route::NetworkTab {});
     let is_service_tab = matches!(route, Route::ServiceTab {});
+    let is_callback_tab = matches!(route, Route::CallbackTab {});
 
     let about_message = format!(
         r#"
@@ -143,17 +144,22 @@ pub fn Layout() -> Element {
                     Link {
                         to: Route::ProcessTab {},
                         class: if is_process_tab { "tab-item tab-active" } else { "tab-item" },
-                        "🖥️ Processes"
+                        "Processes"
                     }
                     Link {
                         to: Route::NetworkTab {},
                         class: if is_network_tab { "tab-item tab-active" } else { "tab-item" },
-                        "🌐 Network"
+                        "Network"
                     }
                     Link {
                         to: Route::ServiceTab {},
                         class: if is_service_tab { "tab-item tab-active" } else { "tab-item" },
-                        "⚙️ Services"
+                        "Services"
+                    }
+                    Link {
+                        to: Route::CallbackTab {},
+                        class: if is_callback_tab { "tab-item tab-active" } else { "tab-item" },
+                        "Callback Monitor"
                     }
                 }
 

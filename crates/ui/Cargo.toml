@@ -10,5 +10,6 @@ process = { path = "../process" }
 network = { path = "../network" }
 service = { path = "../service" }
 misc = { path = "../misc" }
+callback = { path = "../callback" }
 arboard = "3"
 rfd = "0.15"

@@ -5,6 +5,7 @@ members = [
     "crates/network",
     "crates/service",
     "crates/misc",
+    "crates/callback",
     "crates/ui",
     "crates/dioprocess",
 ]

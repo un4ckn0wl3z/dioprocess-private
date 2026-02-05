@@ -22,6 +22,12 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
+├── callback/      # Kernel driver communication for process/thread callback monitoring
+│   └── src/
+│       ├── lib.rs     # Module declarations + pub use re-exports
+│       ├── error.rs   # CallbackError enum
+│       ├── types.rs   # CallbackEvent, EventType structs
+│       └── driver.rs  # Driver communication (is_driver_loaded, read_events)
 ├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, token theft, module unloading, memory ops
 │   └── src/
 │       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
@@ -63,7 +69,8 @@ crates/
 │       │   ├── token_thief_window.rs    # Token theft + impersonation modal
 │       │   ├── function_stomping_window.rs  # Function stomping injection modal
 │       │   ├── ghost_process_window.rs  # Process ghosting modal
-│       │   └── hook_scan_window.rs      # IAT hook detection modal
+│       │   ├── hook_scan_window.rs      # IAT hook detection modal
+│       │   └── callback_tab.rs          # Kernel callback monitor tab
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
 │       ├── helpers.rs            # Clipboard utilities
@@ -82,6 +89,7 @@ UI Layer (ui crate — Dioxus components + signals)
     ├── process crate  → Windows API (ToolHelp32, Threading, ProcessStatus)
     ├── network crate  → Windows API (IpHelper, WinSock)
     ├── service crate  → Windows API (Services / SCM)
+    ├── callback crate → Kernel driver (ProcessMonitorEx via DeviceIoControl/ReadFile)
     └── misc crate     → Windows API (Memory, LibraryLoader, Debug, Security)
 ```
 
@@ -98,6 +106,8 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `ModuleInfo` | process | base_address, size, path, entry_point |
 | `MemoryRegionInfo` | process | base_address, allocation_base, region_size, state, mem_type, protect |
 | `ProcessStats` | process | cpu_usage, memory_mb |
+| `CallbackEvent` | callback | event_type, timestamp, process_id, parent_pid, thread_id, exit_code, command_line |
+| `EventType` | callback | ProcessCreate, ProcessExit, ThreadCreate, ThreadExit |
 | `NetworkConnection` | network | protocol, local/remote addr:port, state, pid |
 | `ServiceInfo` | service | name, display_name, status, start_type, binary_path, description, pid |
 
@@ -294,6 +304,103 @@ Access via right-click context menu > Inspect > Hook Scan:
 - **Status feedback** — Shows hook count or clean status
 - Uses `misc::scan_process_hooks()` function from `hook_scanner.rs`
 - Helper functions: `misc::get_system_directory_path()`, `misc::enumerate_process_modules()`
+
+## Kernel Callback Monitor (callback crate)
+
+Real-time monitoring of kernel callbacks for process and thread creation/exit events via the ProcessMonitorEx kernel driver.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Dioprocess UI (Rust/Dioxus)              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │              CallbackTab Component                     │ │
+│  │  - Event table with filtering/sorting                  │ │
+│  │  - Real-time updates via polling (1s)                  │ │
+│  │  - CSV export, driver status indicator                 │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                           │                                  │
+│  ┌────────────────────────▼───────────────────────────────┐ │
+│  │              callback crate                             │ │
+│  │  - is_driver_loaded() - check if driver available      │ │
+│  │  - read_events() - ReadFile to get events              │ │
+│  │  - CallbackEvent, EventType structs                    │ │
+│  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                   DeviceIoControl / ReadFile
+                   \\.\ProcessMonitorEx
+                            │
+┌───────────────────────────▼─────────────────────────────────┐
+│              Kernel Driver (C++ WDM)                        │
+│  - PsSetCreateProcessNotifyRoutineEx                        │
+│  - PsSetCreateThreadNotifyRoutine                           │
+│  - Events queued and delivered via IRP_MJ_READ              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Driver data structures (matching ProcessMonitorExCommon.h)
+
+```c
+enum class EventType { ProcessCreate, ProcessExit, ThreadCreate, ThreadExit };
+
+struct EventHeader {
+    EventType Type;
+    ULONG Size;
+    ULONG64 Timestamp;  // FILETIME
+};
+
+struct ProcessCreateInfo {
+    ULONG ProcessId;
+    ULONG ParentProcessId;
+    ULONG CreatingProcessId;
+    ULONG CommandLineLength;
+    WCHAR CommandLine[1];  // Variable length
+};
+
+struct ProcessExitInfo { ULONG ProcessId; ULONG ExitCode; };
+struct ThreadCreateInfo { ULONG ProcessId; ULONG ThreadId; };
+struct ThreadExitInfo : ThreadCreateInfo { ULONG ExitCode; };
+```
+
+### Callback tab features
+
+Access via "Callback Monitor" tab in the main navigation:
+- **Event table** — Time, Type, PID, Process Name, Details columns
+- **Type filter** — All, Process Create, Process Exit, Thread Create, Thread Exit
+- **Search filter** — By PID, process name, or command line
+- **Auto-refresh** — 1-second polling when driver loaded
+- **Driver status** — Green/red indicator showing driver availability
+- **Clear events** — Remove all events from the list
+- **CSV export** — Export filtered events to CSV file
+- **Max events** — Keeps only the most recent 10,000 events
+- **Color coding** — Green (create), red (exit), blue (thread create), yellow (thread exit)
+- **Context menu** — Copy PID, Copy Process Name, Copy Command Line, Filter by PID/Name
+
+### Loading the driver
+
+```batch
+:: Build with Visual Studio + WDK
+:: Enable test signing mode (for unsigned drivers)
+bcdedit /set testsigning on
+
+:: Create and start the driver service
+sc create ProcessMonitorEx type= kernel binPath= "C:\path\to\ProcessMonitorEx.sys"
+sc start ProcessMonitorEx
+
+:: Stop and delete the service
+sc stop ProcessMonitorEx
+sc delete ProcessMonitorEx
+```
+
+### Driver location
+
+The kernel driver source is in `kernelmode/ProcessMonitorEx/`:
+- `ProcessMonitorEx.sln` — Visual Studio solution
+- `ProcessMonitorEx/ProcessMonitorEx.cpp` — Main driver code
+- `ProcessMonitorEx/ProcessMonitorExCommon.h` — Shared data structures
+- `ProcessMonitorExCli/` — Test CLI client
 
 ## No tests
 

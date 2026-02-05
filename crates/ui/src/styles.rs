@@ -1570,4 +1570,110 @@ pub const CUSTOM_STYLES: &str = r#"
         font-size: 13px;
     }
 
+    /* Callback Tab Styles */
+    .callback-tab {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        outline: none;
+    }
+
+    .callback-table .th {
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+    .callback-table .cell {
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+    .cell-time {
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        color: #9ca3af;
+        width: 110px;
+    }
+    .cell-event-type {
+        font-weight: 600;
+        width: 120px;
+    }
+    .event-type-process-create {
+        color: #4ade80;
+    }
+    .event-type-process-exit {
+        color: #f87171;
+    }
+    .event-type-thread-create {
+        color: #60a5fa;
+    }
+    .event-type-thread-exit {
+        color: #fbbf24;
+    }
+    .cell-details {
+        font-size: 12px;
+        color: #9ca3af;
+        max-width: 350px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .cell-details:hover {
+        color: #d1d5db;
+    }
+
+    /* Driver status indicator */
+    .driver-status {
+        font-size: 12px;
+        font-weight: 600;
+        padding: 4px 12px;
+        border-radius: 12px;
+        margin-left: 16px;
+    }
+    .driver-status-loaded {
+        background: rgba(74, 222, 128, 0.2);
+        color: #4ade80;
+        border: 1px solid rgba(74, 222, 128, 0.3);
+    }
+    .driver-status-not-loaded {
+        background: rgba(248, 113, 113, 0.2);
+        color: #f87171;
+        border: 1px solid rgba(248, 113, 113, 0.3);
+    }
+
+    /* Driver not loaded notice */
+    .driver-not-loaded-notice {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 40px;
+        text-align: center;
+    }
+    .driver-not-loaded-notice h2 {
+        font-size: 20px;
+        color: #f87171;
+        margin-bottom: 16px;
+    }
+    .driver-not-loaded-notice p {
+        color: #9ca3af;
+        margin-bottom: 16px;
+        font-size: 14px;
+    }
+    .driver-instructions {
+        background: rgba(0, 0, 0, 0.4);
+        padding: 16px 24px;
+        border-radius: 8px;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        font-size: 13px;
+        color: #22d3ee;
+        text-align: left;
+        white-space: pre-wrap;
+        margin-bottom: 16px;
+        border: 1px solid rgba(34, 211, 238, 0.2);
+    }
+    .driver-note {
+        color: #6b7280;
+        font-size: 12px;
+        font-style: italic;
+    }
+
 "#;

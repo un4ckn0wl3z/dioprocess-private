@@ -1,6 +1,7 @@
 //! UI Components
 
 mod app;
+mod callback_tab;
 mod create_process_window;
 mod function_stomping_window;
 mod ghost_process_window;
@@ -17,6 +18,7 @@ mod thread_window;
 mod token_thief_window;
 
 pub use app::{App, Layout};
+pub use callback_tab::CallbackTab;
 pub use create_process_window::CreateProcessWindow;
 pub use function_stomping_window::FunctionStompingWindow;
 pub use ghost_process_window::GhostProcessWindow;
