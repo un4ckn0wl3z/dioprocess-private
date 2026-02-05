@@ -1,7 +1,7 @@
 //! Driver communication functions
 
 use crate::error::CallbackError;
-use crate::types::{CallbackEvent, EventType};
+use crate::types::{CallbackEvent, EventType, RegistryOperation};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
@@ -177,6 +177,42 @@ pub fn read_events() -> Result<Vec<CallbackEvent>, CallbackError> {
                 EventType::ThreadExit => {
                     parse_thread_exit_event(&buffer, data_offset, timestamp, &pid_name_map)
                 }
+                EventType::ImageLoad => {
+                    parse_image_load_event(&buffer, data_offset, timestamp, &pid_name_map)
+                }
+                EventType::ProcessHandleCreate | EventType::ProcessHandleDuplicate => {
+                    parse_handle_operation_event(
+                        &buffer,
+                        data_offset,
+                        timestamp,
+                        event_type,
+                        &pid_name_map,
+                    )
+                }
+                EventType::ThreadHandleCreate | EventType::ThreadHandleDuplicate => {
+                    parse_handle_operation_event(
+                        &buffer,
+                        data_offset,
+                        timestamp,
+                        event_type,
+                        &pid_name_map,
+                    )
+                }
+                EventType::RegistryCreate
+                | EventType::RegistryOpen
+                | EventType::RegistrySetValue
+                | EventType::RegistryDeleteKey
+                | EventType::RegistryDeleteValue
+                | EventType::RegistryRenameKey
+                | EventType::RegistryQueryValue => {
+                    parse_registry_operation_event(
+                        &buffer,
+                        data_offset,
+                        timestamp,
+                        event_type,
+                        &pid_name_map,
+                    )
+                }
             };
 
             if let Some(e) = event {
@@ -304,12 +340,27 @@ fn parse_process_create_event(
         event_type: EventType::ProcessCreate,
         timestamp,
         process_id,
+        process_name,
         parent_process_id: Some(parent_process_id),
         creating_process_id: Some(creating_process_id),
+        command_line,
         thread_id: None,
         exit_code: None,
-        command_line,
-        process_name,
+        image_base: None,
+        image_size: None,
+        image_name: None,
+        is_system_image: None,
+        is_kernel_image: None,
+        source_process_id: None,
+        source_thread_id: None,
+        target_process_id: None,
+        target_thread_id: None,
+        desired_access: None,
+        granted_access: None,
+        source_image_name: None,
+        key_name: None,
+        value_name: None,
+        registry_operation: None,
     })
 }
 
@@ -347,12 +398,27 @@ fn parse_process_exit_event(
         event_type: EventType::ProcessExit,
         timestamp,
         process_id,
+        process_name,
         parent_process_id: None,
         creating_process_id: None,
+        command_line: None,
         thread_id: None,
         exit_code: Some(exit_code),
-        command_line: None,
-        process_name,
+        image_base: None,
+        image_size: None,
+        image_name: None,
+        is_system_image: None,
+        is_kernel_image: None,
+        source_process_id: None,
+        source_thread_id: None,
+        target_process_id: None,
+        target_thread_id: None,
+        desired_access: None,
+        granted_access: None,
+        source_image_name: None,
+        key_name: None,
+        value_name: None,
+        registry_operation: None,
     })
 }
 
@@ -390,12 +456,27 @@ fn parse_thread_create_event(
         event_type: EventType::ThreadCreate,
         timestamp,
         process_id,
+        process_name,
         parent_process_id: None,
         creating_process_id: None,
+        command_line: None,
         thread_id: Some(thread_id),
         exit_code: None,
-        command_line: None,
-        process_name,
+        image_base: None,
+        image_size: None,
+        image_name: None,
+        is_system_image: None,
+        is_kernel_image: None,
+        source_process_id: None,
+        source_thread_id: None,
+        target_process_id: None,
+        target_thread_id: None,
+        desired_access: None,
+        granted_access: None,
+        source_image_name: None,
+        key_name: None,
+        value_name: None,
+        registry_operation: None,
     })
 }
 
@@ -440,12 +521,383 @@ fn parse_thread_exit_event(
         event_type: EventType::ThreadExit,
         timestamp,
         process_id,
+        process_name,
         parent_process_id: None,
         creating_process_id: None,
+        command_line: None,
         thread_id: Some(thread_id),
         exit_code: Some(exit_code),
-        command_line: None,
+        image_base: None,
+        image_size: None,
+        image_name: None,
+        is_system_image: None,
+        is_kernel_image: None,
+        source_process_id: None,
+        source_thread_id: None,
+        target_process_id: None,
+        target_thread_id: None,
+        desired_access: None,
+        granted_access: None,
+        source_image_name: None,
+        key_name: None,
+        value_name: None,
+        registry_operation: None,
+    })
+}
+
+fn parse_image_load_event(
+    buffer: &[u8],
+    offset: usize,
+    timestamp: u64,
+    pid_map: &HashMap<u32, String>,
+) -> Option<CallbackEvent> {
+    // ImageLoadInfo: ProcessId (4) + ImageBase (8) + ImageSize (8) + IsSystemImage (1) + IsKernelImage (1) + ImageNameLength (4) + ImageName[1] (variable)
+    if buffer.len() < offset + 26 {
+        return None;
+    }
+
+    let process_id = u32::from_ne_bytes([
+        buffer[offset],
+        buffer[offset + 1],
+        buffer[offset + 2],
+        buffer[offset + 3],
+    ]);
+
+    let image_base = u64::from_ne_bytes([
+        buffer[offset + 4],
+        buffer[offset + 5],
+        buffer[offset + 6],
+        buffer[offset + 7],
+        buffer[offset + 8],
+        buffer[offset + 9],
+        buffer[offset + 10],
+        buffer[offset + 11],
+    ]);
+
+    let image_size = u64::from_ne_bytes([
+        buffer[offset + 12],
+        buffer[offset + 13],
+        buffer[offset + 14],
+        buffer[offset + 15],
+        buffer[offset + 16],
+        buffer[offset + 17],
+        buffer[offset + 18],
+        buffer[offset + 19],
+    ]);
+
+    let is_system_image = buffer[offset + 20] != 0;
+    let is_kernel_image = buffer[offset + 21] != 0;
+
+    let image_name_length = u32::from_ne_bytes([
+        buffer[offset + 22],
+        buffer[offset + 23],
+        buffer[offset + 24],
+        buffer[offset + 25],
+    ]) as usize;
+
+    let image_name = if image_name_length > 0 {
+        let name_offset = offset + 26;
+        let byte_len = image_name_length * 2; // WCHAR is 2 bytes
+        if buffer.len() >= name_offset + byte_len {
+            let wchars: Vec<u16> = (0..image_name_length)
+                .map(|i| {
+                    let idx = name_offset + i * 2;
+                    u16::from_ne_bytes([buffer[idx], buffer[idx + 1]])
+                })
+                .collect();
+            Some(String::from_utf16_lossy(&wchars))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let process_name = pid_map
+        .get(&process_id)
+        .cloned()
+        .unwrap_or_else(|| format!("<PID {}>", process_id));
+
+    Some(CallbackEvent {
+        event_type: EventType::ImageLoad,
+        timestamp,
+        process_id,
         process_name,
+        parent_process_id: None,
+        creating_process_id: None,
+        command_line: None,
+        thread_id: None,
+        exit_code: None,
+        image_base: Some(image_base),
+        image_size: Some(image_size),
+        image_name,
+        is_system_image: Some(is_system_image),
+        is_kernel_image: Some(is_kernel_image),
+        source_process_id: None,
+        source_thread_id: None,
+        target_process_id: None,
+        target_thread_id: None,
+        desired_access: None,
+        granted_access: None,
+        source_image_name: None,
+        key_name: None,
+        value_name: None,
+        registry_operation: None,
+    })
+}
+
+fn parse_handle_operation_event(
+    buffer: &[u8],
+    offset: usize,
+    timestamp: u64,
+    event_type: EventType,
+    pid_map: &HashMap<u32, String>,
+) -> Option<CallbackEvent> {
+    // HandleOperationInfo: SourceProcessId (4) + SourceThreadId (4) + TargetProcessId (4) + TargetThreadId (4) +
+    //                      DesiredAccess (4) + GrantedAccess (4) + IsKernelHandle (1) + SourceImageNameLength (4) + SourceImageName[1] (variable)
+    if buffer.len() < offset + 29 {
+        return None;
+    }
+
+    let source_process_id = u32::from_ne_bytes([
+        buffer[offset],
+        buffer[offset + 1],
+        buffer[offset + 2],
+        buffer[offset + 3],
+    ]);
+
+    let source_thread_id = u32::from_ne_bytes([
+        buffer[offset + 4],
+        buffer[offset + 5],
+        buffer[offset + 6],
+        buffer[offset + 7],
+    ]);
+
+    let target_process_id = u32::from_ne_bytes([
+        buffer[offset + 8],
+        buffer[offset + 9],
+        buffer[offset + 10],
+        buffer[offset + 11],
+    ]);
+
+    let target_thread_id = u32::from_ne_bytes([
+        buffer[offset + 12],
+        buffer[offset + 13],
+        buffer[offset + 14],
+        buffer[offset + 15],
+    ]);
+
+    let desired_access = u32::from_ne_bytes([
+        buffer[offset + 16],
+        buffer[offset + 17],
+        buffer[offset + 18],
+        buffer[offset + 19],
+    ]);
+
+    let granted_access = u32::from_ne_bytes([
+        buffer[offset + 20],
+        buffer[offset + 21],
+        buffer[offset + 22],
+        buffer[offset + 23],
+    ]);
+
+    let _is_kernel_handle = buffer[offset + 24] != 0;
+
+    let source_image_name_length = u32::from_ne_bytes([
+        buffer[offset + 25],
+        buffer[offset + 26],
+        buffer[offset + 27],
+        buffer[offset + 28],
+    ]) as usize;
+
+    let source_image_name = if source_image_name_length > 0 {
+        let name_offset = offset + 29;
+        let byte_len = source_image_name_length * 2; // WCHAR is 2 bytes
+        if buffer.len() >= name_offset + byte_len {
+            let wchars: Vec<u16> = (0..source_image_name_length)
+                .map(|i| {
+                    let idx = name_offset + i * 2;
+                    u16::from_ne_bytes([buffer[idx], buffer[idx + 1]])
+                })
+                .collect();
+            Some(String::from_utf16_lossy(&wchars))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let process_name = pid_map
+        .get(&source_process_id)
+        .cloned()
+        .unwrap_or_else(|| format!("<PID {}>", source_process_id));
+
+    Some(CallbackEvent {
+        event_type,
+        timestamp,
+        process_id: source_process_id,
+        process_name,
+        parent_process_id: None,
+        creating_process_id: None,
+        command_line: None,
+        thread_id: None,
+        exit_code: None,
+        image_base: None,
+        image_size: None,
+        image_name: None,
+        is_system_image: None,
+        is_kernel_image: None,
+        source_process_id: Some(source_process_id),
+        source_thread_id: Some(source_thread_id),
+        target_process_id: Some(target_process_id),
+        target_thread_id: if target_thread_id != 0 {
+            Some(target_thread_id)
+        } else {
+            None
+        },
+        desired_access: Some(desired_access),
+        granted_access: Some(granted_access),
+        source_image_name,
+        key_name: None,
+        value_name: None,
+        registry_operation: None,
+    })
+}
+
+fn parse_registry_operation_event(
+    buffer: &[u8],
+    offset: usize,
+    timestamp: u64,
+    event_type: EventType,
+    pid_map: &HashMap<u32, String>,
+) -> Option<CallbackEvent> {
+    // RegistryOperationInfo: ProcessId (4) + ThreadId (4) + Operation (4) + Status (4) +
+    //                        KeyNameLength (4) + ValueNameLength (4) + Names[1] (variable)
+    if buffer.len() < offset + 24 {
+        return None;
+    }
+
+    let process_id = u32::from_ne_bytes([
+        buffer[offset],
+        buffer[offset + 1],
+        buffer[offset + 2],
+        buffer[offset + 3],
+    ]);
+
+    let thread_id = u32::from_ne_bytes([
+        buffer[offset + 4],
+        buffer[offset + 5],
+        buffer[offset + 6],
+        buffer[offset + 7],
+    ]);
+
+    let operation_raw = u32::from_ne_bytes([
+        buffer[offset + 8],
+        buffer[offset + 9],
+        buffer[offset + 10],
+        buffer[offset + 11],
+    ]);
+
+    let _status = u32::from_ne_bytes([
+        buffer[offset + 12],
+        buffer[offset + 13],
+        buffer[offset + 14],
+        buffer[offset + 15],
+    ]);
+
+    let key_name_length = u32::from_ne_bytes([
+        buffer[offset + 16],
+        buffer[offset + 17],
+        buffer[offset + 18],
+        buffer[offset + 19],
+    ]) as usize;
+
+    let value_name_length = u32::from_ne_bytes([
+        buffer[offset + 20],
+        buffer[offset + 21],
+        buffer[offset + 22],
+        buffer[offset + 23],
+    ]) as usize;
+
+    let names_offset = offset + 24;
+
+    let key_name = if key_name_length > 0 {
+        let byte_len = key_name_length * 2;
+        if buffer.len() >= names_offset + byte_len {
+            let wchars: Vec<u16> = (0..key_name_length)
+                .map(|i| {
+                    let idx = names_offset + i * 2;
+                    u16::from_ne_bytes([buffer[idx], buffer[idx + 1]])
+                })
+                .collect();
+            Some(String::from_utf16_lossy(&wchars))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let value_name = if value_name_length > 0 {
+        let value_offset = names_offset + key_name_length * 2;
+        let byte_len = value_name_length * 2;
+        if buffer.len() >= value_offset + byte_len {
+            let wchars: Vec<u16> = (0..value_name_length)
+                .map(|i| {
+                    let idx = value_offset + i * 2;
+                    u16::from_ne_bytes([buffer[idx], buffer[idx + 1]])
+                })
+                .collect();
+            Some(String::from_utf16_lossy(&wchars))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let registry_operation = match operation_raw {
+        0 => Some(RegistryOperation::CreateKey),
+        1 => Some(RegistryOperation::OpenKey),
+        2 => Some(RegistryOperation::SetValue),
+        3 => Some(RegistryOperation::DeleteKey),
+        4 => Some(RegistryOperation::DeleteValue),
+        5 => Some(RegistryOperation::RenameKey),
+        6 => Some(RegistryOperation::QueryValue),
+        _ => None,
+    };
+
+    let process_name = pid_map
+        .get(&process_id)
+        .cloned()
+        .unwrap_or_else(|| format!("<PID {}>", process_id));
+
+    Some(CallbackEvent {
+        event_type,
+        timestamp,
+        process_id,
+        process_name,
+        parent_process_id: None,
+        creating_process_id: None,
+        command_line: None,
+        thread_id: Some(thread_id),
+        exit_code: None,
+        image_base: None,
+        image_size: None,
+        image_name: None,
+        is_system_image: None,
+        is_kernel_image: None,
+        source_process_id: None,
+        source_thread_id: None,
+        target_process_id: None,
+        target_thread_id: None,
+        desired_access: None,
+        granted_access: None,
+        source_image_name: None,
+        key_name,
+        value_name,
+        registry_operation,
     })
 }
 

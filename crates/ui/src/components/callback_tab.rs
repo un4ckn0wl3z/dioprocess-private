@@ -1,6 +1,6 @@
 //! Kernel Callback Monitor tab component
 
-use callback::{is_driver_loaded, read_events, CallbackEvent, EventType};
+use callback::{is_driver_loaded, read_events, CallbackEvent, EventCategory, EventType};
 use dioxus::prelude::*;
 
 use crate::helpers::copy_to_clipboard;
@@ -90,10 +90,33 @@ pub fn CallbackTab() -> Element {
         .filter(|(_, e)| {
             // Type filter
             let type_match = match type_filter.read().as_str() {
+                // Categories
+                "cat_process" => e.event_type.category() == EventCategory::Process,
+                "cat_thread" => e.event_type.category() == EventCategory::Thread,
+                "cat_image" => e.event_type.category() == EventCategory::Image,
+                "cat_handle" => e.event_type.category() == EventCategory::Handle,
+                "cat_registry" => e.event_type.category() == EventCategory::Registry,
+                // Individual process events
                 "process_create" => e.event_type == EventType::ProcessCreate,
                 "process_exit" => e.event_type == EventType::ProcessExit,
+                // Individual thread events
                 "thread_create" => e.event_type == EventType::ThreadCreate,
                 "thread_exit" => e.event_type == EventType::ThreadExit,
+                // Image load
+                "image_load" => e.event_type == EventType::ImageLoad,
+                // Handle operations
+                "process_handle_create" => e.event_type == EventType::ProcessHandleCreate,
+                "process_handle_dup" => e.event_type == EventType::ProcessHandleDuplicate,
+                "thread_handle_create" => e.event_type == EventType::ThreadHandleCreate,
+                "thread_handle_dup" => e.event_type == EventType::ThreadHandleDuplicate,
+                // Registry operations
+                "reg_create" => e.event_type == EventType::RegistryCreate,
+                "reg_open" => e.event_type == EventType::RegistryOpen,
+                "reg_setvalue" => e.event_type == EventType::RegistrySetValue,
+                "reg_deletekey" => e.event_type == EventType::RegistryDeleteKey,
+                "reg_deletevalue" => e.event_type == EventType::RegistryDeleteValue,
+                "reg_rename" => e.event_type == EventType::RegistryRenameKey,
+                "reg_query" => e.event_type == EventType::RegistryQueryValue,
                 "all" => true,
                 _ => true,
             };
@@ -111,6 +134,22 @@ pub fn CallbackTab() -> Element {
                         .unwrap_or(false)
                     || e.thread_id
                         .map(|tid| tid.to_string().contains(&query))
+                        .unwrap_or(false)
+                    || e.image_name
+                        .as_ref()
+                        .map(|n| n.to_lowercase().contains(&query))
+                        .unwrap_or(false)
+                    || e.key_name
+                        .as_ref()
+                        .map(|k| k.to_lowercase().contains(&query))
+                        .unwrap_or(false)
+                    || e.value_name
+                        .as_ref()
+                        .map(|v| v.to_lowercase().contains(&query))
+                        .unwrap_or(false)
+                    || e.source_image_name
+                        .as_ref()
+                        .map(|s| s.to_lowercase().contains(&query))
                         .unwrap_or(false)
             };
 
@@ -231,14 +270,49 @@ pub fn CallbackTab() -> Element {
                 }
 
                 select {
-                    class: "filter-select",
+                    class: "filter-select callback-filter-select",
                     value: "{type_filter}",
                     onchange: move |e| type_filter.set(e.value().clone()),
                     option { value: "all", "All Events" }
-                    option { value: "process_create", "Process Create" }
-                    option { value: "process_exit", "Process Exit" }
-                    option { value: "thread_create", "Thread Create" }
-                    option { value: "thread_exit", "Thread Exit" }
+                    // Categories
+                    optgroup { label: "Categories",
+                        option { value: "cat_process", "Process Events" }
+                        option { value: "cat_thread", "Thread Events" }
+                        option { value: "cat_image", "Image Load Events" }
+                        option { value: "cat_handle", "Handle Events" }
+                        option { value: "cat_registry", "Registry Events" }
+                    }
+                    // Process events
+                    optgroup { label: "Process",
+                        option { value: "process_create", "Process Create" }
+                        option { value: "process_exit", "Process Exit" }
+                    }
+                    // Thread events
+                    optgroup { label: "Thread",
+                        option { value: "thread_create", "Thread Create" }
+                        option { value: "thread_exit", "Thread Exit" }
+                    }
+                    // Image load
+                    optgroup { label: "Image",
+                        option { value: "image_load", "Image Load" }
+                    }
+                    // Handle events
+                    optgroup { label: "Handle Operations",
+                        option { value: "process_handle_create", "Process Handle Create" }
+                        option { value: "process_handle_dup", "Process Handle Duplicate" }
+                        option { value: "thread_handle_create", "Thread Handle Create" }
+                        option { value: "thread_handle_dup", "Thread Handle Duplicate" }
+                    }
+                    // Registry events
+                    optgroup { label: "Registry",
+                        option { value: "reg_create", "Registry Create" }
+                        option { value: "reg_open", "Registry Open" }
+                        option { value: "reg_setvalue", "Registry SetValue" }
+                        option { value: "reg_deletekey", "Registry DeleteKey" }
+                        option { value: "reg_deletevalue", "Registry DeleteValue" }
+                        option { value: "reg_rename", "Registry Rename" }
+                        option { value: "reg_query", "Registry Query" }
+                    }
                 }
 
                 label { class: "checkbox-label",
@@ -433,6 +507,12 @@ pub fn CallbackTab() -> Element {
                                         EventType::ProcessExit => "event-type-process-exit",
                                         EventType::ThreadCreate => "event-type-thread-create",
                                         EventType::ThreadExit => "event-type-thread-exit",
+                                        EventType::ImageLoad => "event-type-image-load",
+                                        EventType::ProcessHandleCreate | EventType::ProcessHandleDuplicate => "event-type-handle-process",
+                                        EventType::ThreadHandleCreate | EventType::ThreadHandleDuplicate => "event-type-handle-thread",
+                                        EventType::RegistryCreate | EventType::RegistryOpen => "event-type-registry-read",
+                                        EventType::RegistrySetValue | EventType::RegistryDeleteKey | EventType::RegistryDeleteValue | EventType::RegistryRenameKey => "event-type-registry-write",
+                                        EventType::RegistryQueryValue => "event-type-registry-read",
                                     };
                                     let time_str = event.format_timestamp();
                                     let details = event.get_details();

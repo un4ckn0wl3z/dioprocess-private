@@ -1594,7 +1594,7 @@ pub const CUSTOM_STYLES: &str = r#"
     }
     .cell-event-type {
         font-weight: 600;
-        width: 120px;
+        width: 140px;
     }
     .event-type-process-create {
         color: #4ade80;
@@ -1607,6 +1607,24 @@ pub const CUSTOM_STYLES: &str = r#"
     }
     .event-type-thread-exit {
         color: #fbbf24;
+    }
+    .event-type-image-load {
+        color: #a78bfa;
+    }
+    .event-type-handle-process {
+        color: #f472b6;
+    }
+    .event-type-handle-thread {
+        color: #fb7185;
+    }
+    .event-type-registry-read {
+        color: #38bdf8;
+    }
+    .event-type-registry-write {
+        color: #fb923c;
+    }
+    .callback-filter-select {
+        min-width: 180px;
     }
     .cell-details {
         font-size: 12px;

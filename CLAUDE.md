@@ -307,7 +307,7 @@ Access via right-click context menu > Inspect > Hook Scan:
 
 ## Kernel Callback Monitor (callback crate)
 
-Real-time monitoring of kernel callbacks for process and thread creation/exit events via the DioProcess kernel driver.
+Real-time monitoring of kernel callbacks via the DioProcess kernel driver. Captures process, thread, image load, handle operations, and registry events.
 
 ### Architecture
 
@@ -325,7 +325,7 @@ Real-time monitoring of kernel callbacks for process and thread creation/exit ev
 │  │              callback crate                             │ │
 │  │  - is_driver_loaded() - check if driver available      │ │
 │  │  - read_events() - ReadFile to get events              │ │
-│  │  - CallbackEvent, EventType structs                    │ │
+│  │  - CallbackEvent, EventType, EventCategory structs     │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                             │
@@ -334,48 +334,93 @@ Real-time monitoring of kernel callbacks for process and thread creation/exit ev
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
 │              Kernel Driver (C++ WDM)                        │
-│  - PsSetCreateProcessNotifyRoutineEx                        │
-│  - PsSetCreateThreadNotifyRoutine                           │
+│  - PsSetCreateProcessNotifyRoutineEx (process callbacks)    │
+│  - PsSetCreateThreadNotifyRoutine (thread callbacks)        │
+│  - PsSetLoadImageNotifyRoutine (image load callbacks)       │
+│  - ObRegisterCallbacks (handle operation callbacks)         │
+│  - CmRegisterCallbackEx (registry callbacks)                │
 │  - Events queued and delivered via IRP_MJ_READ              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Driver data structures (matching ProcessMonitorExCommon.h)
+### Event types (matching ProcessMonitorExCommon.h)
+
+| Category | Event Type | Description |
+|----------|------------|-------------|
+| Process | ProcessCreate | New process created (includes command line, PPID) |
+| Process | ProcessExit | Process terminated (includes exit code) |
+| Thread | ThreadCreate | New thread created in a process |
+| Thread | ThreadExit | Thread terminated (includes exit code) |
+| Image | ImageLoad | DLL/EXE loaded (includes base address, size, path) |
+| Handle | ProcessHandleCreate | Handle opened to a process |
+| Handle | ProcessHandleDuplicate | Process handle duplicated |
+| Handle | ThreadHandleCreate | Handle opened to a thread |
+| Handle | ThreadHandleDuplicate | Thread handle duplicated |
+| Registry | RegistryCreate | Registry key created |
+| Registry | RegistryOpen | Registry key opened |
+| Registry | RegistrySetValue | Registry value written |
+| Registry | RegistryDeleteKey | Registry key deleted |
+| Registry | RegistryDeleteValue | Registry value deleted |
+| Registry | RegistryRenameKey | Registry key renamed |
+| Registry | RegistryQueryValue | Registry value queried |
+
+### Driver data structures
 
 ```c
-enum class EventType { ProcessCreate, ProcessExit, ThreadCreate, ThreadExit };
-
-struct EventHeader {
-    EventType Type;
-    ULONG Size;
-    ULONG64 Timestamp;  // FILETIME
+enum class EventType {
+    ProcessCreate, ProcessExit, ThreadCreate, ThreadExit,
+    ImageLoad,
+    ProcessHandleCreate, ProcessHandleDuplicate, ThreadHandleCreate, ThreadHandleDuplicate,
+    RegistryCreate, RegistryOpen, RegistrySetValue, RegistryDeleteKey,
+    RegistryDeleteValue, RegistryRenameKey, RegistryQueryValue
 };
 
-struct ProcessCreateInfo {
+struct ImageLoadInfo {
     ULONG ProcessId;
-    ULONG ParentProcessId;
-    ULONG CreatingProcessId;
-    ULONG CommandLineLength;
-    WCHAR CommandLine[1];  // Variable length
+    ULONG64 ImageBase;
+    ULONG64 ImageSize;
+    BOOLEAN IsSystemImage;
+    BOOLEAN IsKernelImage;
+    ULONG ImageNameLength;
+    WCHAR ImageName[1];
 };
 
-struct ProcessExitInfo { ULONG ProcessId; ULONG ExitCode; };
-struct ThreadCreateInfo { ULONG ProcessId; ULONG ThreadId; };
-struct ThreadExitInfo : ThreadCreateInfo { ULONG ExitCode; };
+struct HandleOperationInfo {
+    ULONG SourceProcessId;
+    ULONG SourceThreadId;
+    ULONG TargetProcessId;
+    ULONG TargetThreadId;
+    ULONG DesiredAccess;
+    ULONG GrantedAccess;
+    BOOLEAN IsKernelHandle;
+    ULONG SourceImageNameLength;
+    WCHAR SourceImageName[1];
+};
+
+struct RegistryOperationInfo {
+    ULONG ProcessId;
+    ULONG ThreadId;
+    RegistryOperation Operation;
+    NTSTATUS Status;
+    ULONG KeyNameLength;
+    ULONG ValueNameLength;
+    WCHAR Names[1];  // KeyName followed by ValueName
+};
 ```
 
 ### Callback tab features
 
 Access via "Callback Monitor" tab in the main navigation:
 - **Event table** — Time, Type, PID, Process Name, Details columns
-- **Type filter** — All, Process Create, Process Exit, Thread Create, Thread Exit
-- **Search filter** — By PID, process name, or command line
+- **Category filter** — Filter by Process, Thread, Image, Handle, or Registry events
+- **Type filter** — Filter by individual event types (17 event types total)
+- **Search filter** — By PID, process name, command line, image name, registry key/value
 - **Auto-refresh** — 1-second polling when driver loaded
 - **Driver status** — Green/red indicator showing driver availability
 - **Clear events** — Remove all events from the list
 - **CSV export** — Export filtered events to CSV file
 - **Max events** — Keeps only the most recent 10,000 events
-- **Color coding** — Green (create), red (exit), blue (thread create), yellow (thread exit)
+- **Color coding** — Green (process create), red (process exit), blue (thread create), yellow (thread exit), purple (image load), pink (handle ops), cyan/orange (registry read/write)
 - **Context menu** — Copy PID, Copy Process Name, Copy Command Line, Filter by PID/Name
 
 ### Loading the driver
