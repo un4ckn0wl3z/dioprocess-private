@@ -1,7 +1,7 @@
 # DioProcess — Copilot Instructions
 
 ## Project Overview
-Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, 7 DLL injection methods, DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process hollowing/ghosting, token theft.
+Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, **kernel callback monitor** (17 event types with SQLite persistence), 7 DLL injection methods, DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process hollowing/ghosting, token theft.
 
 ## Build & Run
 ```powershell
@@ -16,11 +16,14 @@ crates/
 ├── process/     # Process enumeration (ToolHelp32, threads, handles, modules, memory)
 ├── network/     # TCP/UDP via IP Helper API
 ├── service/     # SCM operations (enumerate, start/stop, create/delete)
+├── callback/    # Kernel driver comm + SQLite storage (driver.rs, storage.rs, types.rs)
 ├── misc/        # Low-level ops: injection/, process/, token.rs, unhook.rs, hook_scanner.rs
 ├── ui/          # Dioxus components, routing, state signals, styles
 └── dioprocess/  # Binary entry point + UAC manifest embedding
+kernelmode/
+└── ProcessMonitorEx/  # WDM kernel driver (C++) for callback monitoring
 ```
-**Data flow:** UI components call library functions directly. Libraries wrap unsafe Windows API and return typed Rust structs. Dioxus signals provide reactive state with 3-second auto-refresh.
+**Data flow:** UI components call library functions directly. Libraries wrap unsafe Windows API and return typed Rust structs. Dioxus signals provide reactive state. Callback events stored in SQLite at `%LOCALAPPDATA%\DioProcess\events.db`.
 
 ## Key Conventions
 
@@ -74,7 +77,12 @@ pub fn SomeWindow() -> Element {
 | Process creation (hollow, ghost) | `crates/misc/src/process/*.rs` |
 | DLL unhooking | `crates/misc/src/unhook.rs` |
 | Hook detection | `crates/misc/src/hook_scanner.rs` |
+| Kernel callback driver comm | `crates/callback/src/driver.rs` |
+| Callback event SQLite storage | `crates/callback/src/storage.rs` |
+| Callback event types | `crates/callback/src/types.rs` |
+| Kernel driver source | `kernelmode/ProcessMonitorEx/` |
 | UI component patterns | `crates/ui/src/components/process_tab.rs` |
+| Callback monitor UI | `crates/ui/src/components/callback_tab.rs` |
 | Global state signals | `crates/ui/src/state.rs` |
 | UAC manifest | `crates/dioprocess/app.manifest` |
 | Unhook test harness | `assets/unhook_test/` |
@@ -85,3 +93,5 @@ pub fn SomeWindow() -> Element {
 - **UTF-16 strings:** Windows APIs use wide strings; convert with `encode_utf16().chain(Some(0))`
 - **No async in misc crate:** All Windows API calls are synchronous; UI uses `tokio::spawn` for background
 - **Tree view:** Built UI-side in `build_tree_rows()`, not in the process crate
+- **Kernel driver:** Requires test signing mode (`bcdedit /set testsigning on`) and manual loading via `sc create/start`
+- **SQLite storage:** Callback events persisted at `%LOCALAPPDATA%\DioProcess\events.db` with 24-hour retention

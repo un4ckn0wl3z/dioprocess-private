@@ -1626,6 +1626,22 @@ pub const CUSTOM_STYLES: &str = r#"
     .callback-filter-select {
         min-width: 180px;
     }
+    .pagination-controls {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: auto;
+    }
+    .pagination-controls .btn-small {
+        padding: 4px 8px;
+        font-size: 12px;
+        min-width: 28px;
+    }
+    .page-info {
+        font-size: 12px;
+        color: #9ca3af;
+        padding: 0 8px;
+    }
     .cell-details {
         font-size: 12px;
         color: #9ca3af;

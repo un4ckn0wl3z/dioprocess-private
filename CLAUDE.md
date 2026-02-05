@@ -22,12 +22,13 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
-├── callback/      # Kernel driver communication for process/thread callback monitoring
+├── callback/      # Kernel driver communication + SQLite event storage
 │   └── src/
 │       ├── lib.rs     # Module declarations + pub use re-exports
 │       ├── error.rs   # CallbackError enum
-│       ├── types.rs   # CallbackEvent, EventType structs
-│       └── driver.rs  # Driver communication (is_driver_loaded, read_events)
+│       ├── types.rs   # CallbackEvent, EventType, EventCategory, RegistryOperation
+│       ├── driver.rs  # Driver communication (is_driver_loaded, read_events)
+│       └── storage.rs # SQLite persistence (EventStorage, EventFilter, batched writes)
 ├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, token theft, module unloading, memory ops
 │   └── src/
 │       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
@@ -89,7 +90,7 @@ UI Layer (ui crate — Dioxus components + signals)
     ├── process crate  → Windows API (ToolHelp32, Threading, ProcessStatus)
     ├── network crate  → Windows API (IpHelper, WinSock)
     ├── service crate  → Windows API (Services / SCM)
-    ├── callback crate → Kernel driver (ProcessMonitorEx via DeviceIoControl/ReadFile)
+    ├── callback crate → Kernel driver (\\.\DioProcess) + SQLite (%LOCALAPPDATA%\DioProcess\events.db)
     └── misc crate     → Windows API (Memory, LibraryLoader, Debug, Security)
 ```
 
@@ -106,8 +107,11 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `ModuleInfo` | process | base_address, size, path, entry_point |
 | `MemoryRegionInfo` | process | base_address, allocation_base, region_size, state, mem_type, protect |
 | `ProcessStats` | process | cpu_usage, memory_mb |
-| `CallbackEvent` | callback | event_type, timestamp, process_id, parent_pid, thread_id, exit_code, command_line |
-| `EventType` | callback | ProcessCreate, ProcessExit, ThreadCreate, ThreadExit |
+| `CallbackEvent` | callback | event_type, timestamp, process_id, process_name, image_base/size, key_name, desired_access, etc. |
+| `EventType` | callback | ProcessCreate/Exit, ThreadCreate/Exit, ImageLoad, Handle ops (4), Registry ops (7) |
+| `EventCategory` | callback | Process, Thread, Image, Handle, Registry |
+| `EventStorage` | callback | SQLite wrapper with batched writes, queries, retention cleanup |
+| `EventFilter` | callback | event_type, category, process_id, search (for DB queries) |
 | `NetworkConnection` | network | protocol, local/remote addr:port, state, pid |
 | `ServiceInfo` | service | name, display_name, status, start_type, binary_path, description, pid |
 
@@ -412,14 +416,18 @@ struct RegistryOperationInfo {
 
 Access via "Callback Monitor" tab in the main navigation:
 - **Event table** — Time, Type, PID, Process Name, Details columns
+- **SQLite storage** — Events persisted to `%LOCALAPPDATA%\DioProcess\events.db`
+- **Batched writes** — 500 events or 100ms flush interval for performance
+- **Pagination** — 500 events per page with navigation controls (<< < > >>)
+- **24-hour retention** — Auto-cleanup of old events (runs hourly)
 - **Category filter** — Filter by Process, Thread, Image, Handle, or Registry events
 - **Type filter** — Filter by individual event types (17 event types total)
 - **Search filter** — By PID, process name, command line, image name, registry key/value
 - **Auto-refresh** — 1-second polling when driver loaded
 - **Driver status** — Green/red indicator showing driver availability
-- **Clear events** — Remove all events from the list
-- **CSV export** — Export filtered events to CSV file
-- **Max events** — Keeps only the most recent 10,000 events
+- **DB stats** — Header shows total event count and database file size
+- **Clear all** — Delete all events from database
+- **CSV export** — Export current page to CSV file
 - **Color coding** — Green (process create), red (process exit), blue (thread create), yellow (thread exit), purple (image load), pink (handle ops), cyan/orange (registry read/write)
 - **Context menu** — Copy PID, Copy Process Name, Copy Command Line, Filter by PID/Name
 
@@ -451,6 +459,12 @@ The kernel driver source is in `kernelmode/ProcessMonitorEx/`:
 
 There is no test infrastructure. Development relies on manual testing through the UI.
 
-## No external services or databases
+## Local storage
 
-The app is fully self-contained, communicating only with the Windows OS via system APIs.
+The app uses SQLite for kernel callback event persistence:
+- **Location:** `%LOCALAPPDATA%\DioProcess\events.db`
+- **Engine:** rusqlite 0.31 with bundled SQLite
+- **Mode:** WAL (Write-Ahead Logging) for concurrent access
+- **Retention:** Events older than 24 hours auto-deleted
+
+No external services, network connections, or cloud storage — fully self-contained.

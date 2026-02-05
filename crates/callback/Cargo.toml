@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+rusqlite = { version = "0.31", features = ["bundled"] }
+parking_lot = "0.12"
+
 [dependencies.windows]
 version = "0.58"
 features = [

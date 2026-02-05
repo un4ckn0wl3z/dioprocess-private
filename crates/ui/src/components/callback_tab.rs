@@ -1,12 +1,13 @@
 //! Kernel Callback Monitor tab component
 
-use callback::{is_driver_loaded, read_events, CallbackEvent, EventCategory, EventType};
+use callback::{is_driver_loaded, read_events, CallbackEvent, EventCategory, EventFilter, EventStorage, EventType};
 use dioxus::prelude::*;
+use std::sync::Arc;
 
 use crate::helpers::copy_to_clipboard;
 
-/// Maximum events to keep in the list
-const MAX_EVENTS: usize = 10_000;
+/// Page size for database queries
+const PAGE_SIZE: usize = 500;
 
 /// Sort column for callback table
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -37,7 +38,13 @@ struct ContextMenuState {
 /// Callback Tab component
 #[component]
 pub fn CallbackTab() -> Element {
+    // Initialize storage once
+    let storage: Signal<Option<Arc<EventStorage>>> = use_signal(|| {
+        EventStorage::open_default().ok().map(Arc::new)
+    });
+
     let mut events = use_signal(Vec::<CallbackEvent>::new);
+    let mut total_count = use_signal(|| 0usize);
     let mut search_query = use_signal(|| String::new());
     let mut sort_column = use_signal(|| CallbackSortColumn::Time);
     let mut sort_order = use_signal(|| SortOrder::Descending);
@@ -47,9 +54,66 @@ pub fn CallbackTab() -> Element {
     let mut status_message = use_signal(|| String::new());
     let mut context_menu = use_signal(ContextMenuState::default);
     let mut driver_loaded = use_signal(|| is_driver_loaded());
+    let mut current_page = use_signal(|| 0usize);
+    // Trigger signal to force refresh from DB
+    let mut refresh_trigger = use_signal(|| 0u64);
+
+    // Helper to build filter from current UI state
+    let build_filter = |tf: &str, sq: &str| {
+        let mut filter = EventFilter::new();
+
+        if !sq.is_empty() {
+            filter = filter.with_search(sq.to_string());
+        }
+
+        match tf {
+            "cat_process" => filter = filter.with_category(EventCategory::Process),
+            "cat_thread" => filter = filter.with_category(EventCategory::Thread),
+            "cat_image" => filter = filter.with_category(EventCategory::Image),
+            "cat_handle" => filter = filter.with_category(EventCategory::Handle),
+            "cat_registry" => filter = filter.with_category(EventCategory::Registry),
+            "process_create" => filter = filter.with_type(EventType::ProcessCreate),
+            "process_exit" => filter = filter.with_type(EventType::ProcessExit),
+            "thread_create" => filter = filter.with_type(EventType::ThreadCreate),
+            "thread_exit" => filter = filter.with_type(EventType::ThreadExit),
+            "image_load" => filter = filter.with_type(EventType::ImageLoad),
+            "process_handle_create" => filter = filter.with_type(EventType::ProcessHandleCreate),
+            "process_handle_dup" => filter = filter.with_type(EventType::ProcessHandleDuplicate),
+            "thread_handle_create" => filter = filter.with_type(EventType::ThreadHandleCreate),
+            "thread_handle_dup" => filter = filter.with_type(EventType::ThreadHandleDuplicate),
+            "reg_create" => filter = filter.with_type(EventType::RegistryCreate),
+            "reg_open" => filter = filter.with_type(EventType::RegistryOpen),
+            "reg_setvalue" => filter = filter.with_type(EventType::RegistrySetValue),
+            "reg_deletekey" => filter = filter.with_type(EventType::RegistryDeleteKey),
+            "reg_deletevalue" => filter = filter.with_type(EventType::RegistryDeleteValue),
+            "reg_rename" => filter = filter.with_type(EventType::RegistryRenameKey),
+            "reg_query" => filter = filter.with_type(EventType::RegistryQueryValue),
+            _ => {}
+        }
+
+        filter
+    };
+
+    // Effect to refresh from DB when trigger changes
+    use_effect(move || {
+        let _ = *refresh_trigger.read(); // Subscribe to trigger
+        let tf = type_filter.read().clone();
+        let sq = search_query.read().clone();
+        let page = *current_page.read();
+
+        if let Some(ref store) = *storage.read() {
+            let filter = build_filter(&tf, &sq);
+            let fetched = store.query_events(&filter, PAGE_SIZE, page * PAGE_SIZE);
+            let count = store.count_events(&filter);
+            events.set(fetched);
+            total_count.set(count);
+        }
+    });
 
     // Auto-refresh every 1 second
     use_future(move || async move {
+        let mut cleanup_counter = 0u32;
+
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             driver_loaded.set(is_driver_loaded());
@@ -58,17 +122,12 @@ pub fn CallbackTab() -> Element {
                 match read_events() {
                     Ok(new_events) => {
                         if !new_events.is_empty() {
-                            let mut current = events.read().clone();
-                            current.extend(new_events);
-                            // Keep only the most recent MAX_EVENTS
-                            if current.len() > MAX_EVENTS {
-                                current.drain(0..current.len() - MAX_EVENTS);
+                            if let Some(ref store) = *storage.read() {
+                                store.add_events(new_events);
                             }
-                            events.set(current);
                         }
                     }
                     Err(e) => {
-                        // Only show error once if driver goes offline
                         if *driver_loaded.read() {
                             status_message.set(format!("Error: {}", e));
                             spawn(async move {
@@ -78,112 +137,42 @@ pub fn CallbackTab() -> Element {
                         }
                     }
                 }
+
+                // Trigger UI refresh
+                refresh_trigger += 1;
+            }
+
+            // Cleanup every hour (3600 iterations)
+            cleanup_counter += 1;
+            if cleanup_counter >= 3600 {
+                cleanup_counter = 0;
+                if let Some(ref store) = *storage.read() {
+                    callback::storage::run_retention_cleanup(store);
+                }
             }
         }
     });
 
-    // Filter and sort events
-    let mut filtered_events: Vec<(usize, CallbackEvent)> = events
+    // Events are now fetched from database with filtering applied
+    let displayed_events: Vec<(usize, CallbackEvent)> = events
         .read()
         .iter()
         .enumerate()
-        .filter(|(_, e)| {
-            // Type filter
-            let type_match = match type_filter.read().as_str() {
-                // Categories
-                "cat_process" => e.event_type.category() == EventCategory::Process,
-                "cat_thread" => e.event_type.category() == EventCategory::Thread,
-                "cat_image" => e.event_type.category() == EventCategory::Image,
-                "cat_handle" => e.event_type.category() == EventCategory::Handle,
-                "cat_registry" => e.event_type.category() == EventCategory::Registry,
-                // Individual process events
-                "process_create" => e.event_type == EventType::ProcessCreate,
-                "process_exit" => e.event_type == EventType::ProcessExit,
-                // Individual thread events
-                "thread_create" => e.event_type == EventType::ThreadCreate,
-                "thread_exit" => e.event_type == EventType::ThreadExit,
-                // Image load
-                "image_load" => e.event_type == EventType::ImageLoad,
-                // Handle operations
-                "process_handle_create" => e.event_type == EventType::ProcessHandleCreate,
-                "process_handle_dup" => e.event_type == EventType::ProcessHandleDuplicate,
-                "thread_handle_create" => e.event_type == EventType::ThreadHandleCreate,
-                "thread_handle_dup" => e.event_type == EventType::ThreadHandleDuplicate,
-                // Registry operations
-                "reg_create" => e.event_type == EventType::RegistryCreate,
-                "reg_open" => e.event_type == EventType::RegistryOpen,
-                "reg_setvalue" => e.event_type == EventType::RegistrySetValue,
-                "reg_deletekey" => e.event_type == EventType::RegistryDeleteKey,
-                "reg_deletevalue" => e.event_type == EventType::RegistryDeleteValue,
-                "reg_rename" => e.event_type == EventType::RegistryRenameKey,
-                "reg_query" => e.event_type == EventType::RegistryQueryValue,
-                "all" => true,
-                _ => true,
-            };
-
-            // Search filter
-            let query = search_query.read().to_lowercase();
-            let search_match = if query.is_empty() {
-                true
-            } else {
-                e.process_id.to_string().contains(&query)
-                    || e.process_name.to_lowercase().contains(&query)
-                    || e.command_line
-                        .as_ref()
-                        .map(|c| c.to_lowercase().contains(&query))
-                        .unwrap_or(false)
-                    || e.thread_id
-                        .map(|tid| tid.to_string().contains(&query))
-                        .unwrap_or(false)
-                    || e.image_name
-                        .as_ref()
-                        .map(|n| n.to_lowercase().contains(&query))
-                        .unwrap_or(false)
-                    || e.key_name
-                        .as_ref()
-                        .map(|k| k.to_lowercase().contains(&query))
-                        .unwrap_or(false)
-                    || e.value_name
-                        .as_ref()
-                        .map(|v| v.to_lowercase().contains(&query))
-                        .unwrap_or(false)
-                    || e.source_image_name
-                        .as_ref()
-                        .map(|s| s.to_lowercase().contains(&query))
-                        .unwrap_or(false)
-            };
-
-            type_match && search_match
-        })
         .map(|(i, e)| (i, e.clone()))
         .collect();
 
-    // Sort
-    filtered_events.sort_by(|(_, a), (_, b)| {
-        let cmp = match *sort_column.read() {
-            CallbackSortColumn::Time => a.timestamp.cmp(&b.timestamp),
-            CallbackSortColumn::Type => a.event_type.to_string().cmp(&b.event_type.to_string()),
-            CallbackSortColumn::Pid => a.process_id.cmp(&b.process_id),
-            CallbackSortColumn::ProcessName => a
-                .process_name
-                .to_lowercase()
-                .cmp(&b.process_name.to_lowercase()),
-            CallbackSortColumn::Details => a.get_details().cmp(&b.get_details()),
-        };
-        match *sort_order.read() {
-            SortOrder::Ascending => cmp,
-            SortOrder::Descending => cmp.reverse(),
-        }
-    });
-
-    let event_count = filtered_events.len();
-    let total_count = events.read().len();
+    let event_count = displayed_events.len();
+    let total = *total_count.read();
+    let page = *current_page.read();
+    let total_pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
     let is_driver_loaded = *driver_loaded.read();
     let current_sort_col = *sort_column.read();
     let current_sort_ord = *sort_order.read();
     let ctx_menu = context_menu.read().clone();
-    let export_events = filtered_events.clone();
-    let filtered_events_empty = filtered_events.is_empty();
+    let export_events = displayed_events.clone();
+    let displayed_events_empty = displayed_events.is_empty();
+    let db_size = storage.read().as_ref().map(|s| s.db_size()).unwrap_or(0);
+    let db_size_mb = db_size as f64 / (1024.0 * 1024.0);
 
     let sort_indicator = |column: CallbackSortColumn| -> &'static str {
         if current_sort_col == column {
@@ -205,16 +194,14 @@ pub fn CallbackTab() -> Element {
             if is_driver_loaded {
                 match read_events() {
                     Ok(new_events) => {
-                        let mut current = events.read().clone();
-                        current.extend(new_events);
-                        if current.len() > MAX_EVENTS {
-                            current.drain(0..current.len() - MAX_EVENTS);
+                        if let Some(ref store) = *storage.read() {
+                            store.add_events(new_events);
                         }
-                        events.set(current);
-                        status_message.set(format!("Refreshed - {} events", events.read().len()));
+                        refresh_trigger += 1;
+                        status_message.set(format!("Refreshed - {} events", *total_count.read()));
                     }
-                    Err(e) => {
-                        status_message.set(format!("Error: {}", e));
+                    Err(err) => {
+                        status_message.set(format!("Error: {}", err));
                     }
                 }
                 spawn(async move {
@@ -242,7 +229,7 @@ pub fn CallbackTab() -> Element {
             div { class: "header-box",
                 h1 { class: "header-title", "Kernel Callback Monitor" }
                 div { class: "header-stats",
-                    span { "Events: {event_count}/{total_count}" }
+                    span { "Showing: {event_count} | Total: {total} | DB: {db_size_mb:.1} MB" }
                     span { class: "header-shortcuts", "F5: Refresh | Esc: Close menu" }
                     // Driver status indicator
                     span {
@@ -332,16 +319,14 @@ pub fn CallbackTab() -> Element {
                         if is_driver_loaded {
                             match read_events() {
                                 Ok(new_events) => {
-                                    let mut current = events.read().clone();
-                                    current.extend(new_events);
-                                    if current.len() > MAX_EVENTS {
-                                        current.drain(0..current.len() - MAX_EVENTS);
+                                    if let Some(ref store) = *storage.read() {
+                                        store.add_events(new_events);
                                     }
-                                    events.set(current);
-                                    status_message.set(format!("Refreshed - {} events", events.read().len()));
+                                    refresh_trigger += 1;
+                                    status_message.set(format!("Refreshed - {} total events", *total_count.read()));
                                 }
-                                Err(e) => {
-                                    status_message.set(format!("Error: {}", e));
+                                Err(err) => {
+                                    status_message.set(format!("Error: {}", err));
                                 }
                             }
                             spawn(async move {
@@ -355,22 +340,26 @@ pub fn CallbackTab() -> Element {
 
                 button {
                     class: "btn btn-secondary",
-                    disabled: events.read().is_empty(),
+                    disabled: total == 0,
                     onclick: move |_| {
-                        events.set(Vec::new());
+                        if let Some(ref store) = *storage.read() {
+                            store.clear_all();
+                        }
                         selected_row.set(None);
-                        status_message.set("Events cleared".to_string());
+                        current_page.set(0);
+                        refresh_trigger += 1;
+                        status_message.set("All events cleared".to_string());
                         spawn(async move {
                             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                             status_message.set(String::new());
                         });
                     },
-                    "Clear"
+                    "Clear All"
                 }
 
                 button {
                     class: "btn btn-secondary",
-                    disabled: filtered_events_empty,
+                    disabled: displayed_events_empty,
                     onclick: {
                         let evts = export_events.clone();
                         move |_| {
@@ -412,6 +401,49 @@ pub fn CallbackTab() -> Element {
                         }
                     },
                     "Export CSV"
+                }
+
+                // Pagination controls
+                if total_pages > 1 {
+                    div { class: "pagination-controls",
+                        button {
+                            class: "btn btn-small",
+                            disabled: page == 0,
+                            onclick: move |_| {
+                                current_page.set(0);
+                                refresh_trigger += 1;
+                            },
+                            "<<"
+                        }
+                        button {
+                            class: "btn btn-small",
+                            disabled: page == 0,
+                            onclick: move |_| {
+                                current_page.set(page.saturating_sub(1));
+                                refresh_trigger += 1;
+                            },
+                            "<"
+                        }
+                        span { class: "page-info", "Page {page + 1}/{total_pages}" }
+                        button {
+                            class: "btn btn-small",
+                            disabled: page + 1 >= total_pages,
+                            onclick: move |_| {
+                                current_page.set(page + 1);
+                                refresh_trigger += 1;
+                            },
+                            ">"
+                        }
+                        button {
+                            class: "btn btn-small",
+                            disabled: page + 1 >= total_pages,
+                            onclick: move |_| {
+                                current_page.set(total_pages.saturating_sub(1));
+                                refresh_trigger += 1;
+                            },
+                            ">>"
+                        }
+                    }
                 }
             }
 
@@ -498,7 +530,7 @@ pub fn CallbackTab() -> Element {
                             }
                         }
                         tbody {
-                            for (idx, event) in filtered_events {
+                            for (idx, event) in displayed_events {
                                 {
                                     let is_selected = *selected_row.read() == Some(idx);
                                     let row_class = if is_selected { "process-row selected" } else { "process-row" };

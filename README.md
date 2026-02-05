@@ -1,7 +1,7 @@
 # DioProcess — Advanced Windows Process & System Monitor
 
-Modern, Windows desktop application for real-time system monitoring and low-level process manipulation.  
-Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)  
+Modern, Windows desktop application for real-time system monitoring and low-level process manipulation.
+Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 **Requires administrator privileges** (UAC `requireAdministrator` embedded at build time via manifest)
 
 ![Preview 1](./assets/preview1.png)
@@ -17,6 +17,12 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 - Live enumeration of processes, threads, handles, modules & virtual memory regions
 - TCP/UDP connection listing with owning process (via IP Helper API)
 - Windows Service enumeration, start/stop/create/delete (Service Control Manager)
+- **Kernel Callback Monitor** — real-time kernel event capture via custom WDM driver:
+  - Process/thread create & exit events
+  - Image (DLL/EXE) load events
+  - Handle operations (process/thread handle create & duplicate)
+  - Registry operations (create, open, set, delete, rename, query)
+  - **SQLite persistence** with 24-hour retention and paginated UI
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
 - **DLL Unhooking** — restore hooked DLLs (ntdll, kernel32, kernelbase, user32, advapi32, ws2_32) by replacing .text section from disk
 - **Hook Detection & Unhooking** — scan IAT entries for inline hooks (E9 JMP, E8 CALL, EB short JMP, FF25 indirect JMP, MOV+JMP x64 patterns), compare with disk, and optionally unhook detected hooks
@@ -34,6 +40,13 @@ crates/
 ├── process/       # ToolHelp32, NtQueryInformationThread, VirtualQueryEx, modules, memory regions
 ├── network/       # GetExtendedTcpTable / GetUdpTable → PID mapping
 ├── service/       # SCM: EnumServicesStatusEx, Start/Stop/Create/Delete service
+├── callback/      # Kernel driver communication + SQLite event storage
+│   └── src/
+│       ├── lib.rs     # Module re-exports
+│       ├── driver.rs  # ReadFile from \\.\DioProcess device
+│       ├── storage.rs # SQLite persistence (WAL mode, batched writes)
+│       ├── types.rs   # CallbackEvent, EventType, EventCategory
+│       └── error.rs   # CallbackError enum
 ├── misc/          # DLL injection (7 methods), process hollowing, ghosting, token theft, hook scanning, NT syscalls
 │   └── src/
 │       ├── lib.rs              # Module declarations + pub use re-exports
@@ -47,6 +60,11 @@ crates/
 │       └── hook_scanner.rs     # IAT hook detection (E9/E8/EB/FF25/MOV+JMP patterns)
 ├── ui/            # Dioxus components, router, global signals, dark theme
 └── dioprocess/    # Binary crate — entry point, custom window, manifest embedding
+kernelmode/
+└── ProcessMonitorEx/  # WDM kernel driver (C++) for callback monitoring
+    ├── ProcessMonitorEx.cpp        # Driver code (device: \\.\DioProcess)
+    ├── ProcessMonitorExCommon.h    # Shared event structures
+    └── ProcessMonitorExCli/        # Test CLI client
 ```
 
 ## Implemented Techniques — Summary
@@ -98,10 +116,30 @@ Scan process IAT (Import Address Table) for inline hooks by comparing imported f
 
 `OpenProcessToken → DuplicateTokenEx(TokenPrimary) → SeAssignPrimaryTokenPrivilege → ImpersonateLoggedOnUser → CreateProcessAsUserW → RevertToSelf`
 
+### Kernel Callback Monitor
+
+Real-time kernel event capture via WDM driver with 17 event types:
+
+| Category | Events |
+|----------|--------|
+| Process | ProcessCreate, ProcessExit |
+| Thread | ThreadCreate, ThreadExit |
+| Image | ImageLoad (DLL/EXE loading) |
+| Handle | ProcessHandleCreate, ProcessHandleDuplicate, ThreadHandleCreate, ThreadHandleDuplicate |
+| Registry | RegistryCreate, RegistryOpen, RegistrySetValue, RegistryDeleteKey, RegistryDeleteValue, RegistryRenameKey, RegistryQueryValue |
+
+**Storage:** SQLite database at `%LOCALAPPDATA%\DioProcess\events.db`
+- WAL mode for concurrent reads/writes
+- Batched inserts (500 events or 100ms flush)
+- 24-hour auto-retention cleanup
+- Paginated UI (500 events per page)
+
+**Driver:** Build with Visual Studio + WDK, load via `sc create DioProcess type= kernel binPath= "path\to\DioProcess.sys" && sc start DioProcess`
+
 ## UI & Interaction Highlights
 
 - Borderless dark-themed window with custom title bar
-- Tabs: **Processes** · **Network** · **Services**
+- Tabs: **Processes** · **Network** · **Services** · **Callback Monitor**
 - **Tree view** in Processes tab (DFS traversal, box-drawing connectors ├ │ └ ─, ancestor-inclusive search)
 - Modal inspectors: Threads · Handles · Modules · Memory · Performance graphs
 - Real-time per-process CPU/memory graphs (60-second rolling history, SVG + fill)
@@ -136,6 +174,7 @@ cargo build --release
 - sysinfo 0.31 — global CPU/memory/uptime stats
 - windows 0.58 — Win32 API bindings
 - ntapi 0.4 — Native NTSTATUS & undocumented APIs
+- rusqlite 0.31 — SQLite storage for kernel events
 - arboard — clipboard
 - rfd — native file dialogs
 
