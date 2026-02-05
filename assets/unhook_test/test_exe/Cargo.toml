@@ -1,0 +1,28 @@
+[package]
+name = "test_exe"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "test_exe"
+path = "src/main.rs"
+
+[[bin]]
+name = "manual_test"
+path = "src/manual_test.rs"
+
+[dependencies]
+# Reference to the misc crate from main project (only for automated test)
+misc = { path = "../../../crates/misc", optional = true }
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+]
+
+[features]
+default = []
+auto = ["misc"]

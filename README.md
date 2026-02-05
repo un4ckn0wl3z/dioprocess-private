@@ -41,7 +41,8 @@ crates/
 │       ├── memory.rs           # commit/decommit/free memory
 │       ├── module.rs           # unload_module
 │       ├── process/            # create, ppid_spoof, hollow, ghost
-│       └── token.rs            # steal_token
+│       ├── token.rs            # steal_token
+│       └── unhook.rs           # DLL unhooking (local + remote process)
 ├── ui/            # Dioxus components, router, global signals, dark theme
 └── dioprocess/    # Binary crate — entry point, custom window, manifest embedding
 ```
@@ -67,11 +68,12 @@ crates/
 
 ### DLL Unhooking
 
-Restore hooked DLLs by reading a clean copy from `System32` and replacing the in-memory `.text` section:
+Restore hooked DLLs in **any process** by reading a clean copy from `System32` and replacing the in-memory `.text` section:
+- Remote process unhooking via `VirtualProtectEx` + `WriteProcessMemory`
 - Parse PE headers to locate `.text` section (RVA + raw offset)
-- Read clean DLL from disk, make .text writable via `VirtualProtect(PAGE_EXECUTE_WRITECOPY)`
-- `memcpy` clean bytes over hooked bytes, restore original protection
+- Read clean DLL from disk, make .text writable, copy clean bytes, restore protection
 - Supports: `ntdll.dll`, `kernel32.dll`, `kernelbase.dll`, `user32.dll`, `advapi32.dll`, `ws2_32.dll`
+- **Test suite** included in `assets/unhook_test/` with MinHook-based hook DLL
 
 ### Token Theft
 

@@ -4,10 +4,9 @@
 //! and replacing the hooked .text section in memory.
 //!
 //! Supports:
-//! - ntdll.dll
-//! - kernel32.dll
-//! - kernelbase.dll
-//! - Any custom DLL path
+//! - Local process unhooking (unhook DLLs in the current process)
+//! - Remote process unhooking (unhook DLLs in another process by PID)
+//! - ntdll.dll, kernel32.dll, kernelbase.dll, user32.dll, advapi32.dll, ws2_32.dll
 
 use std::ffi::CString;
 use std::fs::File;
@@ -15,9 +14,17 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use windows::core::PCSTR;
+use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
-use windows::Win32::System::Memory::{VirtualProtect, PAGE_EXECUTE_WRITECOPY, PAGE_PROTECTION_FLAGS};
+use windows::Win32::System::Memory::{
+    VirtualProtect, VirtualProtectEx, PAGE_EXECUTE_WRITECOPY, PAGE_PROTECTION_FLAGS,
+};
 use windows::Win32::System::SystemInformation::GetSystemDirectoryA;
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ,
+    PROCESS_VM_WRITE,
+};
 
 use crate::error::MiscError;
 
@@ -291,6 +298,123 @@ pub fn unhook_dll_by_path(disk_path: &std::path::Path, module_name: &str) -> Res
 /// * Vector of results for each DLL (success or failure)
 pub fn unhook_multiple_dlls(dlls: &[CommonDll]) -> Vec<Result<UnhookResult, MiscError>> {
     dlls.iter().map(|dll| unhook_dll(*dll)).collect()
+}
+
+/// Unhook a DLL in a remote process by PID
+/// 
+/// This function reads a clean copy of the DLL from disk and writes it to the
+/// target process's memory, replacing any hooks in the .text section.
+/// 
+/// # Arguments
+/// * `pid` - Process ID of the target process
+/// * `dll` - The common DLL to unhook
+/// * `module_base` - Base address of the module in the target process
+/// 
+/// # Returns
+/// * `Ok(UnhookResult)` - Information about the unhook operation
+/// * `Err(MiscError)` - If the operation failed
+/// 
+/// # Safety
+/// This function modifies memory of another process. Use with caution.
+pub fn unhook_dll_remote(pid: u32, dll: CommonDll, module_base: usize) -> Result<UnhookResult, MiscError> {
+    let dll_path = dll.system_path()?;
+    let dll_name = dll.filename();
+    unhook_dll_remote_by_path(pid, &dll_path, dll_name, module_base)
+}
+
+/// Unhook a DLL in a remote process by providing a custom path
+/// 
+/// # Arguments
+/// * `pid` - Process ID of the target process
+/// * `disk_path` - Path to the clean DLL on disk
+/// * `module_name` - Name of the module (for result reporting)
+/// * `module_base` - Base address of the module in the target process
+/// 
+/// # Returns
+/// * `Ok(UnhookResult)` - Information about the unhook operation
+/// * `Err(MiscError)` - If the operation failed
+pub fn unhook_dll_remote_by_path(
+    pid: u32,
+    disk_path: &std::path::Path,
+    module_name: &str,
+    module_base: usize,
+) -> Result<UnhookResult, MiscError> {
+    // Read clean DLL from disk
+    let clean_dll = read_dll_from_disk(disk_path)?;
+    
+    // Find .text section info from the clean DLL on disk
+    let (text_rva, clean_text_raw, text_size) = find_text_section(clean_dll.as_ptr())?;
+    
+    unsafe {
+        // Open target process with required permissions
+        let process_handle = OpenProcess(
+            PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION,
+            false,
+            pid,
+        ).map_err(|_| MiscError::OpenProcessFailed(pid))?;
+        
+        // Calculate addresses
+        let remote_text_addr = (module_base + text_rva) as *mut std::ffi::c_void;
+        let clean_text_ptr = clean_dll.as_ptr().add(clean_text_raw);
+        
+        // Make the remote .text section writable
+        let mut old_protection = PAGE_PROTECTION_FLAGS(0);
+        let protect_result = VirtualProtectEx(
+            process_handle,
+            remote_text_addr,
+            text_size,
+            PAGE_EXECUTE_WRITECOPY,
+            &mut old_protection,
+        );
+        
+        if protect_result.is_err() {
+            let _ = CloseHandle(process_handle);
+            return Err(MiscError::InvalidPE("VirtualProtectEx failed - cannot make .text writable".to_string()));
+        }
+        
+        // Write the clean .text section to the remote process
+        let mut bytes_written: usize = 0;
+        let write_result = WriteProcessMemory(
+            process_handle,
+            remote_text_addr,
+            clean_text_ptr as *const _,
+            text_size,
+            Some(&mut bytes_written),
+        );
+        
+        if write_result.is_err() || bytes_written != text_size {
+            // Try to restore protection before returning error
+            let mut temp = PAGE_PROTECTION_FLAGS(0);
+            let _ = VirtualProtectEx(
+                process_handle,
+                remote_text_addr,
+                text_size,
+                old_protection,
+                &mut temp,
+            );
+            let _ = CloseHandle(process_handle);
+            return Err(MiscError::WriteFailed);
+        }
+        
+        // Restore original protection
+        let mut temp = PAGE_PROTECTION_FLAGS(0);
+        let _ = VirtualProtectEx(
+            process_handle,
+            remote_text_addr,
+            text_size,
+            old_protection,
+            &mut temp,
+        );
+        
+        let _ = CloseHandle(process_handle);
+        
+        Ok(UnhookResult {
+            dll_name: module_name.to_string(),
+            text_section_rva: text_rva,
+            text_section_size: text_size,
+            bytes_replaced: bytes_written,
+        })
+    }
 }
 
 /// Check if a function appears to be hooked by examining its first bytes

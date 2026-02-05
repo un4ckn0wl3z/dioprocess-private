@@ -151,23 +151,41 @@ Located in `crates/misc/src/token.rs`:
 
 Located in `crates/misc/src/unhook.rs`:
 
-Restores hooked DLLs by replacing the in-memory `.text` section with a clean copy read from disk:
+Restores hooked DLLs by replacing the in-memory `.text` section with a clean copy read from disk. **Supports both local and remote process unhooking.**
 
-- `unhook_dll(CommonDll)` — Unhook a common DLL (Ntdll, Kernel32, KernelBase, User32, Advapi32, Ws2_32)
-- `unhook_dll_by_path(path, module_name)` — Unhook any DLL by providing disk path and loaded module name
-- `unhook_multiple_dlls(&[CommonDll])` — Batch unhook multiple DLLs
+### Functions:
+- `unhook_dll(CommonDll)` — Unhook a DLL in the current process
+- `unhook_dll_by_path(path, module_name)` — Unhook any DLL by providing disk path and module name (local)
+- `unhook_dll_remote(pid, CommonDll, module_base)` — **Unhook a DLL in a remote process by PID**
+- `unhook_dll_remote_by_path(pid, path, module_name, module_base)` — Remote unhook with custom path
+- `unhook_multiple_dlls(&[CommonDll])` — Batch unhook multiple DLLs (local)
 - `is_function_hooked(addr)` — Check if a function's first bytes match expected syscall stub pattern (`4C 8B D1 B8`)
 - `is_export_hooked(dll_name, func_name)` — Check if a specific export is hooked
 
-**Algorithm:**
+### Remote Unhooking Algorithm:
 1. Read clean DLL from `System32` via `GetSystemDirectoryA`
-2. Get loaded module base address via `GetModuleHandleA`
+2. Open target process with `PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE`
 3. Parse PE headers (DOS → NT → Section Headers) to find `.text` section
-4. Make `.text` writable via `VirtualProtect(PAGE_EXECUTE_WRITECOPY)`
-5. Copy clean `.text` bytes over hooked bytes
-6. Restore original memory protection
+4. Make remote `.text` writable via `VirtualProtectEx(PAGE_EXECUTE_WRITECOPY)`
+5. Write clean `.text` bytes to remote process via `WriteProcessMemory`
+6. Restore original memory protection via `VirtualProtectEx`
 
-**Access:** Right-click context menu > Miscellaneous > DLL Unhook > select DLL
+### UI Access:
+Right-click process → Miscellaneous → DLL Unhook → select DLL
+
+The unhook is performed on the **selected process**, not on dioprocess itself.
+
+### Test Suite:
+Located in `assets/unhook_test/`:
+- `hook_dll` — MinHook-based DLL that hooks `NtProtectVirtualMemory`
+- `manual_test` — CLI program to verify unhooking via dioprocess UI
+
+```bash
+cd assets/unhook_test
+cargo build --release
+copy target\release\hook_dll.dll target\release\
+.\target\release\manual_test.exe  # Run as admin, then unhook via dioprocess
+```
 
 ## Process tree view
 

@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
-use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, unhook_dll, CommonDll};
+use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, unhook_dll_remote, CommonDll};
 use process::{
     get_processes, get_system_stats, kill_process, open_file_location, resume_process,
     suspend_process, ProcessInfo,
@@ -1184,26 +1184,37 @@ pub fn ProcessTab() -> Element {
                                     // Unhook ntdll.dll
                                     button {
                                         class: "context-menu-item",
-                                        onclick: move |_| {
-                                            context_menu.set(ContextMenuState::default());
-                                            match unhook_dll(CommonDll::Ntdll) {
-                                                Ok(result) => {
-                                                    status_message.set(format!(
-                                                        "✓ {} unhooked ({} bytes replaced)",
-                                                        result.dll_name, result.bytes_replaced
-                                                    ));
+                                        onclick: {
+                                            let target_pid = ctx_menu.pid;
+                                            move |_| {
+                                                context_menu.set(ContextMenuState::default());
+                                                if let Some(pid) = target_pid {
+                                                    // Find ntdll.dll base address in the target process
+                                                    let modules = process::get_process_modules(pid);
+                                                    if let Some(module) = modules.iter().find(|m| m.name.to_lowercase() == "ntdll.dll") {
+                                                        match unhook_dll_remote(pid, CommonDll::Ntdll, module.base_address) {
+                                                            Ok(result) => {
+                                                                status_message.set(format!(
+                                                                    "✓ {} unhooked in PID {} ({} bytes replaced)",
+                                                                    result.dll_name, pid, result.bytes_replaced
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Unhook ntdll.dll failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                    } else {
+                                                        status_message.set("✗ ntdll.dll not found in target process".to_string());
+                                                    }
                                                 }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ Unhook ntdll.dll failed: {}",
-                                                        e
-                                                    ));
-                                                }
+                                                spawn(async move {
+                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    status_message.set(String::new());
+                                                });
                                             }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
                                         },
                                         span { "📦" }
                                         span { "ntdll.dll" }
@@ -1212,26 +1223,36 @@ pub fn ProcessTab() -> Element {
                                     // Unhook kernel32.dll
                                     button {
                                         class: "context-menu-item",
-                                        onclick: move |_| {
-                                            context_menu.set(ContextMenuState::default());
-                                            match unhook_dll(CommonDll::Kernel32) {
-                                                Ok(result) => {
-                                                    status_message.set(format!(
-                                                        "✓ {} unhooked ({} bytes replaced)",
-                                                        result.dll_name, result.bytes_replaced
-                                                    ));
+                                        onclick: {
+                                            let target_pid = ctx_menu.pid;
+                                            move |_| {
+                                                context_menu.set(ContextMenuState::default());
+                                                if let Some(pid) = target_pid {
+                                                    let modules = process::get_process_modules(pid);
+                                                    if let Some(module) = modules.iter().find(|m| m.name.to_lowercase() == "kernel32.dll") {
+                                                        match unhook_dll_remote(pid, CommonDll::Kernel32, module.base_address) {
+                                                            Ok(result) => {
+                                                                status_message.set(format!(
+                                                                    "✓ {} unhooked in PID {} ({} bytes replaced)",
+                                                                    result.dll_name, pid, result.bytes_replaced
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Unhook kernel32.dll failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                    } else {
+                                                        status_message.set("✗ kernel32.dll not found in target process".to_string());
+                                                    }
                                                 }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ Unhook kernel32.dll failed: {}",
-                                                        e
-                                                    ));
-                                                }
+                                                spawn(async move {
+                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    status_message.set(String::new());
+                                                });
                                             }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
                                         },
                                         span { "📦" }
                                         span { "kernel32.dll" }
@@ -1240,26 +1261,36 @@ pub fn ProcessTab() -> Element {
                                     // Unhook kernelbase.dll
                                     button {
                                         class: "context-menu-item",
-                                        onclick: move |_| {
-                                            context_menu.set(ContextMenuState::default());
-                                            match unhook_dll(CommonDll::KernelBase) {
-                                                Ok(result) => {
-                                                    status_message.set(format!(
-                                                        "✓ {} unhooked ({} bytes replaced)",
-                                                        result.dll_name, result.bytes_replaced
-                                                    ));
+                                        onclick: {
+                                            let target_pid = ctx_menu.pid;
+                                            move |_| {
+                                                context_menu.set(ContextMenuState::default());
+                                                if let Some(pid) = target_pid {
+                                                    let modules = process::get_process_modules(pid);
+                                                    if let Some(module) = modules.iter().find(|m| m.name.to_lowercase() == "kernelbase.dll") {
+                                                        match unhook_dll_remote(pid, CommonDll::KernelBase, module.base_address) {
+                                                            Ok(result) => {
+                                                                status_message.set(format!(
+                                                                    "✓ {} unhooked in PID {} ({} bytes replaced)",
+                                                                    result.dll_name, pid, result.bytes_replaced
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Unhook kernelbase.dll failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                    } else {
+                                                        status_message.set("✗ kernelbase.dll not found in target process".to_string());
+                                                    }
                                                 }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ Unhook kernelbase.dll failed: {}",
-                                                        e
-                                                    ));
-                                                }
+                                                spawn(async move {
+                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    status_message.set(String::new());
+                                                });
                                             }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
                                         },
                                         span { "📦" }
                                         span { "kernelbase.dll" }
@@ -1268,26 +1299,36 @@ pub fn ProcessTab() -> Element {
                                     // Unhook user32.dll
                                     button {
                                         class: "context-menu-item",
-                                        onclick: move |_| {
-                                            context_menu.set(ContextMenuState::default());
-                                            match unhook_dll(CommonDll::User32) {
-                                                Ok(result) => {
-                                                    status_message.set(format!(
-                                                        "✓ {} unhooked ({} bytes replaced)",
-                                                        result.dll_name, result.bytes_replaced
-                                                    ));
+                                        onclick: {
+                                            let target_pid = ctx_menu.pid;
+                                            move |_| {
+                                                context_menu.set(ContextMenuState::default());
+                                                if let Some(pid) = target_pid {
+                                                    let modules = process::get_process_modules(pid);
+                                                    if let Some(module) = modules.iter().find(|m| m.name.to_lowercase() == "user32.dll") {
+                                                        match unhook_dll_remote(pid, CommonDll::User32, module.base_address) {
+                                                            Ok(result) => {
+                                                                status_message.set(format!(
+                                                                    "✓ {} unhooked in PID {} ({} bytes replaced)",
+                                                                    result.dll_name, pid, result.bytes_replaced
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Unhook user32.dll failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                    } else {
+                                                        status_message.set("✗ user32.dll not found in target process".to_string());
+                                                    }
                                                 }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ Unhook user32.dll failed: {}",
-                                                        e
-                                                    ));
-                                                }
+                                                spawn(async move {
+                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    status_message.set(String::new());
+                                                });
                                             }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
                                         },
                                         span { "📦" }
                                         span { "user32.dll" }
@@ -1296,26 +1337,36 @@ pub fn ProcessTab() -> Element {
                                     // Unhook advapi32.dll
                                     button {
                                         class: "context-menu-item",
-                                        onclick: move |_| {
-                                            context_menu.set(ContextMenuState::default());
-                                            match unhook_dll(CommonDll::Advapi32) {
-                                                Ok(result) => {
-                                                    status_message.set(format!(
-                                                        "✓ {} unhooked ({} bytes replaced)",
-                                                        result.dll_name, result.bytes_replaced
-                                                    ));
+                                        onclick: {
+                                            let target_pid = ctx_menu.pid;
+                                            move |_| {
+                                                context_menu.set(ContextMenuState::default());
+                                                if let Some(pid) = target_pid {
+                                                    let modules = process::get_process_modules(pid);
+                                                    if let Some(module) = modules.iter().find(|m| m.name.to_lowercase() == "advapi32.dll") {
+                                                        match unhook_dll_remote(pid, CommonDll::Advapi32, module.base_address) {
+                                                            Ok(result) => {
+                                                                status_message.set(format!(
+                                                                    "✓ {} unhooked in PID {} ({} bytes replaced)",
+                                                                    result.dll_name, pid, result.bytes_replaced
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Unhook advapi32.dll failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                    } else {
+                                                        status_message.set("✗ advapi32.dll not found in target process".to_string());
+                                                    }
                                                 }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ Unhook advapi32.dll failed: {}",
-                                                        e
-                                                    ));
-                                                }
+                                                spawn(async move {
+                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    status_message.set(String::new());
+                                                });
                                             }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
                                         },
                                         span { "📦" }
                                         span { "advapi32.dll" }
@@ -1324,26 +1375,36 @@ pub fn ProcessTab() -> Element {
                                     // Unhook ws2_32.dll
                                     button {
                                         class: "context-menu-item",
-                                        onclick: move |_| {
-                                            context_menu.set(ContextMenuState::default());
-                                            match unhook_dll(CommonDll::Ws2_32) {
-                                                Ok(result) => {
-                                                    status_message.set(format!(
-                                                        "✓ {} unhooked ({} bytes replaced)",
-                                                        result.dll_name, result.bytes_replaced
-                                                    ));
+                                        onclick: {
+                                            let target_pid = ctx_menu.pid;
+                                            move |_| {
+                                                context_menu.set(ContextMenuState::default());
+                                                if let Some(pid) = target_pid {
+                                                    let modules = process::get_process_modules(pid);
+                                                    if let Some(module) = modules.iter().find(|m| m.name.to_lowercase() == "ws2_32.dll") {
+                                                        match unhook_dll_remote(pid, CommonDll::Ws2_32, module.base_address) {
+                                                            Ok(result) => {
+                                                                status_message.set(format!(
+                                                                    "✓ {} unhooked in PID {} ({} bytes replaced)",
+                                                                    result.dll_name, pid, result.bytes_replaced
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Unhook ws2_32.dll failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                    } else {
+                                                        status_message.set("✗ ws2_32.dll not found in target process".to_string());
+                                                    }
                                                 }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ Unhook ws2_32.dll failed: {}",
-                                                        e
-                                                    ));
-                                                }
+                                                spawn(async move {
+                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    status_message.set(String::new());
+                                                });
                                             }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
                                         },
                                         span { "📦" }
                                         span { "ws2_32.dll" }
