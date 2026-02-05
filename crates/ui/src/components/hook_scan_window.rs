@@ -53,7 +53,8 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
             if query.is_empty() {
                 return true;
             }
-            result.module_name.to_lowercase().contains(&query)
+            result.function_name.to_lowercase().contains(&query)
+                || result.module_name.to_lowercase().contains(&query)
                 || result.description.to_lowercase().contains(&query)
                 || format!("{:X}", result.memory_address).contains(&query.to_uppercase())
         })
@@ -107,7 +108,7 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                     input {
                         class: "create-process-input",
                         r#type: "text",
-                        placeholder: "Filter by address or region...",
+                        placeholder: "Filter by function name, address...",
                         value: "{filter_query}",
                         oninput: move |e| filter_query.set(e.value().clone()),
                     }
@@ -139,11 +140,11 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                         class: "thread-table",
                         thead {
                             tr {
-                                th { style: "padding: 8px 12px;", "Memory Region" }
+                                th { style: "padding: 8px 12px;", "Function" }
                                 th { style: "padding: 8px 12px;", "Address" }
-                                th { style: "padding: 8px 12px;", "Bytes" }
                                 th { style: "padding: 8px 12px;", "Hook Type" }
-                                th { style: "padding: 8px 12px;", "Description" }
+                                th { style: "padding: 8px 12px;", "Bytes" }
+                                th { style: "padding: 8px 12px;", "Details" }
                             }
                         }
                         tbody {
@@ -182,7 +183,7 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                                                 oncontextmenu: move |e| {
                                                     e.prevent_default();
                                                     selected_index.set(Some(current_idx));
-                                                    // Extract target module from description (format: "[dll] module → target | ...")
+                                                    // Extract target module from description (format: "dll!function | ...")
                                                     let target = extract_target_module(&result_for_ctx.description);
                                                     context_menu.set(HookScanContextMenuState {
                                                         visible: true,
@@ -190,6 +191,7 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                                                         y: e.client_coordinates().y as i32,
                                                         index: current_idx,
                                                         module_name: result_for_ctx.module_name.clone(),
+                                                        function_name: result_for_ctx.function_name.clone(),
                                                         target_module: target,
                                                         description: result_for_ctx.description.clone(),
                                                         memory_address: result_for_ctx.memory_address,
@@ -197,10 +199,10 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                                                     });
                                                 },
                                                 
-                                                td { style: "padding: 8px 12px;", "{result_clone.module_name}" }
+                                                td { style: "padding: 8px 12px; font-weight: 500; color: #22d3ee;", "{result_clone.function_name}" }
                                                 td { class: "mono", style: "padding: 8px 12px;", "0x{result_clone.memory_address:X}" }
-                                                td { class: "mono", style: "padding: 8px 12px; color: #f87171;", "{bytes_hex}" }
                                                 td { class: "{hook_type_class}", style: "padding: 8px 12px; font-weight: 600;", "{hook_type_display}" }
+                                                td { class: "mono", style: "padding: 8px 12px; color: #f87171; font-size: 11px;", "{bytes_hex}" }
                                                 td { style: "padding: 8px 12px; font-size: 12px; color: #9ca3af;", "{result_clone.description}" }
                                             }
                                         }
@@ -227,8 +229,9 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                                     .collect::<Vec<_>>()
                                     .join(" ");
                                 let text = format!(
-                                    "Region: {}\nAddress: 0x{:X}\nBytes: {}\nDescription: {}",
-                                    menu.module_name,
+                                    "Function: {}\nModule: {}\nAddress: 0x{:X}\nBytes: {}\nDetails: {}",
+                                    menu.function_name,
+                                    menu.target_module,
                                     menu.memory_address,
                                     bytes_hex,
                                     menu.description
@@ -347,7 +350,9 @@ pub struct HookScanContextMenuState {
     pub y: i32,
     #[allow(dead_code)]
     pub index: usize,
+    #[allow(dead_code)]
     pub module_name: String,
+    pub function_name: String,
     pub target_module: String,
     pub description: String,
     pub memory_address: usize,
@@ -376,18 +381,14 @@ fn get_hook_severity_class(hook_type: &HookType) -> &'static str {
 }
 
 /// Extract target module name from hook description
-/// Format: "[dll] module → target | ..." or "[dll] module → target hooked..."
+/// New format: "ntdll!NtProtectVirtualMemory | Mem[...] vs Disk[...]"
+/// or "ntdll!NtProtectVirtualMemory hooked (...)"
 fn extract_target_module(description: &str) -> String {
-    // Try to find pattern "→ X |" or "→ X hooked"
-    if let Some(arrow_pos) = description.find('→') {
-        let after_arrow = &description[arrow_pos + '→'.len_utf8()..].trim_start();
-        // Find the end of the module name (space, pipe, or end)
-        let end_pos = after_arrow
-            .find(|c: char| c == '|' || c == ' ')
-            .unwrap_or(after_arrow.len());
-        let module = after_arrow[..end_pos].trim();
-        if !module.is_empty() {
-            return module.to_string();
+    // New format: "dll!function | ..." - extract the dll part before !
+    if let Some(exclaim_pos) = description.find('!') {
+        let dll_name = description[..exclaim_pos].trim();
+        if !dll_name.is_empty() {
+            return dll_name.to_string();
         }
     }
     String::new()

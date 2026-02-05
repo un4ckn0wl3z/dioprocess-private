@@ -14,6 +14,7 @@ use windows::Win32::System::SystemInformation::GetSystemDirectoryA;
 #[derive(Debug, Clone)]
 pub struct HookScanResult {
     pub module_name: String,
+    pub function_name: String,
     pub memory_address: usize,
     pub bytes_found: Vec<u8>,
     pub hook_type: HookType,
@@ -225,8 +226,12 @@ unsafe fn scan_iat_hooks(
                 continue;
             }
             
+            // OriginalFirstThunk points to the INT (Import Name Table) for function names
+            let int_rva = original_first_thunk;
+            
             // Read IAT entries for this DLL (each entry is 8 bytes on x64)
             let iat_addr = base_addr + iat_rva;
+            let int_addr = if int_rva != 0 { base_addr + int_rva } else { 0 };
             let mut entry_offset = 0;
             
             loop {
@@ -241,6 +246,38 @@ unsafe fn scan_iat_hooks(
             if func_addr == 0 {
                 break; // End of IAT for this DLL
             }
+            
+            // Read function name from INT (Import Name Table)
+            let function_name = if int_addr != 0 {
+                let int_entry_addr = int_addr + entry_offset;
+                let mut int_entry_bytes = [0u8; 8];
+                if read_process_memory(handle, int_entry_addr, &mut int_entry_bytes).is_ok() {
+                    let int_value = u64::from_le_bytes(int_entry_bytes);
+                    // Check if imported by ordinal (high bit set)
+                    if int_value & 0x8000_0000_0000_0000 != 0 {
+                        format!("Ordinal#{}", int_value & 0xFFFF)
+                    } else {
+                        // RVA to IMAGE_IMPORT_BY_NAME (2-byte hint + name string)
+                        let name_rva = (int_value & 0x7FFF_FFFF) as usize;
+                        if name_rva != 0 {
+                            let hint_name_addr = base_addr + name_rva + 2; // Skip 2-byte hint
+                            let mut name_buf = [0u8; 128];
+                            if read_process_memory(handle, hint_name_addr, &mut name_buf).is_ok() {
+                                let end = name_buf.iter().position(|&c| c == 0).unwrap_or(name_buf.len());
+                                String::from_utf8_lossy(&name_buf[..end]).to_string()
+                            } else {
+                                "<unknown>".to_string()
+                            }
+                        } else {
+                            "<unknown>".to_string()
+                        }
+                    }
+                } else {
+                    "<unknown>".to_string()
+                }
+            } else {
+                "<unknown>".to_string()
+            };
             
             // Read first 5 bytes of the function in memory (enough for E9 JMP)
             let mut mem_bytes = [0u8; 16];
@@ -280,13 +317,14 @@ unsafe fn scan_iat_hooks(
                 // Can't read disk DLL, but we detected hook opcode, so report it anyway
                 results.push(HookScanResult {
                     module_name: module_name.clone(),
+                    function_name: function_name.clone(),
                     memory_address: func_addr,
                     bytes_found: mem_bytes.to_vec(),
                     hook_type: hook_type.clone(),
                     description: format!(
-                        "[{}] {} → {} hooked ({}) at 0x{:X}",
-                        import_dll_name, module_name, target_module, 
-                        get_hook_type_name(&hook_type), func_addr
+                        "{}!{} hooked ({})",
+                        import_dll_name, function_name, 
+                        get_hook_type_name(&hook_type)
                     ),
                 });
                 entry_offset += 8;
@@ -373,13 +411,14 @@ unsafe fn scan_iat_hooks(
                 // Could not find in disk file, but we detected hook in memory
                 results.push(HookScanResult {
                     module_name: module_name.clone(),
+                    function_name: function_name.clone(),
                     memory_address: func_addr,
                     bytes_found: mem_bytes.to_vec(),
                     hook_type: hook_type.clone(),
                     description: format!(
-                        "[{}] {} → {} hooked ({}) at 0x{:X}",
-                        import_dll_name, module_name, target_module,
-                        get_hook_type_name(&hook_type), func_addr
+                        "{}!{} hooked ({})",
+                        import_dll_name, function_name,
+                        get_hook_type_name(&hook_type)
                     ),
                 });
                 entry_offset += 8;
@@ -402,13 +441,13 @@ unsafe fn scan_iat_hooks(
             
             results.push(HookScanResult {
                 module_name: module_name.clone(),
+                function_name: function_name.clone(),
                 memory_address: func_addr,
                 bytes_found: combined_bytes,
                 hook_type: hook_type.clone(),
                 description: format!(
-                    "[{}] {} → {} | {} | Mem[{:02X} {:02X} {:02X} {:02X} {:02X}] vs Disk[{:02X} {:02X} {:02X} {:02X} {:02X}]",
-                    import_dll_name, module_name, target_module,
-                    get_hook_type_name(&hook_type),
+                    "{}!{} | Mem[{:02X} {:02X} {:02X} {:02X} {:02X}] vs Disk[{:02X} {:02X} {:02X} {:02X} {:02X}]",
+                    import_dll_name, function_name,
                     mem_bytes[0], mem_bytes[1], mem_bytes[2], mem_bytes[3], mem_bytes[4],
                     disk_func_bytes[0], disk_func_bytes[1], disk_func_bytes[2], disk_func_bytes[3], disk_func_bytes[4]
                 ),
