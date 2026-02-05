@@ -284,22 +284,19 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                                 // Try to unhook the module
                                 if !target_mod.is_empty() {
                                     status_message.set(format!("🔧 Attempting to unhook {}...", target_mod));
-                                    let sys_dir = get_system_directory();
-                                    let disk_path = format!("{}\\{}", sys_dir, target_mod);
                                     
                                     spawn(async move {
-                                        // Find module base from the hooked address
-                                        // For now, we need to use the scan results to get module info
+                                        // Find module base and full path from loaded modules
                                         match tokio::task::spawn_blocking(move || {
-                                            // Get module base by re-scanning to find it
                                             if let Ok(modules) = get_process_modules(pid) {
-                                                for (name, base, size) in &modules {
+                                                for (name, full_path, base, size) in &modules {
                                                     if name.eq_ignore_ascii_case(&target_mod) 
                                                        || (mem_addr >= *base && mem_addr < (*base + *size)) {
+                                                        // Use the full path from module enumeration
                                                         return unhook_dll_remote_by_path(
                                                             pid,
-                                                            Path::new(&disk_path),
-                                                            &target_mod,
+                                                            Path::new(full_path),
+                                                            name,
                                                             *base
                                                         );
                                                     }
@@ -394,14 +391,8 @@ fn extract_target_module(description: &str) -> String {
     String::new()
 }
 
-/// Get the system directory path
-fn get_system_directory() -> String {
-    // Use misc crate's internal function or inline the safe wrapper
-    misc::get_system_directory_path()
-}
-
-/// Get process modules (name, base, size)
-fn get_process_modules(pid: u32) -> Result<Vec<(String, usize, usize)>, misc::MiscError> {
+/// Get process modules (name, full_path, base, size)
+fn get_process_modules(pid: u32) -> Result<Vec<(String, String, usize, usize)>, misc::MiscError> {
     // Use the misc crate's module enumeration
     misc::enumerate_process_modules(pid)
 }

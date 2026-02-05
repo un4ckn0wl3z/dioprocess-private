@@ -66,8 +66,8 @@ unsafe fn read_process_memory(handle: HANDLE, address: usize, buffer: &mut [u8])
     Ok(())
 }
 
-/// Enumerate all modules in a process and return (name, base_address, size) tuples
-unsafe fn enumerate_modules(pid: u32) -> Vec<(String, usize, usize)> {
+/// Enumerate all modules in a process and return (name, full_path, base_address, size) tuples
+unsafe fn enumerate_modules(pid: u32) -> Vec<(String, String, usize, usize)> {
     let mut modules = Vec::new();
     
     let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid) else {
@@ -91,10 +91,20 @@ unsafe fn enumerate_modules(pid: u32) -> Vec<(String, usize, usize)> {
             )
             .to_string();
             
+            let full_path = String::from_utf8_lossy(
+                &module_entry
+                    .szExePath
+                    .iter()
+                    .take_while(|&&c| c != 0)
+                    .map(|&c| c as u8)
+                    .collect::<Vec<_>>(),
+            )
+            .to_string();
+            
             let base_addr = module_entry.modBaseAddr as usize;
             let size = module_entry.modBaseSize as usize;
             
-            modules.push((module_name, base_addr, size));
+            modules.push((module_name, full_path, base_addr, size));
             
             if Module32Next(snapshot, &mut module_entry).is_err() {
                 break;
@@ -107,8 +117,8 @@ unsafe fn enumerate_modules(pid: u32) -> Vec<(String, usize, usize)> {
 }
 
 /// Find which module contains a given memory address
-fn find_module_for_address(address: usize, modules: &[(String, usize, usize)]) -> Option<String> {
-    for (name, base, size) in modules {
+fn find_module_for_address(address: usize, modules: &[(String, String, usize, usize)]) -> Option<String> {
+    for (name, _path, base, size) in modules {
         if address >= *base && address < (*base + *size) {
             return Some(name.clone());
         }
@@ -120,7 +130,7 @@ fn find_module_for_address(address: usize, modules: &[(String, usize, usize)]) -
 unsafe fn scan_iat_hooks(
     handle: HANDLE,
     _pid: u32,
-    modules: &[(String, usize, usize)],
+    modules: &[(String, String, usize, usize)],
 ) -> Result<Vec<HookScanResult>, MiscError> {
     let mut results = Vec::new();
     
@@ -129,7 +139,7 @@ unsafe fn scan_iat_hooks(
     let sys_dir_len = GetSystemDirectoryA(Some(&mut sys_dir)) as usize;
     let sys_dir_path = String::from_utf8_lossy(&sys_dir[..sys_dir_len]).to_string();
     
-    for (module_name, base_addr, _size) in modules {
+    for (module_name, _module_path, base_addr, _size) in modules {
         // Parse PE headers to find IAT
         let mut dos_header = [0u8; 64];
         if read_process_memory(handle, *base_addr, &mut dos_header).is_err() {
@@ -351,8 +361,8 @@ unsafe fn scan_iat_hooks(
             
             // Calculate RVA from memory address
             let target_base = modules.iter()
-                .find(|(name, _, _)| name.eq_ignore_ascii_case(&target_module))
-                .map(|(_, base, _)| *base)
+                .find(|(name, _, _, _)| name.eq_ignore_ascii_case(&target_module))
+                .map(|(_, _, base, _)| *base)
                 .unwrap_or(0);
             
             if target_base == 0 {
@@ -522,8 +532,8 @@ pub fn get_system_directory_path() -> String {
 }
 
 /// Enumerate all modules in a process (public API for UI crate)
-/// Returns (name, base_address, size) tuples
-pub fn enumerate_process_modules(pid: u32) -> Result<Vec<(String, usize, usize)>, MiscError> {
+/// Returns (name, full_path, base_address, size) tuples
+pub fn enumerate_process_modules(pid: u32) -> Result<Vec<(String, String, usize, usize)>, MiscError> {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)
             .map_err(|_| MiscError::OpenProcessFailed(pid))?;
@@ -546,10 +556,20 @@ pub fn enumerate_process_modules(pid: u32) -> Result<Vec<(String, usize, usize)>
                 )
                 .to_string();
                 
+                let full_path = String::from_utf8_lossy(
+                    &module_entry
+                        .szExePath
+                        .iter()
+                        .take_while(|&&c| c != 0)
+                        .map(|&c| c as u8)
+                        .collect::<Vec<_>>(),
+                )
+                .to_string();
+                
                 let base_addr = module_entry.modBaseAddr as usize;
                 let size = module_entry.modBaseSize as usize;
                 
-                modules.push((module_name, base_addr, size));
+                modules.push((module_name, full_path, base_addr, size));
                 
                 if Module32Next(snapshot, &mut module_entry).is_err() {
                     break;
