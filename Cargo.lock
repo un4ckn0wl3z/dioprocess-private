@@ -853,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "dioprocess"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "dioxus",
  "embed-resource",
@@ -2764,7 +2764,7 @@ dependencies = [
 
 [[package]]
 name = "misc"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ntapi",
  "windows 0.58.0",
@@ -2850,7 +2850,7 @@ dependencies = [
 
 [[package]]
 name = "network"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "process",
  "windows 0.58.0",
@@ -3529,7 +3529,7 @@ dependencies = [
 
 [[package]]
 name = "process"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "ntapi",
  "sysinfo",
@@ -4077,7 +4077,7 @@ dependencies = [
 
 [[package]]
 name = "service"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "windows 0.58.0",
 ]
@@ -4819,7 +4819,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "arboard",
  "dioxus",
