@@ -307,13 +307,13 @@ Access via right-click context menu > Inspect > Hook Scan:
 
 ## Kernel Callback Monitor (callback crate)
 
-Real-time monitoring of kernel callbacks for process and thread creation/exit events via the ProcessMonitorEx kernel driver.
+Real-time monitoring of kernel callbacks for process and thread creation/exit events via the DioProcess kernel driver.
 
 ### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Dioprocess UI (Rust/Dioxus)              │
+│                    DioProcess UI (Rust/Dioxus)              │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │              CallbackTab Component                     │ │
 │  │  - Event table with filtering/sorting                  │ │
@@ -330,7 +330,7 @@ Real-time monitoring of kernel callbacks for process and thread creation/exit ev
 └─────────────────────────────────────────────────────────────┘
                             │
                    DeviceIoControl / ReadFile
-                   \\.\ProcessMonitorEx
+                   \\.\DioProcess
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
 │              Kernel Driver (C++ WDM)                        │
@@ -386,19 +386,19 @@ Access via "Callback Monitor" tab in the main navigation:
 bcdedit /set testsigning on
 
 :: Create and start the driver service
-sc create ProcessMonitorEx type= kernel binPath= "C:\path\to\ProcessMonitorEx.sys"
-sc start ProcessMonitorEx
+sc create DioProcess type= kernel binPath= "C:\path\to\DioProcess.sys"
+sc start DioProcess
 
 :: Stop and delete the service
-sc stop ProcessMonitorEx
-sc delete ProcessMonitorEx
+sc stop DioProcess
+sc delete DioProcess
 ```
 
 ### Driver location
 
 The kernel driver source is in `kernelmode/ProcessMonitorEx/`:
-- `ProcessMonitorEx.sln` — Visual Studio solution
-- `ProcessMonitorEx/ProcessMonitorEx.cpp` — Main driver code
+- `ProcessMonitorEx.sln` — Visual Studio solution (project files retain original name)
+- `ProcessMonitorEx/ProcessMonitorEx.cpp` — Main driver code (device name: `\\.\DioProcess`)
 - `ProcessMonitorEx/ProcessMonitorExCommon.h` — Shared data structures
 - `ProcessMonitorExCli/` — Test CLI client
 

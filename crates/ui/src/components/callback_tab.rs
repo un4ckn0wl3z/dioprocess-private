@@ -345,10 +345,10 @@ pub fn CallbackTab() -> Element {
             div { class: "table-container",
                 if !is_driver_loaded {
                     div { class: "driver-not-loaded-notice",
-                        h2 { "ProcessMonitorEx Driver Not Loaded" }
+                        h2 { "DioProcess Driver Not Loaded" }
                         p { "To use the Callback Monitor, load the kernel driver:" }
                         pre { class: "driver-instructions",
-                            "sc create ProcessMonitorEx type= kernel binPath= \"C:\\path\\to\\ProcessMonitorEx.sys\"\nsc start ProcessMonitorEx"
+                            "sc create DioProcess type= kernel binPath= \"C:\\path\\to\\DioProcess.sys\"\nsc start DioProcess"
                         }
                         p { class: "driver-note", "Note: Requires administrator privileges and test signing mode for unsigned drivers." }
                     }

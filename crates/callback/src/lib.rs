@@ -1,6 +1,6 @@
 //! Kernel callback driver communication module
 //!
-//! This crate provides communication with the ProcessMonitorEx kernel driver
+//! This crate provides communication with the DioProcess kernel driver
 //! to receive real-time process and thread creation/exit events.
 
 mod driver;

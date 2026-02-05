@@ -12,7 +12,7 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::System::IO::OVERLAPPED;
 
-const DEVICE_PATH: &str = r"\\.\ProcessMonitorEx";
+const DEVICE_PATH: &str = r"\\.\DioProcess";
 const READ_BUFFER_SIZE: usize = 1024 * 1024; // 1MB buffer
 
 /// Check if the ProcessMonitorEx driver is loaded

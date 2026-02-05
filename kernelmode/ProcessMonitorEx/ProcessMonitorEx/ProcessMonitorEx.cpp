@@ -2,7 +2,7 @@
 #include "ProcessMonitorEx.h"
 #include "Locker.h"
 
-ProcessMonitorExState g_State;
+DioProcessState g_State;
 
 VOID OnProcessCallback(
 	_Inout_ PEPROCESS Process,
@@ -17,23 +17,23 @@ VOID OnThreadCallback(
 	_In_ BOOLEAN Create
 	);
 
-void ProcessMonitorExUnload(PDRIVER_OBJECT DriverObject);
+void DioProcessUnload(PDRIVER_OBJECT DriverObject);
 
 void AddItem(FullEventData* item);
 
 NTSTATUS CompleteRequest(PIRP Irp, NTSTATUS status = STATUS_SUCCESS, ULONG_PTR info = 0);
-NTSTATUS ProcessMonitorExCreateClose(PDEVICE_OBJECT, PIRP Irp);
-NTSTATUS ProcessMonitorExRead(PDEVICE_OBJECT, PIRP Irp);
+NTSTATUS DioProcessCreateClose(PDEVICE_OBJECT, PIRP Irp);
+NTSTATUS DioProcessRead(PDEVICE_OBJECT, PIRP Irp);
 
 
-extern "C" 
+extern "C"
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING)
 {
 	NTSTATUS status;
 	PDEVICE_OBJECT devObj = nullptr;
 	bool symLinkCreated = false, procNotifyCreated = false, threadNotifyCreated = false;
-	UNICODE_STRING symName = RTL_CONSTANT_STRING(L"\\??\\ProcessMonitorEx");
-	UNICODE_STRING devName = RTL_CONSTANT_STRING(L"\\Device\\ProcessMonitorEx");
+	UNICODE_STRING symName = RTL_CONSTANT_STRING(L"\\??\\DioProcess");
+	UNICODE_STRING devName = RTL_CONSTANT_STRING(L"\\Device\\DioProcess");
 
 	do
 	{
@@ -99,9 +99,9 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING)
 	g_State.Lock.Init();
 	InitializeListHead(&g_State.ItemsHead);
 
-	DriverObject->DriverUnload = ProcessMonitorExUnload;
-	DriverObject->MajorFunction[IRP_MJ_CREATE] = DriverObject->MajorFunction[IRP_MJ_CLOSE] = ProcessMonitorExCreateClose;
-	DriverObject->MajorFunction[IRP_MJ_READ] = ProcessMonitorExRead;
+	DriverObject->DriverUnload = DioProcessUnload;
+	DriverObject->MajorFunction[IRP_MJ_CREATE] = DriverObject->MajorFunction[IRP_MJ_CLOSE] = DioProcessCreateClose;
+	DriverObject->MajorFunction[IRP_MJ_READ] = DioProcessRead;
 
 	return status;
 }
@@ -231,11 +231,11 @@ VOID OnThreadCallback(HANDLE ProcessId, HANDLE ThreadId, BOOLEAN Create)
 
 }
 
-void ProcessMonitorExUnload(PDRIVER_OBJECT DriverObject)
+void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 {
 	PsRemoveCreateThreadNotifyRoutine(OnThreadCallback);
 	PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, TRUE);
-	UNICODE_STRING symName = RTL_CONSTANT_STRING(L"\\??\\ProcessMonitorEx");
+	UNICODE_STRING symName = RTL_CONSTANT_STRING(L"\\??\\DioProcess");
 	IoDeleteSymbolicLink(&symName);
 	IoDeleteDevice(DriverObject->DeviceObject);
 
@@ -261,12 +261,12 @@ NTSTATUS CompleteRequest(PIRP Irp, NTSTATUS status, ULONG_PTR info)
 	return status;
 }
 
-NTSTATUS ProcessMonitorExCreateClose(PDEVICE_OBJECT, PIRP Irp)
+NTSTATUS DioProcessCreateClose(PDEVICE_OBJECT, PIRP Irp)
 {
 	return CompleteRequest(Irp);
 }
 
-NTSTATUS ProcessMonitorExRead(PDEVICE_OBJECT, PIRP Irp)
+NTSTATUS DioProcessRead(PDEVICE_OBJECT, PIRP Irp)
 {
 	auto irpSp = IoGetCurrentIrpStackLocation(Irp);
 	auto status = STATUS_SUCCESS;

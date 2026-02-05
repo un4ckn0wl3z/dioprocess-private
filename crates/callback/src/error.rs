@@ -21,7 +21,7 @@ impl fmt::Display for CallbackError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CallbackError::DriverNotFound => {
-                write!(f, "ProcessMonitorEx driver not found (not loaded)")
+                write!(f, "DioProcess driver not found (not loaded)")
             }
             CallbackError::DeviceOpenFailed(code) => {
                 write!(f, "Failed to open device handle: error code {}", code)

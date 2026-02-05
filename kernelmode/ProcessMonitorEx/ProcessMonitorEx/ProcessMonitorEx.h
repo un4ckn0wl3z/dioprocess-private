@@ -3,8 +3,8 @@
 #include "ProcessMonitorExCommon.h"
 #include "FastMutex.h"
 
-#define DRIVER_PREFIX "ProcessMonitorEx: "
-#define DRIVER_TAG 'xepw'
+#define DRIVER_PREFIX "DioProcess: "
+#define DRIVER_TAG 'oidp'  // 'diop' reversed for little-endian
 
 struct FullEventData
 {
@@ -12,7 +12,7 @@ struct FullEventData
 	EventData Data;
 };
 
-struct ProcessMonitorExState
+struct DioProcessState
 {
 	LIST_ENTRY ItemsHead;
 	ULONG ItemCount;
