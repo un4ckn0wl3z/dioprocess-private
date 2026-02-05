@@ -1,7 +1,8 @@
 //! Memory Hook Scan window component
 
 use dioxus::prelude::*;
-use misc::{scan_process_hooks, HookScanResult, HookType};
+use misc::{scan_process_hooks, unhook_dll_remote_by_path, HookScanResult, HookType};
+use std::path::Path;
 
 use crate::helpers::copy_to_clipboard;
 use crate::state::HOOK_SCAN_WINDOW_STATE;
@@ -138,11 +139,11 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                         class: "thread-table",
                         thead {
                             tr {
-                                th { "Memory Region" }
-                                th { "Address" }
-                                th { "Bytes" }
-                                th { "Hook Type" }
-                                th { "Description" }
+                                th { style: "padding: 8px 12px;", "Memory Region" }
+                                th { style: "padding: 8px 12px;", "Address" }
+                                th { style: "padding: 8px 12px;", "Bytes" }
+                                th { style: "padding: 8px 12px;", "Hook Type" }
+                                th { style: "padding: 8px 12px;", "Description" }
                             }
                         }
                         tbody {
@@ -161,12 +162,15 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                                     {
                                         let current_idx = *idx;
                                         let result_clone = result.clone();
+                                        let result_for_ctx = result.clone();
                                         let is_selected = selected_index.read().as_ref().map(|s| *s == current_idx).unwrap_or(false);
-                                        let row_class = if is_selected { "selected" } else { "" };
+                                        let row_class = if is_selected { "thread-row selected" } else { "thread-row" };
                                         let bytes_hex = result_clone.bytes_found.iter()
                                             .map(|b| format!("{:02X}", b))
                                             .collect::<Vec<_>>()
                                             .join(" ");
+                                        let hook_type_class = get_hook_severity_class(&result_clone.hook_type);
+                                        let hook_type_display = get_hook_type_display(&result_clone.hook_type);
                                         
                                         rsx! {
                                             tr {
@@ -178,24 +182,26 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                                                 oncontextmenu: move |e| {
                                                     e.prevent_default();
                                                     selected_index.set(Some(current_idx));
-                                                    let result_for_menu = result_clone.clone();
+                                                    // Extract target module from description (format: "[dll] module → target | ...")
+                                                    let target = extract_target_module(&result_for_ctx.description);
                                                     context_menu.set(HookScanContextMenuState {
                                                         visible: true,
                                                         x: e.client_coordinates().x as i32,
                                                         y: e.client_coordinates().y as i32,
                                                         index: current_idx,
-                                                        module_name: result_for_menu.module_name,
-                                                        description: result_for_menu.description,
-                                                        memory_address: result_for_menu.memory_address,
-                                                        bytes_found: result_for_menu.bytes_found,
+                                                        module_name: result_for_ctx.module_name.clone(),
+                                                        target_module: target,
+                                                        description: result_for_ctx.description.clone(),
+                                                        memory_address: result_for_ctx.memory_address,
+                                                        bytes_found: result_for_ctx.bytes_found.clone(),
                                                     });
                                                 },
                                                 
-                                                td { "{result_clone.module_name}" }
-                                                td { class: "mono", "0x{result_clone.memory_address:X}" }
-                                                td { class: "mono status-hooked", "{bytes_hex}" }
-                                                td { class: "status-hooked", "{get_hook_type_display(&result_clone.hook_type)}" }
-                                                td { "{result_clone.description}" }
+                                                td { style: "padding: 8px 12px;", "{result_clone.module_name}" }
+                                                td { class: "mono", style: "padding: 8px 12px;", "0x{result_clone.memory_address:X}" }
+                                                td { class: "mono", style: "padding: 8px 12px; color: #f87171;", "{bytes_hex}" }
+                                                td { class: "{hook_type_class}", style: "padding: 8px 12px; font-weight: 600;", "{hook_type_display}" }
+                                                td { style: "padding: 8px 12px; font-size: 12px; color: #9ca3af;", "{result_clone.description}" }
                                             }
                                         }
                                     }
@@ -259,6 +265,63 @@ pub fn HookScanWindow(pid: u32, process_name: String) -> Element {
                             span { "📋" }
                             span { "Copy Bytes" }
                         }
+
+                        // Separator
+                        div { style: "height: 1px; background: rgba(255,255,255,0.1); margin: 4px 0;" }
+
+                        // Unhook option
+                        button {
+                            class: "context-menu-item context-menu-item-danger",
+                            onclick: move |_| {
+                                let menu = context_menu.read().clone();
+                                let target_mod = menu.target_module.clone();
+                                let mem_addr = menu.memory_address;
+                                context_menu.set(HookScanContextMenuState::default());
+                                
+                                // Try to unhook the module
+                                if !target_mod.is_empty() {
+                                    status_message.set(format!("🔧 Attempting to unhook {}...", target_mod));
+                                    let sys_dir = get_system_directory();
+                                    let disk_path = format!("{}\\{}", sys_dir, target_mod);
+                                    
+                                    spawn(async move {
+                                        // Find module base from the hooked address
+                                        // For now, we need to use the scan results to get module info
+                                        match tokio::task::spawn_blocking(move || {
+                                            // Get module base by re-scanning to find it
+                                            if let Ok(modules) = get_process_modules(pid) {
+                                                for (name, base, size) in &modules {
+                                                    if name.eq_ignore_ascii_case(&target_mod) 
+                                                       || (mem_addr >= *base && mem_addr < (*base + *size)) {
+                                                        return unhook_dll_remote_by_path(
+                                                            pid,
+                                                            Path::new(&disk_path),
+                                                            &target_mod,
+                                                            *base
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            Err(misc::MiscError::FileNotFound(target_mod))
+                                        }).await {
+                                            Ok(Ok(result)) => {
+                                                status_message.set(format!("✓ Unhooked: {} bytes restored in {}", result.bytes_replaced, result.dll_name));
+                                            }
+                                            Ok(Err(e)) => {
+                                                status_message.set(format!("✗ Unhook failed: {}", e));
+                                            }
+                                            Err(e) => {
+                                                status_message.set(format!("✗ Task error: {}", e));
+                                            }
+                                        }
+                                    });
+                                } else {
+                                    status_message.set("✗ Cannot determine target module for unhook".to_string());
+                                }
+                            },
+                            span { "🔓" }
+                            span { "Unhook Module" }
+                        }
                     }
                 }
             }
@@ -285,6 +348,7 @@ pub struct HookScanContextMenuState {
     #[allow(dead_code)]
     pub index: usize,
     pub module_name: String,
+    pub target_module: String,
     pub description: String,
     pub memory_address: usize,
     pub bytes_found: Vec<u8>,
@@ -294,6 +358,49 @@ pub struct HookScanContextMenuState {
 fn get_hook_type_display(hook_type: &HookType) -> &'static str {
     match hook_type {
         HookType::None => "None",
-        HookType::IatHook => "IAT Hook",
+        HookType::InlineJmp => "⚠ E9 JMP",
+        HookType::InlineCall => "⚠ E8 CALL",
+        HookType::ShortJmp => "⚠ EB Short",
+        HookType::IndirectJmp => "🔴 FF25 Indirect",
+        HookType::MovJmp => "🔴 MOV+JMP x64",
     }
+}
+
+/// Get CSS class based on hook severity
+fn get_hook_severity_class(hook_type: &HookType) -> &'static str {
+    match hook_type {
+        HookType::None => "status-clean",
+        HookType::InlineJmp | HookType::InlineCall | HookType::ShortJmp => "status-hooked",
+        HookType::IndirectJmp | HookType::MovJmp => "status-hooked",
+    }
+}
+
+/// Extract target module name from hook description
+/// Format: "[dll] module → target | ..." or "[dll] module → target hooked..."
+fn extract_target_module(description: &str) -> String {
+    // Try to find pattern "→ X |" or "→ X hooked"
+    if let Some(arrow_pos) = description.find('→') {
+        let after_arrow = &description[arrow_pos + '→'.len_utf8()..].trim_start();
+        // Find the end of the module name (space, pipe, or end)
+        let end_pos = after_arrow
+            .find(|c: char| c == '|' || c == ' ')
+            .unwrap_or(after_arrow.len());
+        let module = after_arrow[..end_pos].trim();
+        if !module.is_empty() {
+            return module.to_string();
+        }
+    }
+    String::new()
+}
+
+/// Get the system directory path
+fn get_system_directory() -> String {
+    // Use misc crate's internal function or inline the safe wrapper
+    misc::get_system_directory_path()
+}
+
+/// Get process modules (name, base, size)
+fn get_process_modules(pid: u32) -> Result<Vec<(String, usize, usize)>, misc::MiscError> {
+    // Use the misc crate's module enumeration
+    misc::enumerate_process_modules(pid)
 }

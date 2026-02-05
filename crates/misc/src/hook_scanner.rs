@@ -24,7 +24,11 @@ pub struct HookScanResult {
 #[derive(Debug, Clone, PartialEq)]
 pub enum HookType {
     None,
-    IatHook,         // IAT entry points to hooked function
+    InlineJmp,       // E9 near JMP hook
+    InlineCall,      // E8 near CALL hook  
+    ShortJmp,        // EB short JMP hook
+    IndirectJmp,     // FF 25 indirect JMP hook
+    MovJmp,          // 48 B8 [addr] FF E0 (mov rax + jmp rax) hook
 }
 
 /// Scan process memory for hook signature opcodes
@@ -195,10 +199,24 @@ unsafe fn scan_iat_hooks(
                 break; // End of import descriptors
             }
             
-            // Read import name
+            // Read import name (DLL name this import descriptor refers to)
             let name_rva = u32::from_le_bytes([
                 desc_bytes[12], desc_bytes[13], desc_bytes[14], desc_bytes[15],
             ]) as usize;
+            
+            // Read the import DLL name string
+            let import_dll_name = if name_rva != 0 {
+                let name_addr = base_addr + name_rva;
+                let mut name_buf = [0u8; 256];
+                if read_process_memory(handle, name_addr, &mut name_buf).is_ok() {
+                    let end = name_buf.iter().position(|&c| c == 0).unwrap_or(name_buf.len());
+                    String::from_utf8_lossy(&name_buf[..end]).to_string()
+                } else {
+                    "<unknown>".to_string()
+                }
+            } else {
+                "<unknown>".to_string()
+            };
             
             // FirstThunk points to the IAT for this DLL
             let iat_rva = first_thunk;
@@ -243,10 +261,10 @@ unsafe fn scan_iat_hooks(
                 continue;
             }
             
-            // Check if function starts with E9 (JMP) or E8 (CALL) - typical inline hooks
-            let is_hooked = mem_bytes[0] == 0xE9 || mem_bytes[0] == 0xE8 || mem_bytes[0] == 0xEB;
+            // Detect hook type from function prologue bytes
+            let hook_type = detect_hook_type(&mem_bytes);
             
-            if !is_hooked {
+            if hook_type == HookType::None {
                 entry_offset += 8;
                 continue; // Not hooked
             }
@@ -264,10 +282,11 @@ unsafe fn scan_iat_hooks(
                     module_name: module_name.clone(),
                     memory_address: func_addr,
                     bytes_found: mem_bytes.to_vec(),
-                    hook_type: HookType::IatHook,
+                    hook_type: hook_type.clone(),
                     description: format!(
-                        "Import {} → {}::{:02X} hooked (E9/E8/EB detected) at 0x{:X}",
-                        module_name, target_module, mem_bytes[0], func_addr
+                        "[{}] {} → {} hooked ({}) at 0x{:X}",
+                        import_dll_name, module_name, target_module, 
+                        get_hook_type_name(&hook_type), func_addr
                     ),
                 });
                 entry_offset += 8;
@@ -351,15 +370,16 @@ unsafe fn scan_iat_hooks(
             }
             
             if !found_section || file_offset + 16 > disk_bytes.len() {
-                // Could not find in disk file, but we detected E9 JMP in memory
+                // Could not find in disk file, but we detected hook in memory
                 results.push(HookScanResult {
                     module_name: module_name.clone(),
                     memory_address: func_addr,
                     bytes_found: mem_bytes.to_vec(),
-                    hook_type: HookType::IatHook,
+                    hook_type: hook_type.clone(),
                     description: format!(
-                        "Imported function in {} → {} hooked with JMP (E9) at 0x{:X}",
-                        module_name, target_module, func_addr
+                        "[{}] {} → {} hooked ({}) at 0x{:X}",
+                        import_dll_name, module_name, target_module,
+                        get_hook_type_name(&hook_type), func_addr
                     ),
                 });
                 entry_offset += 8;
@@ -368,13 +388,14 @@ unsafe fn scan_iat_hooks(
             
             let disk_func_bytes = &disk_bytes[file_offset..file_offset + 16];
             
-            // Verify that disk version doesn't start with E9
-            if disk_func_bytes[0] == 0xE9 {
+            // Check if disk version also has the same hook signature (legitimate redirect)
+            let disk_hook_type = detect_hook_type(disk_func_bytes.try_into().unwrap_or(&[0u8; 16]));
+            if disk_hook_type != HookType::None {
                 entry_offset += 8;
-                continue; // Original also has JMP, might be legitimate
+                continue; // Original also has hook signature, might be legitimate
             }
             
-            // Memory has E9 but disk doesn't - confirmed hook!
+            // Memory has hook but disk doesn't - confirmed hook!
             let mut combined_bytes = Vec::with_capacity(32);
             combined_bytes.extend_from_slice(&mem_bytes);
             combined_bytes.extend_from_slice(disk_func_bytes);
@@ -383,13 +404,13 @@ unsafe fn scan_iat_hooks(
                 module_name: module_name.clone(),
                 memory_address: func_addr,
                 bytes_found: combined_bytes,
-                hook_type: HookType::IatHook,
+                hook_type: hook_type.clone(),
                 description: format!(
-                    "Imported function in {} → {} hooked: Mem[E9 {:02X} {:02X} {:02X} {:02X}] vs Disk[{:02X} {:02X} {:02X} {:02X} {:02X}] at 0x{:X}",
-                    module_name, target_module,
-                    mem_bytes[1], mem_bytes[2], mem_bytes[3], mem_bytes[4],
-                    disk_func_bytes[0], disk_func_bytes[1], disk_func_bytes[2], disk_func_bytes[3], disk_func_bytes[4],
-                    func_addr
+                    "[{}] {} → {} | {} | Mem[{:02X} {:02X} {:02X} {:02X} {:02X}] vs Disk[{:02X} {:02X} {:02X} {:02X} {:02X}]",
+                    import_dll_name, module_name, target_module,
+                    get_hook_type_name(&hook_type),
+                    mem_bytes[0], mem_bytes[1], mem_bytes[2], mem_bytes[3], mem_bytes[4],
+                    disk_func_bytes[0], disk_func_bytes[1], disk_func_bytes[2], disk_func_bytes[3], disk_func_bytes[4]
                 ),
             });
             
@@ -401,4 +422,103 @@ unsafe fn scan_iat_hooks(
     }  // End of modules loop
     
     Ok(results)
+}
+
+/// Detect the type of hook from function prologue bytes
+fn detect_hook_type(bytes: &[u8; 16]) -> HookType {
+    // E9 xx xx xx xx - near JMP (5 bytes)
+    if bytes[0] == 0xE9 {
+        return HookType::InlineJmp;
+    }
+    
+    // E8 xx xx xx xx - near CALL (5 bytes)
+    if bytes[0] == 0xE8 {
+        return HookType::InlineCall;
+    }
+    
+    // EB xx - short JMP (2 bytes)
+    if bytes[0] == 0xEB {
+        return HookType::ShortJmp;
+    }
+    
+    // FF 25 xx xx xx xx - indirect JMP through memory (6 bytes)
+    if bytes[0] == 0xFF && bytes[1] == 0x25 {
+        return HookType::IndirectJmp;
+    }
+    
+    // 48 B8 [8-byte addr] FF E0 - mov rax, addr; jmp rax (12 bytes total)
+    // Common x64 hook pattern for jumping to addresses > 2GB away
+    if bytes[0] == 0x48 && bytes[1] == 0xB8 && bytes[10] == 0xFF && bytes[11] == 0xE0 {
+        return HookType::MovJmp;
+    }
+    
+    // 48 B8 [8-byte addr] 50 C3 - mov rax, addr; push rax; ret (12 bytes)
+    // Another common x64 pattern
+    if bytes[0] == 0x48 && bytes[1] == 0xB8 && bytes[10] == 0x50 && bytes[11] == 0xC3 {
+        return HookType::MovJmp;
+    }
+    
+    HookType::None
+}
+
+/// Get human-readable name for hook type
+fn get_hook_type_name(hook_type: &HookType) -> &'static str {
+    match hook_type {
+        HookType::None => "None",
+        HookType::InlineJmp => "E9 JMP",
+        HookType::InlineCall => "E8 CALL",
+        HookType::ShortJmp => "EB Short JMP",
+        HookType::IndirectJmp => "FF25 Indirect JMP",
+        HookType::MovJmp => "MOV+JMP (x64)",
+    }
+}
+
+/// Get the Windows system directory path (public API for UI crate)
+pub fn get_system_directory_path() -> String {
+    unsafe {
+        let mut sys_dir = vec![0u8; MAX_PATH as usize];
+        let sys_dir_len = GetSystemDirectoryA(Some(&mut sys_dir)) as usize;
+        String::from_utf8_lossy(&sys_dir[..sys_dir_len]).to_string()
+    }
+}
+
+/// Enumerate all modules in a process (public API for UI crate)
+/// Returns (name, base_address, size) tuples
+pub fn enumerate_process_modules(pid: u32) -> Result<Vec<(String, usize, usize)>, MiscError> {
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)
+            .map_err(|_| MiscError::OpenProcessFailed(pid))?;
+        
+        let mut modules = Vec::new();
+        let mut module_entry = MODULEENTRY32 {
+            dwSize: mem::size_of::<MODULEENTRY32>() as u32,
+            ..Default::default()
+        };
+        
+        if Module32First(snapshot, &mut module_entry).is_ok() {
+            loop {
+                let module_name = String::from_utf8_lossy(
+                    &module_entry
+                        .szModule
+                        .iter()
+                        .take_while(|&&c| c != 0)
+                        .map(|&c| c as u8)
+                        .collect::<Vec<_>>(),
+                )
+                .to_string();
+                
+                let base_addr = module_entry.modBaseAddr as usize;
+                let size = module_entry.modBaseSize as usize;
+                
+                modules.push((module_name, base_addr, size));
+                
+                if Module32Next(snapshot, &mut module_entry).is_err() {
+                    break;
+                }
+            }
+        }
+        
+        let _ = CloseHandle(snapshot);
+        Ok(modules)
+    }
 }
