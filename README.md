@@ -18,6 +18,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 - TCP/UDP connection listing with owning process (via IP Helper API)
 - Windows Service enumeration, start/stop/create/delete (Service Control Manager)
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
+- **DLL Unhooking** — restore hooked DLLs (ntdll, kernel32, kernelbase, user32, advapi32, ws2_32) by replacing .text section from disk
 - Advanced process creation & masquerading:
   - Normal `CreateProcessW` (suspended option)
   - PPID spoofing (`PROC_THREAD_ATTRIBUTE_PARENT_PROCESS`)
@@ -63,6 +64,14 @@ crates/
 - PPID spoofing via extended startup attributes
 - Process hollowing — full unmap, section-by-section write, relocations, PEB.ImageBaseAddress patch, section protection fix, thread context hijack (RCX)
 - **Process ghosting** — temp file → delete disposition → `SEC_IMAGE` section → orphaned section → `NtCreateProcessEx` → normalized process parameters → `NtCreateThreadEx`
+
+### DLL Unhooking
+
+Restore hooked DLLs by reading a clean copy from `System32` and replacing the in-memory `.text` section:
+- Parse PE headers to locate `.text` section (RVA + raw offset)
+- Read clean DLL from disk, make .text writable via `VirtualProtect(PAGE_EXECUTE_WRITECOPY)`
+- `memcpy` clean bytes over hooked bytes, restore original protection
+- Supports: `ntdll.dll`, `kernel32.dll`, `kernelbase.dll`, `user32.dll`, `advapi32.dll`, `ws2_32.dll`
 
 ### Token Theft
 

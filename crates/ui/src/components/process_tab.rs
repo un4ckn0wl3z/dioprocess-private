@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
-use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack};
+use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, unhook_dll, CommonDll};
 use process::{
     get_processes, get_system_stats, kill_process, open_file_location, resume_process,
     suspend_process, ProcessInfo,
@@ -1166,6 +1166,187 @@ pub fn ProcessTab() -> Element {
                                         },
                                         span { "🗺️" }
                                         span { "Manual Map" }
+                                    }
+                                }
+                            }
+
+                            // DLL Unhooking sub-submenu
+                            div {
+                                class: "context-menu-submenu",
+                                div {
+                                    class: "context-menu-submenu-trigger",
+                                    span { "🔓" }
+                                    span { "DLL Unhook" }
+                                    span { class: "arrow", "▶" }
+                                }
+                                div {
+                                    class: "context-menu-submenu-content",
+                                    // Unhook ntdll.dll
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            context_menu.set(ContextMenuState::default());
+                                            match unhook_dll(CommonDll::Ntdll) {
+                                                Ok(result) => {
+                                                    status_message.set(format!(
+                                                        "✓ {} unhooked ({} bytes replaced)",
+                                                        result.dll_name, result.bytes_replaced
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ Unhook ntdll.dll failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        },
+                                        span { "📦" }
+                                        span { "ntdll.dll" }
+                                    }
+
+                                    // Unhook kernel32.dll
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            context_menu.set(ContextMenuState::default());
+                                            match unhook_dll(CommonDll::Kernel32) {
+                                                Ok(result) => {
+                                                    status_message.set(format!(
+                                                        "✓ {} unhooked ({} bytes replaced)",
+                                                        result.dll_name, result.bytes_replaced
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ Unhook kernel32.dll failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        },
+                                        span { "📦" }
+                                        span { "kernel32.dll" }
+                                    }
+
+                                    // Unhook kernelbase.dll
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            context_menu.set(ContextMenuState::default());
+                                            match unhook_dll(CommonDll::KernelBase) {
+                                                Ok(result) => {
+                                                    status_message.set(format!(
+                                                        "✓ {} unhooked ({} bytes replaced)",
+                                                        result.dll_name, result.bytes_replaced
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ Unhook kernelbase.dll failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        },
+                                        span { "📦" }
+                                        span { "kernelbase.dll" }
+                                    }
+
+                                    // Unhook user32.dll
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            context_menu.set(ContextMenuState::default());
+                                            match unhook_dll(CommonDll::User32) {
+                                                Ok(result) => {
+                                                    status_message.set(format!(
+                                                        "✓ {} unhooked ({} bytes replaced)",
+                                                        result.dll_name, result.bytes_replaced
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ Unhook user32.dll failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        },
+                                        span { "📦" }
+                                        span { "user32.dll" }
+                                    }
+
+                                    // Unhook advapi32.dll
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            context_menu.set(ContextMenuState::default());
+                                            match unhook_dll(CommonDll::Advapi32) {
+                                                Ok(result) => {
+                                                    status_message.set(format!(
+                                                        "✓ {} unhooked ({} bytes replaced)",
+                                                        result.dll_name, result.bytes_replaced
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ Unhook advapi32.dll failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        },
+                                        span { "📦" }
+                                        span { "advapi32.dll" }
+                                    }
+
+                                    // Unhook ws2_32.dll
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            context_menu.set(ContextMenuState::default());
+                                            match unhook_dll(CommonDll::Ws2_32) {
+                                                Ok(result) => {
+                                                    status_message.set(format!(
+                                                        "✓ {} unhooked ({} bytes replaced)",
+                                                        result.dll_name, result.bytes_replaced
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ Unhook ws2_32.dll failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        },
+                                        span { "📦" }
+                                        span { "ws2_32.dll" }
                                     }
                                 }
                             }

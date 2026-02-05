@@ -22,10 +22,11 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
-├── misc/          # DLL injection (7 methods), process creation, process hollowing, token theft, module unloading, memory ops
+├── misc/          # DLL injection (7 methods), DLL unhooking, process creation, process hollowing, token theft, module unloading, memory ops
 │   └── src/
 │       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
 │       ├── error.rs                    # MiscError enum, Display, Error impls
+│       ├── unhook.rs                   # DLL unhooking (restore .text from disk)
 │       ├── injection/
 │       │   ├── mod.rs                  # Re-exports all injection functions
 │       │   ├── loadlibrary.rs          # inject_dll()
@@ -145,6 +146,28 @@ Each process creation method is in its own file under `crates/misc/src/process/`
 Located in `crates/misc/src/token.rs`:
 
 `steal_token(pid, exe_path, args)` — Open target process with `PROCESS_QUERY_LIMITED_INFORMATION`, obtain its primary token via `OpenProcessToken`, duplicate as a primary token with `DuplicateTokenEx(SecurityAnonymous, TokenPrimary)`, enable `SeAssignPrimaryTokenPrivilege` via `AdjustTokenPrivileges`, impersonate with `ImpersonateLoggedOnUser`, spawn a new process under that token via `CreateProcessAsUserW`, then `RevertToSelf`. Access via right-click context menu > Miscellaneous > Steal Token.
+
+## DLL Unhooking (misc crate)
+
+Located in `crates/misc/src/unhook.rs`:
+
+Restores hooked DLLs by replacing the in-memory `.text` section with a clean copy read from disk:
+
+- `unhook_dll(CommonDll)` — Unhook a common DLL (Ntdll, Kernel32, KernelBase, User32, Advapi32, Ws2_32)
+- `unhook_dll_by_path(path, module_name)` — Unhook any DLL by providing disk path and loaded module name
+- `unhook_multiple_dlls(&[CommonDll])` — Batch unhook multiple DLLs
+- `is_function_hooked(addr)` — Check if a function's first bytes match expected syscall stub pattern (`4C 8B D1 B8`)
+- `is_export_hooked(dll_name, func_name)` — Check if a specific export is hooked
+
+**Algorithm:**
+1. Read clean DLL from `System32` via `GetSystemDirectoryA`
+2. Get loaded module base address via `GetModuleHandleA`
+3. Parse PE headers (DOS → NT → Section Headers) to find `.text` section
+4. Make `.text` writable via `VirtualProtect(PAGE_EXECUTE_WRITECOPY)`
+5. Copy clean `.text` bytes over hooked bytes
+6. Restore original memory protection
+
+**Access:** Right-click context menu > Miscellaneous > DLL Unhook > select DLL
 
 ## Process tree view
 
