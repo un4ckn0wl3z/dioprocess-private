@@ -1197,48 +1197,57 @@ pub fn ProcessTab() -> Element {
                                     span { class: "arrow", "▶" }
                                 }
                                 div {
-                                    class: "context-menu-submenu-content",
-                                    // Dynamically list all loaded modules
+                                    class: "context-menu-submenu-content context-menu-columns",
+                                    // Dynamically list all loaded modules in columns of 10
                                     {
-                                        let modules = ctx_menu.pid.map(|pid| enumerate_process_modules(pid).unwrap_or_default()).unwrap_or_default();
-                                        modules.into_iter().map(|(name, full_path, base, _size)| {
-                                            let dll_name_for_key = name.clone();
-                                            let dll_name_for_closure = name.clone();
-                                            let dll_path = full_path.clone();
-                                            let dll_base = base;
-                                            let display_name = name.clone();
-                                            let target_pid = ctx_menu.pid;
+                                        let modules: Vec<_> = ctx_menu.pid.map(|pid| enumerate_process_modules(pid).unwrap_or_default()).unwrap_or_default();
+                                        let chunks: Vec<Vec<_>> = modules.chunks(10).map(|c| c.to_vec()).collect();
+                                        chunks.into_iter().enumerate().map(|(col_idx, chunk)| {
                                             rsx! {
-                                                button {
-                                                    key: "{dll_name_for_key}",
-                                                    class: "context-menu-item",
-                                                    onclick: move |_| {
-                                                        context_menu.set(ContextMenuState::default());
-                                                        if let Some(pid) = target_pid {
-                                                            let path = std::path::Path::new(&dll_path);
-                                                            let name = dll_name_for_closure.clone();
-                                                            match unhook_dll_remote_by_path(pid, path, &name, dll_base) {
-                                                                Ok(result) => {
-                                                                    status_message.set(format!(
-                                                                        "✓ {} unhooked in PID {} ({} bytes replaced)",
-                                                                        result.dll_name, pid, result.bytes_replaced
-                                                                    ));
-                                                                }
-                                                                Err(e) => {
-                                                                    status_message.set(format!(
-                                                                        "✗ Unhook {} failed: {}",
-                                                                        name, e
-                                                                    ));
-                                                                }
+                                                div {
+                                                    key: "col-{col_idx}",
+                                                    class: "context-menu-column",
+                                                    {chunk.into_iter().map(|(name, full_path, base, _size)| {
+                                                        let dll_name_for_key = name.clone();
+                                                        let dll_name_for_closure = name.clone();
+                                                        let dll_path = full_path.clone();
+                                                        let dll_base = base;
+                                                        let display_name = name.clone();
+                                                        let target_pid = ctx_menu.pid;
+                                                        rsx! {
+                                                            button {
+                                                                key: "{dll_name_for_key}",
+                                                                class: "context-menu-item",
+                                                                onclick: move |_| {
+                                                                    context_menu.set(ContextMenuState::default());
+                                                                    if let Some(pid) = target_pid {
+                                                                        let path = std::path::Path::new(&dll_path);
+                                                                        let name = dll_name_for_closure.clone();
+                                                                        match unhook_dll_remote_by_path(pid, path, &name, dll_base) {
+                                                                            Ok(result) => {
+                                                                                status_message.set(format!(
+                                                                                    "✓ {} unhooked in PID {} ({} bytes replaced)",
+                                                                                    result.dll_name, pid, result.bytes_replaced
+                                                                                ));
+                                                                            }
+                                                                            Err(e) => {
+                                                                                status_message.set(format!(
+                                                                                    "✗ Unhook {} failed: {}",
+                                                                                    name, e
+                                                                                ));
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    spawn(async move {
+                                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                                        status_message.set(String::new());
+                                                                    });
+                                                                },
+                                                                span { "📦" }
+                                                                span { "{display_name}" }
                                                             }
                                                         }
-                                                        spawn(async move {
-                                                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                            status_message.set(String::new());
-                                                        });
-                                                    },
-                                                    span { "📦" }
-                                                    span { "{display_name}" }
+                                                    })}
                                                 }
                                             }
                                         })

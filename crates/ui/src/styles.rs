@@ -568,6 +568,24 @@ pub const CUSTOM_STYLES: &str = r#"
         z-index: 52;
     }
 
+    /* Multi-column menu layout for DLL Unhook list */
+    .context-menu-submenu:hover > .context-menu-columns {
+        display: flex;
+        flex-direction: row;
+        gap: 0;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+    .context-menu-column {
+        display: flex;
+        flex-direction: column;
+        min-width: 180px;
+        border-right: 1px solid rgba(34, 211, 238, 0.15);
+    }
+    .context-menu-column:last-child {
+        border-right: none;
+    }
+
     /* Module Import View */
     .module-import-header {
         display: flex;
