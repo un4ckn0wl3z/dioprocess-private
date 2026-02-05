@@ -27,7 +27,7 @@ crates/
 │       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
 │       ├── error.rs                    # MiscError enum, Display, Error impls
 │       ├── unhook.rs                   # DLL unhooking (restore .text from disk)
-│       ├── hook_scanner.rs             # IAT hook detection (E9/E8/EB inline hooks)
+│       ├── hook_scanner.rs             # IAT hook detection (E9/E8/EB/FF25/MOV+JMP patterns)
 │       ├── injection/
 │       │   ├── mod.rs                  # Re-exports all injection functions
 │       │   ├── loadlibrary.rs          # inject_dll()
@@ -279,14 +279,21 @@ Access via "Ghost Process" button in the process tab toolbar:
 
 Access via right-click context menu > Inspect > Hook Scan:
 - **IAT parsing** — Walks the Import Directory (PE data directory index 1) to enumerate all imported DLLs and functions
-- **Import Descriptor parsing** — Reads 20-byte Import Descriptors, follows FirstThunk to actual IAT entries
-- **Hook detection** — Checks first 16 bytes of each imported function for inline hook opcodes (E9=JMP, E8=CALL, EB=short JMP)
+- **Import Descriptor parsing** — Reads 20-byte Import Descriptors, follows FirstThunk to actual IAT entries, extracts import DLL name
+- **Hook type detection** — Identifies multiple hook patterns via `detect_hook_type()` function:
+  - `InlineJmp` — E9 near JMP (5-byte hook)
+  - `InlineCall` — E8 near CALL hook
+  - `ShortJmp` — EB short JMP (2-byte hook)
+  - `IndirectJmp` — FF 25 indirect JMP through memory
+  - `MovJmp` — 48 B8 [addr] FF E0 or 48 B8 [addr] 50 C3 (x64 long-range hook)
 - **Disk comparison** — Reads original DLL from System32, parses PE to find function offset, compares memory vs disk bytes
 - **Multi-DLL support** — Works for all imported DLLs: ntdll.dll, kernel32.dll, user32.dll, ws2_32.dll, advapi32.dll, etc.
-- **Results table** — Shows module name, memory address, hook type (IAT Hook), bytes comparison (memory vs disk), and description
+- **Results table** — Shows module name, memory address, hook type with severity indicator (⚠/🔴), bytes comparison (memory vs disk), and description with import DLL name
+- **Unhook from context menu** — Right-click detected hook → "Unhook Module" to restore original bytes from disk via `unhook_dll_remote_by_path()`
 - **Filtering** — Filter by address or region name
 - **Status feedback** — Shows hook count or clean status
 - Uses `misc::scan_process_hooks()` function from `hook_scanner.rs`
+- Helper functions: `misc::get_system_directory_path()`, `misc::enumerate_process_modules()`
 
 ## No tests
 

@@ -1,7 +1,7 @@
 # DioProcess — Copilot Instructions
 
 ## Project Overview
-Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, 7 DLL injection methods, DLL unhooking, process hollowing/ghosting, token theft.
+Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, 7 DLL injection methods, DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process hollowing/ghosting, token theft.
 
 ## Build & Run
 ```powershell
