@@ -154,6 +154,14 @@ struct EventData
 #define IOCTL_DIOPROCESS_CLEAR_DEBUG_FLAGS \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x808, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// Callback enumeration IOCTLs
+#define IOCTL_DIOPROCESS_ENUM_PROCESS_CALLBACKS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x809, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_ENUM_THREAD_CALLBACKS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80A, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_ENUM_IMAGE_CALLBACKS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80B, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct CollectionStateResponse
 {
 	BOOLEAN IsCollecting;
@@ -165,4 +173,16 @@ struct CollectionStateResponse
 struct TargetProcessRequest
 {
 	ULONG ProcessId;
+};
+
+// ============== Callback Enumeration Structures ==============
+
+#define MAX_CALLBACK_ENTRIES 64
+#define MAX_MODULE_NAME_LENGTH 256
+
+struct CallbackInformation
+{
+	CHAR ModuleName[MAX_MODULE_NAME_LENGTH];
+	ULONG64 CallbackAddress;
+	ULONG Index;  // Position in the callback array
 };

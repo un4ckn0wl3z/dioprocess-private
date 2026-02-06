@@ -2,6 +2,8 @@
 #include "DioProcessDriver.h"
 #include "Locker.h"
 
+#pragma comment(lib, "aux_klib.lib")
+
 DioProcessState g_State;
 PVOID g_ObCallbackHandle = nullptr;
 LARGE_INTEGER g_RegistryCookie = { 0 };
@@ -128,7 +130,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 
 // ============== Process Callback ==============
 
-VOID OnProcessCallback(PEPROCESS Process, HANDLE ProcessId, PPS_CREATE_NOTIFY_INFO CreateInfo)
+VOID OnProcessCallback(_Inout_ PEPROCESS Process, _In_ HANDLE ProcessId, _Inout_opt_ PPS_CREATE_NOTIFY_INFO CreateInfo)
 {
 	UNREFERENCED_PARAMETER(Process);
 
@@ -201,7 +203,7 @@ VOID OnProcessCallback(PEPROCESS Process, HANDLE ProcessId, PPS_CREATE_NOTIFY_IN
 
 // ============== Thread Callback ==============
 
-VOID OnThreadCallback(HANDLE ProcessId, HANDLE ThreadId, BOOLEAN Create)
+VOID OnThreadCallback(_In_ HANDLE ProcessId, _In_ HANDLE ThreadId, _In_ BOOLEAN Create)
 {
 	auto size = sizeof(FullEventData);
 	auto item = (FullEventData*)ExAllocatePool2(
@@ -777,6 +779,10 @@ NTSTATUS DioProcessRead(PDEVICE_OBJECT, PIRP Irp)
 		while (!IsListEmpty(&g_State.ItemsHead))
 		{
 			auto link = g_State.ItemsHead.Flink;
+			if (!link)
+				break;
+
+#pragma warning(suppress: 6001)
 			auto item = CONTAINING_RECORD(link, FullEventData, Link);
 			auto size = item->Data.Header.Size;
 			if (size > len)
@@ -795,6 +801,168 @@ NTSTATUS DioProcessRead(PDEVICE_OBJECT, PIRP Irp)
 	} while (false);
 
 	return CompleteRequest(Irp, status, info);
+}
+
+// ============== Callback Enumeration Helper Functions ==============
+
+//
+// Helper function to resolve a callback address to its owning module
+//
+void SearchLoadedModules(CallbackInformation* CallbackInfo)
+{
+	if (!CallbackInfo || CallbackInfo->CallbackAddress == 0)
+		return;
+
+	NTSTATUS status = AuxKlibInitialize();
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "AuxKlibInitialize failed (0x%X)\n", status));
+		return;
+	}
+
+	ULONG bufferSize = 0;
+
+	// First call to get required buffer size
+	status = AuxKlibQueryModuleInformation(&bufferSize, sizeof(AUX_MODULE_EXTENDED_INFO), NULL);
+	if (!NT_SUCCESS(status) || bufferSize == 0)
+	{
+		KdPrint((DRIVER_PREFIX "AuxKlibQueryModuleInformation failed to get size (0x%X)\n", status));
+		return;
+	}
+
+	// Allocate memory
+	AUX_MODULE_EXTENDED_INFO* modules = (AUX_MODULE_EXTENDED_INFO*)ExAllocatePool2(
+		POOL_FLAG_PAGED,
+		bufferSize,
+		DRIVER_TAG);
+
+	if (!modules)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to allocate memory for module info\n"));
+		return;
+	}
+
+	RtlZeroMemory(modules, bufferSize);
+
+	// Second call to get the actual module info
+	status = AuxKlibQueryModuleInformation(&bufferSize, sizeof(AUX_MODULE_EXTENDED_INFO), modules);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "AuxKlibQueryModuleInformation failed (0x%X)\n", status));
+		ExFreePoolWithTag(modules, DRIVER_TAG);
+		return;
+	}
+
+	// Iterate over each module
+	ULONG numberOfModules = bufferSize / sizeof(AUX_MODULE_EXTENDED_INFO);
+
+	// Suppress false positive: buffer size is correctly validated
+#pragma warning(push)
+#pragma warning(disable: 6385)
+	for (ULONG i = 0; i < numberOfModules; i++)
+	{
+		ULONG64 startAddress = (ULONG64)modules[i].BasicInfo.ImageBase;
+		ULONG imageSize = modules[i].ImageSize;
+		ULONG64 endAddress = startAddress + imageSize;
+
+		// Check if callback address falls within this module's range
+		if (CallbackInfo->CallbackAddress >= startAddress && CallbackInfo->CallbackAddress < endAddress)
+		{
+			// Copy module name (just the filename part)
+			const char* fullPath = (const char*)(modules[i].FullPathName + modules[i].FileNameOffset);
+			strncpy_s(CallbackInfo->ModuleName, MAX_MODULE_NAME_LENGTH, fullPath, _TRUNCATE);
+
+			KdPrint((DRIVER_PREFIX "Resolved 0x%llX to %s (base=0x%llX size=0x%X)\n",
+				CallbackInfo->CallbackAddress, CallbackInfo->ModuleName, startAddress, imageSize));
+			break;
+		}
+	}
+#pragma warning(pop)
+
+	ExFreePoolWithTag(modules, DRIVER_TAG);
+}
+
+//
+// Generic pattern-matcher to find kernel callback arrays
+// Uses the exported notify routine function to find the internal array
+//
+ULONG64 FindCallbackArray(const WCHAR* ExportedFunctionName)
+{
+	UNICODE_STRING funcName;
+	RtlInitUnicodeString(&funcName, ExportedFunctionName);
+
+	ULONG64 exportedFunction = (ULONG64)MmGetSystemRoutineAddress(&funcName);
+	if (exportedFunction == 0)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find %wZ\n", &funcName));
+		return 0;
+	}
+
+	KdPrint((DRIVER_PREFIX "%wZ found @ 0x%llX\n", &funcName, exportedFunction));
+
+	const UCHAR OPCODE_CALL = 0xE8;
+	const UCHAR OPCODE_JMP = 0xE9;
+	const UCHAR OPCODE_LEA = 0x8D;
+
+	ULONG64 internalFunction = 0;
+	LONG offset = 0;
+
+	// Search for CALL/JMP in first 0x50 bytes
+	for (ULONG64 i = exportedFunction; i < exportedFunction + 0x50; i++)
+	{
+		UCHAR opcode = *(PUCHAR)i;
+		if (opcode == OPCODE_CALL || opcode == OPCODE_JMP)
+		{
+			RtlCopyMemory(&offset, (PUCHAR)(i + 1), 4);
+			internalFunction = i + offset + 5;
+			break;
+		}
+	}
+
+	if (internalFunction == 0)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find internal function for %wZ\n", &funcName));
+		return 0;
+	}
+
+	// Search for LEA instruction referencing the callback array
+	offset = 0;
+	for (ULONG64 i = internalFunction; i < internalFunction + 0x100; i++)
+	{
+		if ((*(PUCHAR)i == 0x4C && *(PUCHAR)(i + 1) == OPCODE_LEA) ||
+			(*(PUCHAR)i == 0x48 && *(PUCHAR)(i + 1) == OPCODE_LEA))
+		{
+			RtlCopyMemory(&offset, (PUCHAR)(i + 3), 4);
+			ULONG64 arrayAddress = i + offset + 7;
+			KdPrint((DRIVER_PREFIX "%wZ array found @ 0x%llX\n", &funcName, arrayAddress));
+			return arrayAddress;
+		}
+	}
+
+	KdPrint((DRIVER_PREFIX "Failed to find callback array for %wZ\n", &funcName));
+	return 0;
+}
+
+//
+// Pattern-match to find PspSetCreateProcessNotifyRoutine array
+// WARNING: Version-specific, may fail on untested Windows versions
+//
+ULONG64 FindPspSetCreateProcessNotifyRoutine(WINDOWS_VERSION WindowsVersion)
+{
+	UNREFERENCED_PARAMETER(WindowsVersion);
+	return FindCallbackArray(L"PsSetCreateProcessNotifyRoutineEx");
+}
+
+ULONG64 FindPspCreateThreadNotifyRoutine(WINDOWS_VERSION WindowsVersion)
+{
+	UNREFERENCED_PARAMETER(WindowsVersion);
+	return FindCallbackArray(L"PsSetCreateThreadNotifyRoutine");
+}
+
+ULONG64 FindPspLoadImageNotifyRoutine(WINDOWS_VERSION WindowsVersion)
+{
+	UNREFERENCED_PARAMETER(WindowsVersion);
+	return FindCallbackArray(L"PsSetLoadImageNotifyRoutine");
 }
 
 NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
@@ -1235,6 +1403,238 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 		ObDereferenceObject(eProcess);
 		KdPrint((DRIVER_PREFIX "Anti-debug completed for PID %d\n", request->ProcessId));
+		break;
+	}
+
+	case IOCTL_DIOPROCESS_ENUM_PROCESS_CALLBACKS:
+	{
+		KdPrint((DRIVER_PREFIX "Enumerating process callbacks\n"));
+
+		WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+		if (windowsVersion == WINDOWS_UNSUPPORTED)
+		{
+			status = STATUS_NOT_SUPPORTED;
+			KdPrint((DRIVER_PREFIX "Windows version unsupported for callback enumeration\n"));
+			break;
+		}
+
+		auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+		ULONG requiredSize = sizeof(CallbackInformation) * MAX_CALLBACK_ENTRIES;
+
+		if (outputLen < requiredSize)
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			KdPrint((DRIVER_PREFIX "Buffer too small (need %d bytes, got %d)\n", requiredSize, outputLen));
+			break;
+		}
+
+		auto userBuffer = (CallbackInformation*)Irp->AssociatedIrp.SystemBuffer;
+		if (!userBuffer)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		// Find the callback array
+		ULONG64 pspSetCreateProcessNotifyArray = FindPspSetCreateProcessNotifyRoutine(windowsVersion);
+		if (pspSetCreateProcessNotifyArray == 0)
+		{
+			status = STATUS_NOT_FOUND;
+			KdPrint((DRIVER_PREFIX "Failed to locate callback array\n"));
+			break;
+		}
+
+		// Zero the output buffer
+		RtlZeroMemory(userBuffer, requiredSize);
+
+		// Enumerate all 64 callback slots
+		ULONG validCallbackCount = 0;
+		for (ULONG i = 0; i < MAX_CALLBACK_ENTRIES; i++)
+		{
+			// Each callback is 8 bytes (pointer) on x64
+			ULONG64 pCallbackSlot = pspSetCreateProcessNotifyArray + (i * 8);
+			ULONG64 callbackEntry = 0;
+
+			__try
+			{
+				callbackEntry = *(PULONG64)(pCallbackSlot);
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				KdPrint((DRIVER_PREFIX "Exception reading callback slot %d\n", i));
+				continue;
+			}
+
+			// Skip null entries
+			if (callbackEntry == 0)
+			{
+				userBuffer[i].CallbackAddress = 0;
+				userBuffer[i].Index = i;
+				continue;
+			}
+
+			// Windows stores callbacks with flags in low 3 bits
+			// Clear the flags to get the actual structure pointer
+			ULONG64 callbackStructure = callbackEntry & 0xFFFFFFFFFFFFFFF8;
+
+			// The structure points to an EX_CALLBACK_ROUTINE_BLOCK
+			// The actual function pointer is at offset 0x0 in this structure
+			ULONG64 actualCallbackFunction = 0;
+
+			__try
+			{
+				// Dereference the structure to get the actual callback function
+				actualCallbackFunction = *(PULONG64)(callbackStructure);
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				KdPrint((DRIVER_PREFIX "Exception dereferencing callback structure at 0x%llX\n", callbackStructure));
+				// Store the structure address as fallback
+				actualCallbackFunction = callbackStructure;
+			}
+
+			// Store the actual function address
+			userBuffer[i].CallbackAddress = actualCallbackFunction;
+			userBuffer[i].Index = i;
+
+			// Resolve which driver owns this callback
+			SearchLoadedModules(&userBuffer[i]);
+
+			validCallbackCount++;
+			KdPrint((DRIVER_PREFIX "Callback[%d]: Entry=0x%llX Struct=0x%llX Function=0x%llX -> %s\n",
+				i, callbackEntry, callbackStructure, actualCallbackFunction, userBuffer[i].ModuleName));
+		}
+
+		KdPrint((DRIVER_PREFIX "Found %d active process callbacks\n", validCallbackCount));
+		info = requiredSize;
+		break;
+	}
+
+	case IOCTL_DIOPROCESS_ENUM_THREAD_CALLBACKS:
+	{
+		KdPrint((DRIVER_PREFIX "Enumerating thread callbacks\n"));
+
+		WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+		if (windowsVersion == WINDOWS_UNSUPPORTED)
+		{
+			status = STATUS_NOT_SUPPORTED;
+			break;
+		}
+
+		auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+		ULONG requiredSize = sizeof(CallbackInformation) * MAX_CALLBACK_ENTRIES;
+
+		if (outputLen < requiredSize)
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		auto userBuffer = (CallbackInformation*)Irp->AssociatedIrp.SystemBuffer;
+		if (!userBuffer)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		ULONG64 callbackArray = FindPspCreateThreadNotifyRoutine(windowsVersion);
+		if (callbackArray == 0)
+		{
+			status = STATUS_NOT_FOUND;
+			break;
+		}
+
+		RtlZeroMemory(userBuffer, requiredSize);
+
+		ULONG validCount = 0;
+		for (ULONG i = 0; i < MAX_CALLBACK_ENTRIES; i++)
+		{
+			ULONG64 callbackEntry = 0;
+			__try { callbackEntry = *(PULONG64)(callbackArray + (i * 8)); }
+			__except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+			if (callbackEntry == 0)
+			{
+				userBuffer[i].Index = i;
+				continue;
+			}
+
+			ULONG64 actualFunction = 0;
+			__try { actualFunction = *(PULONG64)(callbackEntry & 0xFFFFFFFFFFFFFFF8); }
+			__except (EXCEPTION_EXECUTE_HANDLER) { actualFunction = callbackEntry & 0xFFFFFFFFFFFFFFF8; }
+
+			userBuffer[i].CallbackAddress = actualFunction;
+			userBuffer[i].Index = i;
+			SearchLoadedModules(&userBuffer[i]);
+			validCount++;
+		}
+
+		KdPrint((DRIVER_PREFIX "Found %d active thread callbacks\n", validCount));
+		info = requiredSize;
+		break;
+	}
+
+	case IOCTL_DIOPROCESS_ENUM_IMAGE_CALLBACKS:
+	{
+		KdPrint((DRIVER_PREFIX "Enumerating image load callbacks\n"));
+
+		WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+		if (windowsVersion == WINDOWS_UNSUPPORTED)
+		{
+			status = STATUS_NOT_SUPPORTED;
+			break;
+		}
+
+		auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+		ULONG requiredSize = sizeof(CallbackInformation) * MAX_CALLBACK_ENTRIES;
+
+		if (outputLen < requiredSize)
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		auto userBuffer = (CallbackInformation*)Irp->AssociatedIrp.SystemBuffer;
+		if (!userBuffer)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		ULONG64 callbackArray = FindPspLoadImageNotifyRoutine(windowsVersion);
+		if (callbackArray == 0)
+		{
+			status = STATUS_NOT_FOUND;
+			break;
+		}
+
+		RtlZeroMemory(userBuffer, requiredSize);
+
+		ULONG validCount = 0;
+		for (ULONG i = 0; i < MAX_CALLBACK_ENTRIES; i++)
+		{
+			ULONG64 callbackEntry = 0;
+			__try { callbackEntry = *(PULONG64)(callbackArray + (i * 8)); }
+			__except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+			if (callbackEntry == 0)
+			{
+				userBuffer[i].Index = i;
+				continue;
+			}
+
+			ULONG64 actualFunction = 0;
+			__try { actualFunction = *(PULONG64)(callbackEntry & 0xFFFFFFFFFFFFFFF8); }
+			__except (EXCEPTION_EXECUTE_HANDLER) { actualFunction = callbackEntry & 0xFFFFFFFFFFFFFFF8; }
+
+			userBuffer[i].CallbackAddress = actualFunction;
+			userBuffer[i].Index = i;
+			SearchLoadedModules(&userBuffer[i]);
+			validCount++;
+		}
+
+		KdPrint((DRIVER_PREFIX "Found %d active image load callbacks\n", validCount));
+		info = requiredSize;
 		break;
 	}
 

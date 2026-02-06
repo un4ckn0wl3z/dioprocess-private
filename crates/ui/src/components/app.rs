@@ -37,6 +37,7 @@ pub fn Layout() -> Element {
     let is_network_tab = matches!(route, Route::NetworkTab {});
     let is_service_tab = matches!(route, Route::ServiceTab {});
     let is_utilities_tab = matches!(route, Route::UtilitiesTab {});
+    let is_kernel_utilities_tab = matches!(route, Route::KernelUtilitiesTab {});
     let is_callback_tab = matches!(route, Route::CallbackTab {});
 
     let about_message = format!(
@@ -156,7 +157,12 @@ pub fn Layout() -> Element {
                     Link {
                         to: Route::UtilitiesTab {},
                         class: if is_utilities_tab { "tab-item tab-active" } else { "tab-item" },
-                        "Utilities"
+                        "Usermode Utilities"
+                    }
+                    Link {
+                        to: Route::KernelUtilitiesTab {},
+                        class: if is_kernel_utilities_tab { "tab-item tab-active" } else { "tab-item" },
+                        "Kernel Utilities"
                     }
                     Link {
                         to: Route::CallbackTab {},

@@ -26,6 +26,9 @@ const IOCTL_DIOPROCESS_PROTECT_PROCESS: u32 = 0x00222014;
 const IOCTL_DIOPROCESS_UNPROTECT_PROCESS: u32 = 0x00222018;
 const IOCTL_DIOPROCESS_ENABLE_PRIVILEGES: u32 = 0x0022201C;
 const IOCTL_DIOPROCESS_CLEAR_DEBUG_FLAGS: u32 = 0x00222020;
+const IOCTL_DIOPROCESS_ENUM_PROCESS_CALLBACKS: u32 = 0x00222024;
+const IOCTL_DIOPROCESS_ENUM_THREAD_CALLBACKS: u32 = 0x00222028;
+const IOCTL_DIOPROCESS_ENUM_IMAGE_CALLBACKS: u32 = 0x0022202C;
 
 /// Check if the ProcessMonitorEx driver is loaded
 pub fn is_driver_loaded() -> bool {
@@ -1230,4 +1233,163 @@ pub fn clear_debug_flags(pid: u32) -> Result<(), CallbackError> {
     }
 
     Ok(())
+}
+
+
+/// Information about a kernel callback
+#[derive(Debug, Clone)]
+pub struct CallbackInfo {
+    pub module_name: String,
+    pub callback_address: u64,
+    pub index: u32,
+}
+
+/// Enumerate registered process creation callbacks
+/// Returns a vector of active callbacks with their owning module names
+pub fn enumerate_process_callbacks() -> Result<Vec<CallbackInfo>, CallbackError> {
+    let handle = open_device()?;
+
+    const MAX_CALLBACKS: usize = 64;
+    const MAX_MODULE_NAME: usize = 256;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RawCallbackInfo {
+        module_name: [u8; MAX_MODULE_NAME],
+        callback_address: u64,
+        index: u32,
+    }
+
+    let mut buffer = vec![
+        RawCallbackInfo {
+            module_name: [0u8; MAX_MODULE_NAME],
+            callback_address: 0,
+            index: 0,
+        };
+        MAX_CALLBACKS
+    ];
+
+    unsafe {
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_ENUM_PROCESS_CALLBACKS,
+            None,
+            0,
+            Some(buffer.as_mut_ptr() as *mut _),
+            (std::mem::size_of::<RawCallbackInfo>() * MAX_CALLBACKS) as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    // Convert raw data to CallbackInfo, filtering out null entries
+    let mut callbacks = Vec::new();
+    for raw in buffer {
+        if raw.callback_address != 0 {
+            // Find null terminator in module_name
+            let name_len = raw
+                .module_name
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(MAX_MODULE_NAME);
+
+            let module_name = String::from_utf8_lossy(&raw.module_name[..name_len]).to_string();
+
+            callbacks.push(CallbackInfo {
+                module_name,
+                callback_address: raw.callback_address,
+                index: raw.index,
+            });
+        }
+    }
+
+    Ok(callbacks)
+}
+
+
+/// Enumerate registered thread creation callbacks
+pub fn enumerate_thread_callbacks() -> Result<Vec<CallbackInfo>, CallbackError> {
+    enumerate_callbacks_internal(IOCTL_DIOPROCESS_ENUM_THREAD_CALLBACKS)
+}
+
+/// Enumerate registered image load callbacks
+pub fn enumerate_image_callbacks() -> Result<Vec<CallbackInfo>, CallbackError> {
+    enumerate_callbacks_internal(IOCTL_DIOPROCESS_ENUM_IMAGE_CALLBACKS)
+}
+
+/// Internal helper for callback enumeration
+fn enumerate_callbacks_internal(ioctl_code: u32) -> Result<Vec<CallbackInfo>, CallbackError> {
+    let handle = open_device()?;
+
+    const MAX_CALLBACKS: usize = 64;
+    const MAX_MODULE_NAME: usize = 256;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RawCallbackInfo {
+        module_name: [u8; MAX_MODULE_NAME],
+        callback_address: u64,
+        index: u32,
+    }
+
+    let mut buffer = vec![
+        RawCallbackInfo {
+            module_name: [0u8; MAX_MODULE_NAME],
+            callback_address: 0,
+            index: 0,
+        };
+        MAX_CALLBACKS
+    ];
+
+    unsafe {
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            ioctl_code,
+            None,
+            0,
+            Some(buffer.as_mut_ptr() as *mut _),
+            (std::mem::size_of::<RawCallbackInfo>() * MAX_CALLBACKS) as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    let mut callbacks = Vec::new();
+    for raw in buffer {
+        if raw.callback_address != 0 {
+            let name_len = raw
+                .module_name
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(MAX_MODULE_NAME);
+
+            let module_name = String::from_utf8_lossy(&raw.module_name[..name_len]).to_string();
+
+            callbacks.push(CallbackInfo {
+                module_name,
+                callback_address: raw.callback_address,
+                index: raw.index,
+            });
+        }
+    }
+
+    Ok(callbacks)
 }
