@@ -33,6 +33,21 @@ pub struct CidEntry {
     pub id: u32,              // PID or TID
     pub object_address: u64,  // EPROCESS or ETHREAD address
     pub object_type: CidObjectType,
+    pub parent_pid: u32,      // Parent PID (for processes) or owning process PID (for threads)
+    pub process_name: [u8; 16],  // Process name from ImageFileName (ANSI, null-terminated)
+}
+
+impl CidEntry {
+    /// Get the process name as a UTF-8 string
+    pub fn process_name_str(&self) -> String {
+        // Find null terminator
+        let len = self.process_name.iter()
+            .position(|&c| c == 0)
+            .unwrap_or(self.process_name.len());
+
+        // Convert to string, replacing invalid UTF-8 with �
+        String::from_utf8_lossy(&self.process_name[..len]).into_owned()
+    }
 }
 
 #[repr(C)]

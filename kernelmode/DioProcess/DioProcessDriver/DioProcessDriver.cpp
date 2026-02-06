@@ -1580,6 +1580,7 @@ VOID ParseCidTable1(ULONG64 baseAddr, INT index1, INT index2, CidEntry* entries,
 {
 	PEPROCESS eProcess = NULL;
 	PETHREAD eThread = NULL;
+	WINDOWS_VERSION winVersion = GetWindowsVersion();
 
 	// Each entry is 16 bytes, 256 entries per table
 	for (INT i = 0; i < 256 && *count < maxEntries; i++)
@@ -1609,6 +1610,38 @@ VOID ParseCidTable1(ULONG64 baseAddr, INT index1, INT index2, CidEntry* entries,
 				entries[*count].Id = id;
 				entries[*count].ObjectAddress = objectAddr;
 				entries[*count].Type = CidObjectType::CidProcess;
+
+				// Extract parent PID (InheritedFromUniqueProcessId)
+				if (winVersion != WINDOWS_UNSUPPORTED)
+				{
+					ULONG64 parentPidAddr = objectAddr + EPROCESS_PARENTPID_OFFSET[winVersion];
+					if (MmIsAddressValid((PVOID)parentPidAddr))
+					{
+						entries[*count].ParentPid = *(PULONG)parentPidAddr;
+					}
+					else
+					{
+						entries[*count].ParentPid = 0;
+					}
+
+					// Extract process name (ImageFileName)
+					ULONG64 nameAddr = objectAddr + EPROCESS_IMAGEFILENAME_OFFSET[winVersion];
+					if (MmIsAddressValid((PVOID)nameAddr))
+					{
+						RtlCopyMemory(entries[*count].ProcessName, (PVOID)nameAddr, MAX_PROCESS_NAME_LENGTH - 1);
+						entries[*count].ProcessName[MAX_PROCESS_NAME_LENGTH - 1] = '\0';  // Ensure null termination
+					}
+					else
+					{
+						entries[*count].ProcessName[0] = '\0';
+					}
+				}
+				else
+				{
+					entries[*count].ParentPid = 0;
+					entries[*count].ProcessName[0] = '\0';
+				}
+
 				(*count)++;
 				ObDereferenceObject(eProcess);
 			}
@@ -1617,6 +1650,49 @@ VOID ParseCidTable1(ULONG64 baseAddr, INT index1, INT index2, CidEntry* entries,
 				entries[*count].Id = id;
 				entries[*count].ObjectAddress = objectAddr;
 				entries[*count].Type = CidObjectType::CidThread;
+
+				// Extract owning process PID (Cid.UniqueProcess in ETHREAD)
+				if (winVersion != WINDOWS_UNSUPPORTED)
+				{
+					ULONG64 cidAddr = objectAddr + ETHREAD_CID_OFFSET[winVersion];
+					if (MmIsAddressValid((PVOID)cidAddr))
+					{
+						// Cid.UniqueProcess is the first field of CLIENT_ID
+						entries[*count].ParentPid = *(PULONG)cidAddr;
+
+						// Try to get process name from the owning EPROCESS
+						PEPROCESS ownerProcess = NULL;
+						if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)entries[*count].ParentPid, &ownerProcess)))
+						{
+							ULONG64 ownerNameAddr = (ULONG64)ownerProcess + EPROCESS_IMAGEFILENAME_OFFSET[winVersion];
+							if (MmIsAddressValid((PVOID)ownerNameAddr))
+							{
+								RtlCopyMemory(entries[*count].ProcessName, (PVOID)ownerNameAddr, MAX_PROCESS_NAME_LENGTH - 1);
+								entries[*count].ProcessName[MAX_PROCESS_NAME_LENGTH - 1] = '\0';
+							}
+							else
+							{
+								entries[*count].ProcessName[0] = '\0';
+							}
+							ObDereferenceObject(ownerProcess);
+						}
+						else
+						{
+							entries[*count].ProcessName[0] = '\0';
+						}
+					}
+					else
+					{
+						entries[*count].ParentPid = 0;
+						entries[*count].ProcessName[0] = '\0';
+					}
+				}
+				else
+				{
+					entries[*count].ParentPid = 0;
+					entries[*count].ProcessName[0] = '\0';
+				}
+
 				(*count)++;
 				ObDereferenceObject(eThread);
 			}

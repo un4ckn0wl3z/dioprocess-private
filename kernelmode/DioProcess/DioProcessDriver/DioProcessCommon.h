@@ -218,6 +218,7 @@ struct KernelInjectDllResponse
 // ============== PspCidTable Enumeration Structures ==============
 
 #define MAX_CID_ENTRIES 2048  // Maximum entries to return
+#define MAX_PROCESS_NAME_LENGTH 16  // ImageFileName is 15 chars + null terminator
 
 enum CidObjectType : UCHAR
 {
@@ -230,6 +231,8 @@ struct CidEntry
 	ULONG Id;              // PID or TID
 	ULONG64 ObjectAddress; // EPROCESS or ETHREAD address
 	CidObjectType Type;    // Process or Thread
+	ULONG ParentPid;       // Parent PID (for processes) or owning process PID (for threads)
+	CHAR ProcessName[MAX_PROCESS_NAME_LENGTH];  // Process name (from EPROCESS.ImageFileName)
 };
 
 struct EnumCidTableResponse

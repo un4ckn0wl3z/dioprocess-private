@@ -82,9 +82,10 @@ pub fn KernelUtilitiesTab() -> Element {
 
             match result {
                 Ok(Ok(entries)) => {
-                    let count = entries.len();
+                    let process_count = entries.iter().filter(|e| e.object_type == CidObjectType::Process).count();
+                    let thread_count = entries.iter().filter(|e| e.object_type == CidObjectType::Thread).count();
                     cid_entries.set(entries);
-                    cid_status.set(format!("Found {} CID entries (processes and threads)", count));
+                    cid_status.set(format!("Found {} processes and {} threads ({} total entries)", process_count, thread_count, process_count + thread_count));
                     cid_status_is_error.set(false);
                 }
                 Ok(Err(e)) => {
@@ -263,7 +264,7 @@ pub fn KernelUtilitiesTab() -> Element {
                     }
                     p {
                         style: "color: #9ca3af; font-size: 12px; margin-bottom: 16px;",
-                        "Enumerate all processes and threads by parsing the kernel's PspCidTable handle table. This table stores all EPROCESS (process) and ETHREAD (thread) objects indexed by PID/TID. Uses signature scanning to dynamically locate PspCidTable (no hardcoded offsets). Read-only operation — PatchGuard/KPP safe."
+                        "Enumerate all processes and threads by parsing the kernel's PspCidTable handle table. This table stores all EPROCESS (process) and ETHREAD (thread) objects indexed by PID/TID. Dynamically resolves Windows version-specific structure offsets to extract process names, parent PIDs, and thread owner information. Uses signature scanning to locate PspCidTable (no hardcoded addresses). Read-only operation — PatchGuard/KPP safe."
                     }
 
                     // Enumerate button
@@ -297,17 +298,20 @@ pub fn KernelUtilitiesTab() -> Element {
 
                             // Table header
                             div {
-                                style: "display: grid; grid-template-columns: 120px 140px 180px; gap: 12px; padding: 12px 16px; background: rgba(34, 211, 238, 0.1); border: 1px solid rgba(34, 211, 238, 0.2); border-radius: 8px 8px 0 0; font-weight: 600; font-size: 13px; color: #22d3ee;",
+                                style: "display: grid; grid-template-columns: 100px 100px 200px 180px 120px 1fr; gap: 12px; padding: 12px 16px; background: rgba(34, 211, 238, 0.1); border: 1px solid rgba(34, 211, 238, 0.2); border-radius: 8px 8px 0 0; font-weight: 600; font-size: 13px; color: #22d3ee;",
                                 div { "Type" }
                                 div { "ID" }
+                                div { "Process Name" }
                                 div { "Object Address" }
+                                div { "Parent/Owner PID" }
+                                div { }
                             }
 
                             // Table rows
                             for entry in cid_list.iter() {
                                 div {
                                     key: "{entry.id}-{entry.object_address}",
-                                    style: "display: grid; grid-template-columns: 120px 140px 180px; gap: 12px; padding: 12px 16px; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(0, 212, 255, 0.1); border-top: none; font-size: 13px; color: #d1d5db; transition: background 0.15s;",
+                                    style: "display: grid; grid-template-columns: 100px 100px 200px 180px 120px 1fr; gap: 12px; padding: 12px 16px; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(0, 212, 255, 0.1); border-top: none; font-size: 13px; color: #d1d5db; transition: background 0.15s;",
 
                                     div {
                                         if entry.object_type == CidObjectType::Process {
@@ -317,7 +321,20 @@ pub fn KernelUtilitiesTab() -> Element {
                                         }
                                     }
                                     div { style: "color: #e2e8f0;", "{entry.id}" }
+                                    div {
+                                        style: "color: #fbbf24; font-family: monospace;",
+                                        "{entry.process_name_str()}"
+                                    }
                                     div { style: "font-family: 'Courier New', monospace; color: #22d3ee;", "0x{entry.object_address:016X}" }
+                                    div {
+                                        style: "color: #9ca3af;",
+                                        if entry.parent_pid != 0 {
+                                            "{entry.parent_pid}"
+                                        } else {
+                                            "—"
+                                        }
+                                    }
+                                    div { }
                                 }
                             }
 
