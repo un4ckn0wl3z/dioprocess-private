@@ -1977,6 +1977,13 @@ pub const CUSTOM_STYLES: &str = r#"
     .process-table tbody tr:hover {
         background: rgba(0, 212, 255, 0.08);
     }
+    .process-table tbody tr.selected {
+        background: rgba(34, 211, 238, 0.2);
+        border-left: 4px solid #22d3ee;
+    }
+    .process-table tbody tr.selected:hover {
+        background: rgba(34, 211, 238, 0.25);
+    }
 
     /* Monospace class */
     .mono {

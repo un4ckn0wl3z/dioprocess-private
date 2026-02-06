@@ -85,6 +85,7 @@ pub fn KernelUtilitiesTab() -> Element {
                 h1 { class: "header-title", "⚙️ Kernel Utilities" }
                 div { class: "header-stats",
                     span {
+                        class: if driver_loaded { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
                         if driver_loaded {
                             "Driver: Loaded"
                         } else {
@@ -131,6 +132,7 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
     let mut sort_column = use_signal(|| CallbackSortColumn::Index);
     let mut sort_order = use_signal(|| SortOrder::Ascending);
     let mut context_menu = use_signal(|| CallbackContextMenuState::default());
+    let mut selected_index = use_signal(|| None::<u32>);
 
     // Handle enumerate button click
     let mut handle_enumerate = move |_| {
@@ -381,9 +383,18 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
                             for cb in filtered_list.into_iter() {
                                 tr {
                                     key: "{cb.index}",
-                                    class: "table-row",
+                                    class: if *selected_index.read() == Some(cb.index) { "table-row selected" } else { "table-row" },
+                                    onclick: move |_| {
+                                        let current = *selected_index.read();
+                                        if current == Some(cb.index) {
+                                            selected_index.set(None);
+                                        } else {
+                                            selected_index.set(Some(cb.index));
+                                        }
+                                    },
                                     oncontextmenu: move |e| {
                                         e.prevent_default();
+                                        selected_index.set(Some(cb.index));
                                         context_menu.set(CallbackContextMenuState {
                                             visible: true,
                                             x: e.page_coordinates().x as i32,
@@ -451,6 +462,7 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
     let mut sort_column = use_signal(|| CidSortColumn::Id);
     let mut sort_order = use_signal(|| SortOrder::Ascending);
     let mut context_menu = use_signal(|| CidContextMenuState::default());
+    let mut selected_id = use_signal(|| None::<u32>);
     let mut type_filter = use_signal(|| String::new()); // "", "process", "thread"
 
     // Handle enumerate button click
@@ -715,9 +727,18 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
                             for entry in filtered_list.into_iter() {
                                 tr {
                                     key: "{entry.id}-{entry.object_address}",
-                                    class: "table-row",
+                                    class: if *selected_id.read() == Some(entry.id) { "table-row selected" } else { "table-row" },
+                                    onclick: move |_| {
+                                        let current = *selected_id.read();
+                                        if current == Some(entry.id) {
+                                            selected_id.set(None);
+                                        } else {
+                                            selected_id.set(Some(entry.id));
+                                        }
+                                    },
                                     oncontextmenu: move |e| {
                                         e.prevent_default();
+                                        selected_id.set(Some(entry.id));
                                         context_menu.set(CidContextMenuState {
                                             visible: true,
                                             x: e.page_coordinates().x as i32,
