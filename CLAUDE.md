@@ -19,7 +19,7 @@ DioProcess is a Windows desktop system monitoring and process management tool bu
 
 ```
 crates/
-├── process/       # Process enumeration, threads, handles, modules, CPU/memory
+├── process/       # Process enumeration, threads, handles, modules, CPU/memory, string scanning
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
 ├── callback/      # Kernel driver communication + SQLite event storage
@@ -71,6 +71,7 @@ crates/
 │       │   ├── function_stomping_window.rs  # Function stomping injection modal
 │       │   ├── ghost_process_window.rs  # Process ghosting modal
 │       │   ├── hook_scan_window.rs      # IAT hook detection modal
+│       │   ├── string_scan_window.rs    # Process memory string scan modal
 │       │   └── callback_tab.rs          # System Events tab (Experimental)
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
@@ -107,6 +108,9 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `ModuleInfo` | process | base_address, size, path, entry_point |
 | `MemoryRegionInfo` | process | base_address, allocation_base, region_size, state, mem_type, protect |
 | `ProcessStats` | process | cpu_usage, memory_mb |
+| `StringResult` | process | address, value, encoding, length, region_type |
+| `StringScanConfig` | process | min_length, scan_ascii, scan_utf16, max_string_length |
+| `StringEncoding` | process | Ascii, Utf16 |
 | `CallbackEvent` | callback | event_type, timestamp, process_id, process_name, image_base/size, key_name, desired_access, etc. |
 | `EventType` | callback | ProcessCreate/Exit, ThreadCreate/Exit, ImageLoad, Handle ops (4), Registry ops (7) |
 | `EventCategory` | callback | Process, Thread, Image, Handle, Registry |
@@ -130,7 +134,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 - **Naming:** snake_case functions, PascalCase types, SCREAMING_SNAKE_CASE constants
 - **Error handling:** Custom error enums (`MiscError`, `ServiceError`) with `Result<T, E>`
 - **Unsafe:** Used for all Windows API calls; always paired with proper resource cleanup (CloseHandle)
-- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `FUNCTION_STOMPING_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`); local signals for view mode (`ProcessViewMode::Flat`/`Tree`) and expanded PIDs (`HashSet<u32>`)
+- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `FUNCTION_STOMPING_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`, `HOOK_SCAN_WINDOW_STATE`, `STRING_SCAN_WINDOW_STATE`); local signals for view mode (`ProcessViewMode::Flat`/`Tree`) and expanded PIDs (`HashSet<u32>`)
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
@@ -308,6 +312,19 @@ Access via right-click context menu > Inspect > Hook Scan:
 - **Status feedback** — Shows hook count or clean status
 - Uses `misc::scan_process_hooks()` function from `hook_scanner.rs`
 - Helper functions: `misc::get_system_directory_path()`, `misc::enumerate_process_modules()`
+
+## String scan window
+
+Access via right-click context menu > Inspect > String Scan:
+- **Memory scanning** — Scans all committed memory regions of the target process for printable strings
+- **Dual encoding** — Detects both ASCII and UTF-16 strings; encoding filter dropdown (All/ASCII Only/UTF-16 Only)
+- **Configurable min length** — Adjustable 1–100 characters (default: 4); max capture length 512 characters
+- **Pagination** — 1000 results per page with navigation controls (<< < > >>); prevents UI lag on large result sets
+- **Filtering** — Real-time text filter matches string content or hex address
+- **Export** — Export all filtered results to .txt file via save dialog
+- **Context menu** — Copy String, Copy Address, Copy Row
+- **Region type** — Each result shows whether it came from Private, Mapped, or Image memory
+- Uses `process::scan_process_strings()` function; scanning runs on `tokio::task::spawn_blocking` to avoid UI freeze
 
 ## System Events - Experimental (callback crate)
 

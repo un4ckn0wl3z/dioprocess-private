@@ -1,7 +1,7 @@
 # DioProcess — Copilot Instructions
 
 ## Project Overview
-Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, **System Events (Experimental)** - kernel event monitoring (17 event types with SQLite persistence), 7 DLL injection methods, DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process hollowing/ghosting, token theft.
+Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, **System Events (Experimental)** - kernel event monitoring (17 event types with SQLite persistence), 7 DLL injection methods, DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process memory string scanning (ASCII + UTF-16), process hollowing/ghosting, token theft.
 
 ## Build & Run
 ```powershell
@@ -13,7 +13,7 @@ No test suite exists — all testing is manual via the UI.
 ## Workspace Architecture
 ```
 crates/
-├── process/     # Process enumeration (ToolHelp32, threads, handles, modules, memory)
+├── process/     # Process enumeration (ToolHelp32, threads, handles, modules, memory, string scanning)
 ├── network/     # TCP/UDP via IP Helper API
 ├── service/     # SCM operations (enumerate, start/stop, create/delete)
 ├── callback/    # Kernel driver comm + SQLite storage (driver.rs, storage.rs, types.rs)
@@ -42,7 +42,7 @@ unsafe {
 ```
 
 ### Dioxus State Management
-- Global signals in `ui/src/state.rs`: `THREAD_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, etc.
+- Global signals in `ui/src/state.rs`: `THREAD_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `STRING_SCAN_WINDOW_STATE`, `HOOK_SCAN_WINDOW_STATE`, etc.
 - Pattern: `GlobalSignal<Option<(u32, String)>>` for modal windows (PID + process name)
 - Local signals for view mode, expanded PIDs, search filters
 
@@ -77,6 +77,8 @@ pub fn SomeWindow() -> Element {
 | Process creation (hollow, ghost) | `crates/misc/src/process/*.rs` |
 | DLL unhooking | `crates/misc/src/unhook.rs` |
 | Hook detection | `crates/misc/src/hook_scanner.rs` |
+| String scan UI | `crates/ui/src/components/string_scan_window.rs` |
+| String scan backend | `crates/process/src/lib.rs` (scan_process_strings) |
 | Kernel driver communication | `crates/callback/src/driver.rs` |
 | System event SQLite storage | `crates/callback/src/storage.rs` |
 | System event types | `crates/callback/src/types.rs` |

@@ -26,6 +26,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
 - **DLL Unhooking** — restore hooked DLLs (ntdll, kernel32, kernelbase, user32, advapi32, ws2_32) by replacing .text section from disk
 - **Hook Detection & Unhooking** — scan IAT entries for inline hooks (E9 JMP, E8 CALL, EB short JMP, FF25 indirect JMP, MOV+JMP x64 patterns), compare with disk, and optionally unhook detected hooks
+- **Process String Scanning** — extract ASCII and UTF-16 strings from process memory with configurable min length, encoding filter, paginated results (1000/page), and text export
 - Advanced process creation & masquerading:
   - Normal `CreateProcessW` (suspended option)
   - PPID spoofing (`PROC_THREAD_ATTRIBUTE_PARENT_PROCESS`)
@@ -37,7 +38,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 
 ```
 crates/
-├── process/       # ToolHelp32, NtQueryInformationThread, VirtualQueryEx, modules, memory regions
+├── process/       # ToolHelp32, NtQueryInformationThread, VirtualQueryEx, modules, memory regions, string scanning
 ├── network/       # GetExtendedTcpTable / GetUdpTable → PID mapping
 ├── service/       # SCM: EnumServicesStatusEx, Start/Stop/Create/Delete service
 ├── callback/      # Kernel driver communication + SQLite event storage
@@ -142,9 +143,10 @@ Real-time kernel event capture via WDM driver with 17 event types:
 - Borderless dark-themed window with custom title bar
 - Tabs: **Processes** · **Network** · **Services** · **System Events**
 - **Tree view** in Processes tab (DFS traversal, box-drawing connectors ├ │ └ ─, ancestor-inclusive search)
-- Modal inspectors: Threads · Handles · Modules · Memory · Performance graphs
+- Modal inspectors: Threads · Handles · Modules · Memory · Performance graphs · String Scan
 - Real-time per-process CPU/memory graphs (60-second rolling history, SVG + fill)
 - Paginated hex + ASCII memory dump viewer (4 KB pages)
+- Process memory string scanning (ASCII + UTF-16, paginated 1000/page, export to .txt)
 - Memory operations: commit/reserve/decommit/free regions
 - CSV export per tab
 - Context menu with viewport clamping & upward-anchored submenus
