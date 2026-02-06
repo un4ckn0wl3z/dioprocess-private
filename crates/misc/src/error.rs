@@ -43,6 +43,7 @@ pub enum MiscError {
     PPidSpoofFailed(String),
     HookScanFailed(String),
     VirtualProtectFailed,
+    WebStagingFailed(String),
 }
 
 impl fmt::Display for MiscError {
@@ -98,6 +99,7 @@ impl fmt::Display for MiscError {
             MiscError::PPidSpoofFailed(msg) => write!(f, "PPID spoofing failed: {}", msg),
             MiscError::HookScanFailed(msg) => write!(f, "Hook scan failed: {}", msg),
             MiscError::VirtualProtectFailed => write!(f, "VirtualProtectEx failed to set memory protection"),
+            MiscError::WebStagingFailed(msg) => write!(f, "Web staging failed: {}", msg),
         }
     }
 }

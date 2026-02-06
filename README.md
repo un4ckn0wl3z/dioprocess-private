@@ -24,7 +24,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - Registry operations (create, open, set, delete, rename, query)
   - **SQLite persistence** with 24-hour retention and paginated UI
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
-- **Shellcode injection** — classic remote shellcode execution from raw .bin files (VirtualAllocEx + WriteProcessMemory + CreateRemoteThread)
+- **Shellcode injection** — classic (from .bin file) and web staging (download from URL via WinInet), both using VirtualAllocEx + WriteProcessMemory + CreateRemoteThread
 - **DLL Unhooking** — restore hooked DLLs (ntdll, kernel32, kernelbase, user32, advapi32, ws2_32) by replacing .text section from disk
 - **Hook Detection & Unhooking** — scan IAT entries for inline hooks (E9 JMP, E8 CALL, EB short JMP, FF25 indirect JMP, MOV+JMP x64 patterns), compare with disk, and optionally unhook detected hooks
 - **Process String Scanning** — extract ASCII and UTF-16 strings from process memory with configurable min length, encoding filter, paginated results (1000/page), and text export
@@ -87,8 +87,9 @@ kernelmode/
 ### Shellcode Injection Methods (misc crate)
 
 1. **Classic** — Read raw shellcode from `.bin` file → `VirtualAllocEx(RW)` → `WriteProcessMemory` → `VirtualProtectEx(RWX)` → `CreateRemoteThread`
+2. **Web Staging** — Download shellcode from URL via WinInet (`InternetOpenW` → `InternetOpenUrlW` → `InternetReadFile` in 1024-byte chunks) → inject using classic technique
 
-Access via context menu: **Miscellaneous → Shellcode Injection → Classic**
+Access via context menu: **Miscellaneous → Shellcode Injection → Classic** or **Web Staging**
 
 ### Process Creation & Stealth
 

