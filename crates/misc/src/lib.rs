@@ -3,6 +3,7 @@
 mod error;
 mod hook_scanner;
 mod injection;
+mod kernel_inject;
 mod memory;
 mod shellcode_inject;
 mod module;
@@ -13,6 +14,7 @@ mod unhook;
 pub use error::MiscError;
 pub use hook_scanner::*;
 pub use injection::*;
+pub use kernel_inject::*;
 pub use memory::*;
 pub use module::*;
 pub use process::*;

@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 ntapi = "0.4"
+callback = { path = "../callback" }
 
 [dependencies.windows]
 version = "0.58"

@@ -48,6 +48,7 @@ pub enum MiscError {
     GhostlyHollowFailed(String),
     HerpaderpFailed(String),
     HerpaderpHollowFailed(String),
+    IoctlError(String),
 }
 
 impl fmt::Display for MiscError {
@@ -108,6 +109,7 @@ impl fmt::Display for MiscError {
             MiscError::GhostlyHollowFailed(msg) => write!(f, "Ghostly hollowing failed: {}", msg),
             MiscError::HerpaderpFailed(msg) => write!(f, "Process herpaderping failed: {}", msg),
             MiscError::HerpaderpHollowFailed(msg) => write!(f, "Herpaderping hollowing failed: {}", msg),
+            MiscError::IoctlError(msg) => write!(f, "Kernel driver IOCTL error: {}", msg),
         }
     }
 }

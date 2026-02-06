@@ -1303,6 +1303,59 @@ pub fn ProcessTab() -> Element {
                                 }
                             }
 
+                            div { class: "context-menu-separator" }
+
+                            // Kernel Shellcode Injection (requires driver)
+                            button {
+                                class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                disabled: !is_driver_loaded(),
+                                onclick: move |_| {
+                                    if let Some(pid) = ctx_menu.pid {
+                                        let pid_for_spawn = pid;
+                                        context_menu.set(ContextMenuState::default());
+                                        spawn(async move {
+                                            let file = rfd::AsyncFileDialog::new()
+                                                .add_filter("Shellcode Binary", &["bin"])
+                                                .add_filter("All Files", &["*"])
+                                                .set_title("Select Shellcode for Kernel Injection")
+                                                .pick_file()
+                                                .await;
+                                            if let Some(file) = file {
+                                                match std::fs::read(file.path()) {
+                                                    Ok(shellcode) => {
+                                                        match misc::kernel_inject_shellcode(pid_for_spawn, &shellcode) {
+                                                            Ok(address) => {
+                                                                status_message.set(format!(
+                                                                    "✓ Kernel shellcode injection successful — PID: {}, Address: 0x{:X}",
+                                                                    pid_for_spawn, address
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Kernel shellcode injection failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        status_message.set(format!("✗ Failed to read shellcode file: {}", e));
+                                                    }
+                                                }
+                                                spawn(async move {
+                                                    tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+                                                    status_message.set(String::new());
+                                                });
+                                            }
+                                        });
+                                    }
+                                },
+                                span { "🔥" }
+                                span { "Kernel Shellcode Injection" }
+                            }
+
+                            div { class: "context-menu-separator" }
+
                             // DLL Unhooking sub-submenu
                             div {
                                 class: "context-menu-submenu",

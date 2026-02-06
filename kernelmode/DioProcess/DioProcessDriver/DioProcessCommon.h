@@ -162,6 +162,10 @@ struct EventData
 #define IOCTL_DIOPROCESS_ENUM_IMAGE_CALLBACKS \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80B, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// Kernel shellcode injection IOCTL
+#define IOCTL_DIOPROCESS_KERNEL_INJECT_SHELLCODE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80C, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct CollectionStateResponse
 {
 	BOOLEAN IsCollecting;
@@ -173,6 +177,21 @@ struct CollectionStateResponse
 struct TargetProcessRequest
 {
 	ULONG ProcessId;
+};
+
+// ============== Kernel Shellcode Injection Structures ==============
+
+struct KernelInjectShellcodeRequest
+{
+	ULONG TargetProcessId;
+	ULONG ShellcodeSize;
+	UCHAR Shellcode[1];  // Variable length
+};
+
+struct KernelInjectShellcodeResponse
+{
+	ULONG64 AllocatedAddress;  // Where shellcode was written
+	BOOLEAN Success;
 };
 
 // ============== Callback Enumeration Structures ==============
