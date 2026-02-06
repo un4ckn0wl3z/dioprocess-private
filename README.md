@@ -7,6 +7,9 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 ![Preview 1](./assets/preview1.png)
 ![Preview 2](./assets/preview2.png)
 ![Preview 3](./assets/preview3.png)
+![Preview 2](./assets/preview4.png)
+![Preview 3](./assets/preview5.png)
+
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange?logo=rust)](https://www.rust-lang.org)
 [![Windows](https://img.shields.io/badge/Platform-Windows-blue?logo=windows)](https://microsoft.com/windows)
