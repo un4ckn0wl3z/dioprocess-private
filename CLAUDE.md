@@ -29,7 +29,7 @@ crates/
 │       ├── types.rs   # CallbackEvent, EventType, EventCategory, RegistryOperation
 │       ├── driver.rs  # Driver communication (is_driver_loaded, read_events)
 │       └── storage.rs # SQLite persistence (EventStorage, EventFilter, batched writes)
-├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, ghostly hollowing, process herpaderping, token theft, module unloading, memory ops
+├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, ghostly hollowing, process herpaderping, herpaderping hollowing, token theft, module unloading, memory ops
 │   └── src/
 │       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
 │       ├── error.rs                    # MiscError enum, Display, Error impls
@@ -58,7 +58,8 @@ crates/
 │       │   ├── hollow.rs               # hollow_process()
 │       │   ├── ghostly_hollow.rs       # ghostly_hollow_process()
 │       │   ├── ghost.rs                # ghost_process()
-│       │   └── herpaderp.rs            # herpaderp_process()
+│       │   ├── herpaderp.rs            # herpaderp_process()
+│       │   └── herpaderp_hollow.rs     # herpaderp_hollow_process()
 │       └── token.rs                    # steal_token()
 ├── ui/            # Dioxus components, routing, state, styles
 │   └── src/
@@ -187,6 +188,7 @@ Each process creation method is in its own file under `crates/misc/src/process/`
 4. **Process Ghosting** (`ghost.rs`) — Create temp file, open via `NtOpenFile` with DELETE permission, mark for deletion with `NtSetInformationFile(FileDispositionInformation)`, write payload via `NtWriteFile`, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, retrieve environment via `CreateEnvironmentBlock`, set up PEB process parameters with `RtlCreateProcessParametersEx` (NORMALIZED), allocate at exact params address in remote process via `NtAllocateVirtualMemory` (no pointer relocation), write params and environment via `NtWriteVirtualMemory` with two-scenario layout handling, create initial thread via `NtCreateThreadEx`
 5. **Process Herpaderping** (`herpaderp.rs`) — Write payload PE to temp file, create SEC_IMAGE section via `NtCreateSection`, create process via `NtCreateProcessEx`, **overwrite temp file with legitimate PE content** (the "herpaderp" — AV/OS sees legit PE on disk), set up PEB/params/environment with `RtlCreateProcessParametersEx` (NORMALIZED), create initial thread via `NtCreateThreadEx` at payload entry point; supports optional command-line arguments for the payload
 6. **Ghostly Hollowing** (`ghostly_hollow.rs`) — Combine process ghosting with hollowing: create temp file, mark for deletion via `NtSetInformationFile`, write payload via `NtWriteFile`, create `SEC_IMAGE` section via `NtCreateSection`, close file (deleted, section survives), `CreateProcessW` with legitimate host executable (SUSPENDED), `NtMapViewOfSection` to map ghost section into suspended process, hijack thread context (set RCX to entry point), patch PEB.ImageBase, `ResumeThread`
+7. **Herpaderping Hollowing** (`herpaderp_hollow.rs`) — Write payload PE to temp file, create SEC_IMAGE section via `NtCreateSection`, create legitimate host process SUSPENDED via `CreateProcessW`, map the herpaderped section into the suspended process via `NtMapViewOfSection`, **overwrite temp file with legitimate PE content** (the "herpaderp"), hijack thread execution (set RCX to mapped entry point, patch PEB.ImageBase via `NtWriteVirtualMemory`), resume thread; combines herpaderping with hollowing — the on-disk file shows the legit PE while the in-memory section runs the payload inside a legitimate process
 
 ## Token theft (misc crate)
 
@@ -409,6 +411,25 @@ Located in `crates/misc/src/process/herpaderp.rs`:
 10. Create initial thread via NtCreateThreadEx at payload's entry point
 
 Access via Utilities tab in the main navigation. UI provides PE Payload picker, optional command arguments input, and Legitimate Image picker. Note: the legitimate image file should be larger than the payload PE.
+
+## Herpaderping Hollowing (misc crate)
+
+Located in `crates/misc/src/process/herpaderp_hollow.rs`:
+
+`herpaderp_hollow_process(pe_path, legit_img)` — Combines process herpaderping with process hollowing. The legit image serves dual purpose: it's the host process AND its content overwrites the temp file. Algorithm:
+
+1. Read payload PE into memory, validate PE32+ (64-bit), extract entry point RVA
+2. Create temp file in %TEMP%, open with GENERIC_READ|GENERIC_WRITE and full sharing
+3. Write payload bytes to temp file via WriteFile + FlushFileBuffers + SetEndOfFile
+4. Create SEC_IMAGE section from temp file via NtCreateSection
+5. Create legitimate host process SUSPENDED via CreateProcessW (using legit_img path)
+6. Map the herpaderped section into the suspended process via NtMapViewOfSection
+7. **Overwrite** temp file with legitimate PE content — AV/OS sees legit PE on disk
+8. Close file handles
+9. Hijack thread: GetThreadContext, set RCX to mapped_base + entry_point_rva, SetThreadContext, patch PEB.ImageBase via NtWriteVirtualMemory
+10. Resume thread — payload executes inside the legitimate process
+
+Access via Utilities tab in the main navigation. UI provides PE Payload picker and Legitimate Image picker (serves as both host process and disk overwrite content). Note: the legitimate image should be larger than the payload PE.
 
 ## System Events - Experimental (callback crate)
 

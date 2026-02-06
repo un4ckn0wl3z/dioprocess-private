@@ -47,6 +47,7 @@ pub enum MiscError {
     ThreadlessInjectFailed(String),
     GhostlyHollowFailed(String),
     HerpaderpFailed(String),
+    HerpaderpHollowFailed(String),
 }
 
 impl fmt::Display for MiscError {
@@ -106,6 +107,7 @@ impl fmt::Display for MiscError {
             MiscError::ThreadlessInjectFailed(msg) => write!(f, "Threadless injection failed: {}", msg),
             MiscError::GhostlyHollowFailed(msg) => write!(f, "Ghostly hollowing failed: {}", msg),
             MiscError::HerpaderpFailed(msg) => write!(f, "Process herpaderping failed: {}", msg),
+            MiscError::HerpaderpHollowFailed(msg) => write!(f, "Herpaderping hollowing failed: {}", msg),
         }
     }
 }

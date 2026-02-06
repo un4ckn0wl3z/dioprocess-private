@@ -1,7 +1,7 @@
 # DioProcess — Copilot Instructions
 
 ## Project Overview
-Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, **System Events (Experimental)** - kernel event monitoring (17 event types with SQLite persistence), 7 DLL injection methods, shellcode injection (classic + web staging + threadless), DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process memory string scanning (ASCII + UTF-16), process hollowing/ghosting/ghostly hollowing/herpaderping, token theft, **Utilities tab** with file bloating (append null bytes or random data to inflate file size) and process herpaderping.
+Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, **System Events (Experimental)** - kernel event monitoring (17 event types with SQLite persistence), 7 DLL injection methods, shellcode injection (classic + web staging + threadless), DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process memory string scanning (ASCII + UTF-16), process hollowing/ghosting/ghostly hollowing/herpaderping/herpaderping hollowing, token theft, **Utilities tab** with file bloating (append null bytes or random data to inflate file size), process herpaderping, and herpaderping hollowing.
 
 ## Build & Run
 ```powershell
@@ -17,7 +17,7 @@ crates/
 ├── network/     # TCP/UDP via IP Helper API
 ├── service/     # SCM operations (enumerate, start/stop, create/delete)
 ├── callback/    # Kernel driver comm + SQLite storage (driver.rs, storage.rs, types.rs)
-├── misc/        # Low-level ops: injection/, process/ (hollow, ghost, ghostly_hollow, herpaderp), token.rs, unhook.rs, hook_scanner.rs
+├── misc/        # Low-level ops: injection/, process/ (hollow, ghost, ghostly_hollow, herpaderp, herpaderp_hollow), token.rs, unhook.rs, hook_scanner.rs
 ├── ui/          # Dioxus components, routing, state signals, styles
 └── dioprocess/  # Binary entry point + UAC manifest embedding
 kernelmode/
@@ -77,9 +77,10 @@ pub fn SomeWindow() -> Element {
 | Shellcode injection (classic + web staging + threadless) | `crates/misc/src/shellcode_inject/*.rs` |
 | Shellcode inject UI (web staging modal) | `crates/ui/src/components/shellcode_inject_window.rs` |
 | Threadless inject UI (modal) | `crates/ui/src/components/threadless_inject_window.rs` |
-| Process creation (hollow, ghost) | `crates/misc/src/process/*.rs` |
+| Process creation (hollow, ghost, herpaderp_hollow) | `crates/misc/src/process/*.rs` |
 | Ghostly hollowing | `crates/misc/src/process/ghostly_hollow.rs` |
 | Process herpaderping | `crates/misc/src/process/herpaderp.rs` |
+| Herpaderping hollowing | `crates/misc/src/process/herpaderp_hollow.rs` |
 | DLL unhooking | `crates/misc/src/unhook.rs` |
 | Hook detection | `crates/misc/src/hook_scanner.rs` |
 | String scan UI | `crates/ui/src/components/string_scan_window.rs` |
@@ -96,7 +97,7 @@ pub fn SomeWindow() -> Element {
 | Unhook test harness | `assets/unhook_test/` |
 
 ## Gotchas
-- **64-bit only:** Process ghosting/hollowing/ghostly hollowing/herpaderping require x64 PE payloads
+- **64-bit only:** Process ghosting/hollowing/ghostly hollowing/herpaderping/herpaderping hollowing require x64 PE payloads
 - **Admin required:** Most features fail without elevation — binary embeds UAC manifest
 - **UTF-16 strings:** Windows APIs use wide strings; convert with `encode_utf16().chain(Some(0))`
 - **No async in misc crate:** All Windows API calls are synchronous; UI uses `tokio::spawn` for background

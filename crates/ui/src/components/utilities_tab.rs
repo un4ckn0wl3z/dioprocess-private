@@ -1,7 +1,7 @@
 //! Utilities tab component
 
 use dioxus::prelude::*;
-use misc::{ghostly_hollow_process, herpaderp_process};
+use misc::{ghostly_hollow_process, herpaderp_hollow_process, herpaderp_process};
 
 /// Bloating method
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -36,6 +36,13 @@ pub fn UtilitiesTab() -> Element {
     let mut hp_status_message = use_signal(|| String::new());
     let mut hp_status_is_error = use_signal(|| false);
     let mut hp_is_running = use_signal(|| false);
+
+    // ---- Herpaderping Hollowing state ----
+    let mut hh_pe_path = use_signal(|| String::new());
+    let mut hh_legit_path = use_signal(|| String::new());
+    let mut hh_status_message = use_signal(|| String::new());
+    let mut hh_status_is_error = use_signal(|| false);
+    let mut hh_is_running = use_signal(|| false);
 
     // ---- File Bloating handlers ----
 
@@ -337,6 +344,94 @@ pub fn UtilitiesTab() -> Element {
         });
     };
 
+    // ---- Herpaderping Hollowing handlers ----
+
+    let browse_hh_pe = move |_| {
+        spawn(async move {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("Executables", &["exe"])
+                .add_filter("All Files", &["*"])
+                .set_title("Select PE Payload (64-bit)")
+                .pick_file()
+                .await;
+
+            if let Some(file) = file {
+                hh_pe_path.set(file.path().to_string_lossy().to_string());
+            }
+        });
+    };
+
+    let browse_hh_legit = move |_| {
+        spawn(async move {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("Executables", &["exe"])
+                .add_filter("All Files", &["*"])
+                .set_title("Select Legitimate Image (host process + disk overwrite)")
+                .pick_file()
+                .await;
+
+            if let Some(file) = file {
+                hh_legit_path.set(file.path().to_string_lossy().to_string());
+            }
+        });
+    };
+
+    let handle_herpaderp_hollow = move |_| {
+        if *hh_is_running.read() {
+            return;
+        }
+
+        let pe = hh_pe_path.read().clone();
+        let legit = hh_legit_path.read().clone();
+
+        if pe.is_empty() {
+            hh_status_message.set("Please select a PE payload".to_string());
+            hh_status_is_error.set(true);
+            return;
+        }
+
+        if legit.is_empty() {
+            hh_status_message.set("Please select a legitimate image".to_string());
+            hh_status_is_error.set(true);
+            return;
+        }
+
+        hh_is_running.set(true);
+        hh_status_message.set(String::new());
+
+        spawn(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                herpaderp_hollow_process(&pe, &legit)
+            })
+            .await;
+
+            match result {
+                Ok(Ok(pid)) => {
+                    hh_status_message.set(format!(
+                        "Herpaderping hollowing successful — PID: {}",
+                        pid
+                    ));
+                    hh_status_is_error.set(false);
+                }
+                Ok(Err(e)) => {
+                    hh_status_message.set(format!("Error: {}", e));
+                    hh_status_is_error.set(true);
+                }
+                Err(e) => {
+                    hh_status_message.set(format!("Task error: {}", e));
+                    hh_status_is_error.set(true);
+                }
+            }
+
+            hh_is_running.set(false);
+
+            if !*hh_status_is_error.read() {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                hh_status_message.set(String::new());
+            }
+        });
+    };
+
     let status_msg = status_message.read().clone();
     let is_error = *status_is_error.read();
     let running = *is_running.read();
@@ -348,6 +443,10 @@ pub fn UtilitiesTab() -> Element {
     let hp_status_msg = hp_status_message.read().clone();
     let hp_is_error = *hp_status_is_error.read();
     let hp_running = *hp_is_running.read();
+
+    let hh_status_msg = hh_status_message.read().clone();
+    let hh_is_error = *hh_status_is_error.read();
+    let hh_running = *hh_is_running.read();
 
     rsx! {
         div {
@@ -631,6 +730,82 @@ pub fn UtilitiesTab() -> Element {
                         div {
                             class: if hp_is_error { "create-process-status create-process-status-error" } else { "create-process-status create-process-status-success" },
                             "{hp_status_msg}"
+                        }
+                    }
+                }
+
+                // Herpaderping Hollowing section
+                div {
+                    style: "background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(0, 212, 255, 0.15); border-radius: 8px; padding: 20px;",
+
+                    h2 {
+                        style: "color: #00d4ff; margin-bottom: 4px; font-size: 16px;",
+                        "Herpaderping Hollowing"
+                    }
+                    p {
+                        style: "color: #9ca3af; font-size: 12px; margin-bottom: 16px;",
+                        "Write payload PE to temp file, create image section, launch legit process suspended, map the section in, overwrite temp file with legit PE, then hijack execution. Combines herpaderping + hollowing."
+                    }
+
+                    // PE Payload file
+                    div { class: "create-process-field",
+                        label { class: "create-process-label", "PE Payload (64-bit)" }
+                        div { class: "create-process-path-row",
+                            input {
+                                class: "create-process-input",
+                                r#type: "text",
+                                placeholder: "Path to 64-bit PE payload...",
+                                value: "{hh_pe_path}",
+                                oninput: move |e| hh_pe_path.set(e.value().clone()),
+                            }
+                            button {
+                                class: "create-process-btn-browse",
+                                onclick: browse_hh_pe,
+                                "Browse"
+                            }
+                        }
+                    }
+
+                    // Legitimate image file
+                    div { class: "create-process-field",
+                        label { class: "create-process-label", "Legitimate Image (host process + disk overwrite, should be larger than payload)" }
+                        div { class: "create-process-path-row",
+                            input {
+                                class: "create-process-input",
+                                r#type: "text",
+                                placeholder: "e.g. C:\\Windows\\system32\\aitstatic.exe",
+                                value: "{hh_legit_path}",
+                                oninput: move |e| hh_legit_path.set(e.value().clone()),
+                            }
+                            button {
+                                class: "create-process-btn-browse",
+                                onclick: browse_hh_legit,
+                                "Browse"
+                            }
+                        }
+                    }
+
+                    // Execute button
+                    div {
+                        style: "display: flex; gap: 16px; align-items: flex-end; margin-top: 8px;",
+
+                        button {
+                            class: "btn btn-primary",
+                            disabled: hh_running,
+                            onclick: handle_herpaderp_hollow,
+                            if hh_running {
+                                "Executing..."
+                            } else {
+                                "Execute Herpaderping Hollowing"
+                            }
+                        }
+                    }
+
+                    // Status message
+                    if !hh_status_msg.is_empty() {
+                        div {
+                            class: if hh_is_error { "create-process-status create-process-status-error" } else { "create-process-status create-process-status-success" },
+                            "{hh_status_msg}"
                         }
                     }
                 }
