@@ -22,7 +22,7 @@
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{86f17eae-c9ab-413a-81fd-18300b915c97}</ProjectGuid>
-    <RootNamespace>ProcessMonitorExCli</RootNamespace>
+    <RootNamespace>DioProcessCli</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

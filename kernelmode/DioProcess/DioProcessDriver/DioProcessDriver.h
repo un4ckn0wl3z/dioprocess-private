@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ProcessMonitorExCommon.h"
+#include "DioProcessCommon.h"
 #include "FastMutex.h"
 
 #define DRIVER_PREFIX "DioProcess: "

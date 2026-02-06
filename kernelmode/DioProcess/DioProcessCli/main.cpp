@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string>
 #include <iostream>
-#include "..\ProcessMonitorEx\ProcessMonitorExCommon.h"
+#include "..\DioProcessDriver\DioProcessCommon.h"
 
 void DisplayData(const BYTE* buffer, DWORD size);
 void DisplayTime(ULONG64 time);

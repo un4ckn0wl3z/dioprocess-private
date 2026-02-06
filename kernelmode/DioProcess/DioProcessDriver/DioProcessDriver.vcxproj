@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -25,8 +25,9 @@
     <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
     <Configuration>Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">x64</Platform>
-    <RootNamespace>ProcessMonitorEx</RootNamespace>
+    <RootNamespace>DioProcessDriver</RootNamespace>
     <WindowsTargetPlatformVersion>$(LatestTargetPlatformVersion)</WindowsTargetPlatformVersion>
+    <TargetName>DioProcess</TargetName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -105,15 +106,15 @@
     <ClInclude Include="FastMutex.h" />
     <ClInclude Include="Locker.h" />
     <ClInclude Include="pch.h" />
-    <ClInclude Include="ProcessMonitorEx.h" />
-    <ClInclude Include="ProcessMonitorExCommon.h" />
+    <ClInclude Include="DioProcessDriver.h" />
+    <ClInclude Include="DioProcessCommon.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="FastMutex.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="ProcessMonitorEx.cpp" />
+    <ClCompile Include="DioProcessDriver.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

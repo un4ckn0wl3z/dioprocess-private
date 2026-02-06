@@ -1,11 +1,11 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.9.34622.214
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ProcessMonitorEx", "ProcessMonitorEx\ProcessMonitorEx.vcxproj", "{7EC49584-C6AB-4F88-8AB5-AEDB9CDE3E73}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DioProcessDriver", "DioProcessDriver\DioProcessDriver.vcxproj", "{7EC49584-C6AB-4F88-8AB5-AEDB9CDE3E73}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ProcessMonitorExCli", "ProcessMonitorExCli\ProcessMonitorExCli.vcxproj", "{86F17EAE-C9AB-413A-81FD-18300B915C97}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DioProcessCli", "DioProcessCli\DioProcessCli.vcxproj", "{86F17EAE-C9AB-413A-81FD-18300B915C97}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
