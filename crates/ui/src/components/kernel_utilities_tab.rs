@@ -82,23 +82,22 @@ pub fn KernelUtilitiesTab() -> Element {
 
             // Header
             div { class: "header-box",
-                h1 { class: "header-title", "Kernel Utilities" }
+                h1 { class: "header-title", "⚙️ Kernel Utilities" }
                 div { class: "header-stats",
                     span {
                         if driver_loaded {
-                            "🟢 Driver loaded — Advanced kernel features available"
+                            "Driver: Loaded"
                         } else {
-                            "🔴 Driver not loaded — Load DioProcess.sys to enable features"
+                            "Driver: Not Loaded"
                         }
                     }
+                    span { class: "header-shortcuts", "F5: Refresh | Esc: Close menu" }
                 }
             }
 
             // Sub-tabs
             div {
                 class: "subtab-container",
-                style: "display: flex; gap: 8px; padding: 16px 16px 0 16px; border-bottom: 2px solid rgba(0, 212, 255, 0.15);",
-
                 button {
                     class: if *active_tab.read() == KernelUtilityTab::CallbackEnum { "subtab-button active" } else { "subtab-button" },
                     onclick: move |_| active_tab.set(KernelUtilityTab::CallbackEnum),
@@ -233,6 +232,7 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
             cmp
         }
     });
+
     let is_running = *is_enumerating.read();
     let status_msg = status_message.read().clone();
     let current_type = *callback_type.read();
@@ -240,8 +240,8 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
     let ctx_menu = context_menu.read().clone();
 
     // Sort indicator
-    let sort_indicator = move |col: CallbackSortColumn| -> String {
-        if *sort_column.read() == col {
+    let sort_indicator = move |col_check: CallbackSortColumn| -> String {
+        if *sort_column.read() == col_check {
             if *sort_order.read() == SortOrder::Ascending {
                 " ▲".to_string()
             } else {
@@ -276,47 +276,40 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
             onkeydown: handle_keydown,
             onclick: move |_| context_menu.set(CallbackContextMenuState::default()),
 
-            // Description
-            div {
-                class: "tab-description",
-                p {
-                    "Enumerate registered kernel callbacks. Windows allows drivers to register notification callbacks for process creation/exit, thread creation/exit, and image (DLL/EXE) loading. This tool locates the internal kernel callback arrays and resolves callback addresses to their owning driver modules."
-                }
+            // Status message in header
+            if !status_msg.is_empty() {
+                div { class: "status-message", "{status_msg}" }
             }
 
             // Toolbar
             div { class: "toolbar",
                 // Callback type selector
-                div {
-                    style: "display: flex; gap: 8px; align-items: center;",
-                    span { style: "color: #9ca3af; font-size: 13px;", "Type:" }
-                    button {
-                        class: if current_type == CallbackType::Process { "btn btn-small active" } else { "btn btn-small" },
-                        onclick: move |_| {
-                            callback_type.set(CallbackType::Process);
-                            callbacks.set(Vec::new());
-                            status_message.set(String::new());
-                        },
-                        "Process"
-                    }
-                    button {
-                        class: if current_type == CallbackType::Thread { "btn btn-small active" } else { "btn btn-small" },
-                        onclick: move |_| {
-                            callback_type.set(CallbackType::Thread);
-                            callbacks.set(Vec::new());
-                            status_message.set(String::new());
-                        },
-                        "Thread"
-                    }
-                    button {
-                        class: if current_type == CallbackType::Image { "btn btn-small active" } else { "btn btn-small" },
-                        onclick: move |_| {
-                            callback_type.set(CallbackType::Image);
-                            callbacks.set(Vec::new());
-                            status_message.set(String::new());
-                        },
-                        "Image Load"
-                    }
+                button {
+                    class: if current_type == CallbackType::Process { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| {
+                        callback_type.set(CallbackType::Process);
+                        callbacks.set(Vec::new());
+                        status_message.set(String::new());
+                    },
+                    "Process"
+                }
+                button {
+                    class: if current_type == CallbackType::Thread { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| {
+                        callback_type.set(CallbackType::Thread);
+                        callbacks.set(Vec::new());
+                        status_message.set(String::new());
+                    },
+                    "Thread"
+                }
+                button {
+                    class: if current_type == CallbackType::Image { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| {
+                        callback_type.set(CallbackType::Image);
+                        callbacks.set(Vec::new());
+                        status_message.set(String::new());
+                    },
+                    "Image Load"
                 }
 
                 // Search bar
@@ -342,11 +335,6 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
                     onclick: export_csv,
                     "Export CSV"
                 }
-            }
-
-            // Status message
-            if !status_msg.is_empty() {
-                div { class: "status-bar", "{status_msg}" }
             }
 
             // Callback table
@@ -385,7 +373,7 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                     if driver_loaded {
                                         "Click 'Refresh' to enumerate callbacks"
                                     } else {
-                                        "Driver not loaded"
+                                        "Driver not loaded - Load DioProcess.sys to use this feature"
                                     }
                                 }
                             }
@@ -580,6 +568,7 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
             cmp
         }
     });
+
     let cid_is_running = *cid_is_enumerating.read();
     let cid_status_msg = cid_status.read().clone();
     let query_text = search_query.read().clone();
@@ -587,8 +576,8 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
     let filter = type_filter.read().clone();
 
     // Sort indicator
-    let sort_indicator = move |col: CidSortColumn| -> String {
-        if *sort_column.read() == col {
+    let sort_indicator = move |col_check: CidSortColumn| -> String {
+        if *sort_column.read() == col_check {
             if *sort_order.read() == SortOrder::Ascending {
                 " ▲".to_string()
             } else {
@@ -623,35 +612,28 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
             onkeydown: handle_keydown,
             onclick: move |_| context_menu.set(CidContextMenuState::default()),
 
-            // Description
-            div {
-                class: "tab-description",
-                p {
-                    "Enumerate all processes and threads by parsing the kernel's PspCidTable handle table. This table stores all EPROCESS (process) and ETHREAD (thread) objects indexed by PID/TID. Dynamically resolves Windows version-specific structure offsets to extract process names, parent PIDs, and thread owner information. Uses signature scanning to locate PspCidTable (no hardcoded addresses). Read-only operation — PatchGuard/KPP safe."
-                }
+            // Status message in header
+            if !cid_status_msg.is_empty() {
+                div { class: "status-message", "{cid_status_msg}" }
             }
 
             // Toolbar
             div { class: "toolbar",
                 // Type filter
-                div {
-                    style: "display: flex; gap: 8px; align-items: center;",
-                    span { style: "color: #9ca3af; font-size: 13px;", "Filter:" }
-                    button {
-                        class: if filter.is_empty() { "btn btn-small active" } else { "btn btn-small" },
-                        onclick: move |_| type_filter.set(String::new()),
-                        "All"
-                    }
-                    button {
-                        class: if filter == "process" { "btn btn-small active" } else { "btn btn-small" },
-                        onclick: move |_| type_filter.set("process".to_string()),
-                        "Processes"
-                    }
-                    button {
-                        class: if filter == "thread" { "btn btn-small active" } else { "btn btn-small" },
-                        onclick: move |_| type_filter.set("thread".to_string()),
-                        "Threads"
-                    }
+                button {
+                    class: if filter.is_empty() { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| type_filter.set(String::new()),
+                    "All"
+                }
+                button {
+                    class: if filter == "process" { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| type_filter.set("process".to_string()),
+                    "Processes"
+                }
+                button {
+                    class: if filter == "thread" { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| type_filter.set("thread".to_string()),
+                    "Threads"
                 }
 
                 // Search bar
@@ -677,11 +659,6 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
                     onclick: export_csv,
                     "Export CSV"
                 }
-            }
-
-            // Status message
-            if !cid_status_msg.is_empty() {
-                div { class: "status-bar", "{cid_status_msg}" }
             }
 
             // CID Table
@@ -730,7 +707,7 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
                                     if driver_loaded {
                                         "Click 'Refresh' to enumerate PspCidTable"
                                     } else {
-                                        "Driver not loaded"
+                                        "Driver not loaded - Load DioProcess.sys to use this feature"
                                     }
                                 }
                             }
