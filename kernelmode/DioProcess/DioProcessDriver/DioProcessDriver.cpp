@@ -1149,6 +1149,95 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		break;
 	}
 
+	case IOCTL_DIOPROCESS_CLEAR_DEBUG_FLAGS:
+	{
+		WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+		if (windowsVersion == WINDOWS_UNSUPPORTED)
+		{
+			status = STATUS_NOT_SUPPORTED;
+			KdPrint((DRIVER_PREFIX "Windows version unsupported for anti-debug\n"));
+			break;
+		}
+
+		auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+		if (inputLen < sizeof(TargetProcessRequest))
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		auto request = (TargetProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
+		if (!request)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		// Get EPROCESS
+		PEPROCESS eProcess = NULL;
+		status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)request->ProcessId, &eProcess);
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "PsLookupProcessByProcessId failed for PID %d (0x%X)\n",
+				request->ProcessId, status));
+			break;
+		}
+
+		KdPrint((DRIVER_PREFIX "Clearing debug flags for process PID %d\n", request->ProcessId));
+
+		// 1. Clear DebugPort in EPROCESS (kernel debugger detection)
+		PVOID* pDebugPort = (PVOID*)((ULONG_PTR)eProcess + PROCESS_DEBUGPORT_OFFSET[windowsVersion]);
+		PVOID oldDebugPort = *pDebugPort;
+		*pDebugPort = NULL;
+		KdPrint((DRIVER_PREFIX "DebugPort cleared (was: 0x%p, now: NULL)\n", oldDebugPort));
+
+		// 2. Get PEB from EPROCESS
+		PVOID pPeb = *(PVOID*)((ULONG_PTR)eProcess + PROCESS_PEB_OFFSET[windowsVersion]);
+		if (pPeb && (ULONG_PTR)pPeb > 0x1000 && (ULONG_PTR)pPeb < 0x7FFFFFFFFFFF)  // Sanity check: valid usermode address
+		{
+			// Attach to target process context to safely access PEB
+			KAPC_STATE apcState;
+			KeStackAttachProcess(eProcess, &apcState);
+
+			__try
+			{
+				// PEB.BeingDebugged is at offset 0x002
+				PUCHAR pBeingDebugged = (PUCHAR)((ULONG_PTR)pPeb + 0x002);
+				UCHAR oldBeingDebugged = *pBeingDebugged;
+				*pBeingDebugged = FALSE;
+				KdPrint((DRIVER_PREFIX "PEB.BeingDebugged cleared (was: %d, now: 0)\n", oldBeingDebugged));
+
+				// PEB.NtGlobalFlag is at offset 0x0BC (x64) or 0x068 (x86)
+				// Clearing heap debugging flags
+#ifdef _WIN64
+				PULONG pNtGlobalFlag = (PULONG)((ULONG_PTR)pPeb + 0x0BC);
+#else
+				PULONG pNtGlobalFlag = (PULONG)((ULONG_PTR)pPeb + 0x068);
+#endif
+				ULONG oldNtGlobalFlag = *pNtGlobalFlag;
+				// Clear heap debug flags (FLG_HEAP_ENABLE_TAIL_CHECK | FLG_HEAP_ENABLE_FREE_CHECK | FLG_HEAP_VALIDATE_PARAMETERS)
+				*pNtGlobalFlag &= ~(0x10 | 0x20 | 0x40);
+				KdPrint((DRIVER_PREFIX "PEB.NtGlobalFlag cleared (was: 0x%X, now: 0x%X)\n",
+					oldNtGlobalFlag, *pNtGlobalFlag));
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				KdPrint((DRIVER_PREFIX "Exception while accessing PEB (0x%08X)\n", GetExceptionCode()));
+				status = STATUS_ACCESS_VIOLATION;
+			}
+
+			KeUnstackDetachProcess(&apcState);
+		}
+		else
+		{
+			KdPrint((DRIVER_PREFIX "Warning: Invalid PEB address (0x%p)\n", pPeb));
+		}
+
+		ObDereferenceObject(eProcess);
+		KdPrint((DRIVER_PREFIX "Anti-debug completed for PID %d\n", request->ProcessId));
+		break;
+	}
+
 	default:
 		status = STATUS_INVALID_DEVICE_REQUEST;
 		break;

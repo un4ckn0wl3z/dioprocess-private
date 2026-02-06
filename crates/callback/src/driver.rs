@@ -25,6 +25,7 @@ const IOCTL_DIOPROCESS_UNREGISTER_CALLBACKS: u32 = 0x00222010;
 const IOCTL_DIOPROCESS_PROTECT_PROCESS: u32 = 0x00222014;
 const IOCTL_DIOPROCESS_UNPROTECT_PROCESS: u32 = 0x00222018;
 const IOCTL_DIOPROCESS_ENABLE_PRIVILEGES: u32 = 0x0022201C;
+const IOCTL_DIOPROCESS_CLEAR_DEBUG_FLAGS: u32 = 0x00222020;
 
 /// Check if the ProcessMonitorEx driver is loaded
 pub fn is_driver_loaded() -> bool {
@@ -1180,6 +1181,38 @@ pub fn enable_all_privileges(pid: u32) -> Result<(), CallbackError> {
         let result = DeviceIoControl(
             handle,
             IOCTL_DIOPROCESS_ENABLE_PRIVILEGES,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<u32>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Clear anti-debug flags for a process (kernel-level)
+/// Clears DebugPort, PEB.BeingDebugged, and PEB.NtGlobalFlag
+/// Requires the DioProcess kernel driver to be loaded
+pub fn clear_debug_flags(pid: u32) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = pid;
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_CLEAR_DEBUG_FLAGS,
             Some(&request as *const _ as *const _),
             std::mem::size_of::<u32>() as u32,
             None,

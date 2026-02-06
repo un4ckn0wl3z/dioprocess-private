@@ -14,9 +14,9 @@ pub mod storage;
 mod types;
 
 pub use driver::{
-    enable_all_privileges, get_collection_state, is_driver_loaded, protect_process, read_events,
-    register_callbacks, start_collection, stop_collection, unprotect_process,
-    unregister_callbacks,
+    clear_debug_flags, enable_all_privileges, get_collection_state, is_driver_loaded,
+    protect_process, read_events, register_callbacks, start_collection, stop_collection,
+    unprotect_process, unregister_callbacks,
 };
 pub use error::CallbackError;
 pub use storage::{EventFilter, EventStorage};

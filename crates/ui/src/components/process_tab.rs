@@ -2,7 +2,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use callback::{enable_all_privileges, is_driver_loaded, protect_process, unprotect_process};
+use callback::{
+    clear_debug_flags, enable_all_privileges, is_driver_loaded, protect_process,
+    unprotect_process,
+};
 use dioxus::prelude::*;
 use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, inject_shellcode_classic, unhook_dll_remote_by_path, enumerate_process_modules};
 use process::{
@@ -1492,6 +1495,41 @@ pub fn ProcessTab() -> Element {
                                 },
                                 span { "⚡" }
                                 span { "Enable All Privileges" }
+                            }
+
+                            // Clear Debug Flags button
+                            button {
+                                class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                disabled: !is_driver_loaded(),
+                                onclick: move |_| {
+                                    let target_pid = ctx_menu.pid;
+                                    context_menu.set(ContextMenuState::default());
+
+                                    if let Some(pid) = target_pid {
+                                        spawn(async move {
+                                            match clear_debug_flags(pid) {
+                                                Ok(()) => {
+                                                    status_message.set(format!(
+                                                        "✓ Debug flags cleared for process {}",
+                                                        pid
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ Failed to clear debug flags: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        });
+                                    }
+                                },
+                                span { "🐛" }
+                                span { "Clear Debug Flags" }
                             }
                         }
                     }
