@@ -1,7 +1,7 @@
 //! Utilities tab component
 
 use dioxus::prelude::*;
-use misc::ghostly_hollow_process;
+use misc::{ghostly_hollow_process, herpaderp_process};
 
 /// Bloating method
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -28,6 +28,14 @@ pub fn UtilitiesTab() -> Element {
     let mut gh_status_message = use_signal(|| String::new());
     let mut gh_status_is_error = use_signal(|| false);
     let mut gh_is_running = use_signal(|| false);
+
+    // ---- Process Herpaderping state ----
+    let mut hp_pe_path = use_signal(|| String::new());
+    let mut hp_pe_args = use_signal(|| String::new());
+    let mut hp_legit_path = use_signal(|| String::new());
+    let mut hp_status_message = use_signal(|| String::new());
+    let mut hp_status_is_error = use_signal(|| false);
+    let mut hp_is_running = use_signal(|| false);
 
     // ---- File Bloating handlers ----
 
@@ -239,6 +247,96 @@ pub fn UtilitiesTab() -> Element {
         });
     };
 
+    // ---- Process Herpaderping handlers ----
+
+    let browse_hp_pe = move |_| {
+        spawn(async move {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("Executables", &["exe"])
+                .add_filter("All Files", &["*"])
+                .set_title("Select PE Payload (64-bit)")
+                .pick_file()
+                .await;
+
+            if let Some(file) = file {
+                hp_pe_path.set(file.path().to_string_lossy().to_string());
+            }
+        });
+    };
+
+    let browse_hp_legit = move |_| {
+        spawn(async move {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("Executables", &["exe"])
+                .add_filter("All Files", &["*"])
+                .set_title("Select Legitimate Image (should be larger than payload)")
+                .pick_file()
+                .await;
+
+            if let Some(file) = file {
+                hp_legit_path.set(file.path().to_string_lossy().to_string());
+            }
+        });
+    };
+
+    let handle_herpaderp = move |_| {
+        if *hp_is_running.read() {
+            return;
+        }
+
+        let pe = hp_pe_path.read().clone();
+        let args = hp_pe_args.read().clone();
+        let legit = hp_legit_path.read().clone();
+
+        if pe.is_empty() {
+            hp_status_message.set("Please select a PE payload".to_string());
+            hp_status_is_error.set(true);
+            return;
+        }
+
+        if legit.is_empty() {
+            hp_status_message.set("Please select a legitimate image".to_string());
+            hp_status_is_error.set(true);
+            return;
+        }
+
+        hp_is_running.set(true);
+        hp_status_message.set(String::new());
+
+        spawn(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                let args_opt = if args.is_empty() { None } else { Some(args.as_str()) };
+                herpaderp_process(&pe, args_opt, &legit)
+            })
+            .await;
+
+            match result {
+                Ok(Ok(pid)) => {
+                    hp_status_message.set(format!(
+                        "Process herpaderping successful — PID: {}",
+                        pid
+                    ));
+                    hp_status_is_error.set(false);
+                }
+                Ok(Err(e)) => {
+                    hp_status_message.set(format!("Error: {}", e));
+                    hp_status_is_error.set(true);
+                }
+                Err(e) => {
+                    hp_status_message.set(format!("Task error: {}", e));
+                    hp_status_is_error.set(true);
+                }
+            }
+
+            hp_is_running.set(false);
+
+            if !*hp_status_is_error.read() {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                hp_status_message.set(String::new());
+            }
+        });
+    };
+
     let status_msg = status_message.read().clone();
     let is_error = *status_is_error.read();
     let running = *is_running.read();
@@ -246,6 +344,10 @@ pub fn UtilitiesTab() -> Element {
     let gh_status_msg = gh_status_message.read().clone();
     let gh_is_error = *gh_status_is_error.read();
     let gh_running = *gh_is_running.read();
+
+    let hp_status_msg = hp_status_message.read().clone();
+    let hp_is_error = *hp_status_is_error.read();
+    let hp_running = *hp_is_running.read();
 
     rsx! {
         div {
@@ -441,6 +543,94 @@ pub fn UtilitiesTab() -> Element {
                         div {
                             class: if gh_is_error { "create-process-status create-process-status-error" } else { "create-process-status create-process-status-success" },
                             "{gh_status_msg}"
+                        }
+                    }
+                }
+
+                // Process Herpaderping section
+                div {
+                    style: "background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(0, 212, 255, 0.15); border-radius: 8px; padding: 20px;",
+
+                    h2 {
+                        style: "color: #00d4ff; margin-bottom: 4px; font-size: 16px;",
+                        "Process Herpaderping"
+                    }
+                    p {
+                        style: "color: #9ca3af; font-size: 12px; margin-bottom: 16px;",
+                        "Write payload PE to temp file, create image section, then overwrite the file with a legitimate PE before creating the thread. The on-disk file appears legitimate while the in-memory image runs the payload."
+                    }
+
+                    // PE Payload file
+                    div { class: "create-process-field",
+                        label { class: "create-process-label", "PE Payload (64-bit)" }
+                        div { class: "create-process-path-row",
+                            input {
+                                class: "create-process-input",
+                                r#type: "text",
+                                placeholder: "Path to 64-bit PE payload...",
+                                value: "{hp_pe_path}",
+                                oninput: move |e| hp_pe_path.set(e.value().clone()),
+                            }
+                            button {
+                                class: "create-process-btn-browse",
+                                onclick: browse_hp_pe,
+                                "Browse"
+                            }
+                        }
+                    }
+
+                    // Command arguments (optional)
+                    div { class: "create-process-field",
+                        label { class: "create-process-label", "Command Arguments (Optional)" }
+                        input {
+                            class: "create-process-input",
+                            r#type: "text",
+                            placeholder: "Optional command-line arguments for the payload...",
+                            value: "{hp_pe_args}",
+                            oninput: move |e| hp_pe_args.set(e.value().clone()),
+                        }
+                    }
+
+                    // Legitimate image file
+                    div { class: "create-process-field",
+                        label { class: "create-process-label", "Legitimate Image (should be larger than payload)" }
+                        div { class: "create-process-path-row",
+                            input {
+                                class: "create-process-input",
+                                r#type: "text",
+                                placeholder: "e.g. C:\\Windows\\system32\\svchost.exe",
+                                value: "{hp_legit_path}",
+                                oninput: move |e| hp_legit_path.set(e.value().clone()),
+                            }
+                            button {
+                                class: "create-process-btn-browse",
+                                onclick: browse_hp_legit,
+                                "Browse"
+                            }
+                        }
+                    }
+
+                    // Execute button
+                    div {
+                        style: "display: flex; gap: 16px; align-items: flex-end; margin-top: 8px;",
+
+                        button {
+                            class: "btn btn-primary",
+                            disabled: hp_running,
+                            onclick: handle_herpaderp,
+                            if hp_running {
+                                "Executing..."
+                            } else {
+                                "Execute Herpaderping"
+                            }
+                        }
+                    }
+
+                    // Status message
+                    if !hp_status_msg.is_empty() {
+                        div {
+                            class: if hp_is_error { "create-process-status create-process-status-error" } else { "create-process-status create-process-status-success" },
+                            "{hp_status_msg}"
                         }
                     }
                 }

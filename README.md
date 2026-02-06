@@ -34,6 +34,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - Classic process hollowing (unmap → map → relocations → PEB patch → thread hijack)
   - **Process ghosting** (fileless execution via orphaned image section + `NtCreateProcessEx`)
   - **Ghostly hollowing** (ghost section mapped into suspended legitimate process via `NtMapViewOfSection` + thread hijack)
+  - **Process herpaderping** (write payload PE to temp file, create image section, overwrite file with legitimate PE before inspection)
 - Primary token theft & impersonation (`CreateProcessAsUserW` under stolen token)
 - **Utilities tab** — File bloating (append null bytes or random data to inflate file size, 1–2000 MB)
 
@@ -59,7 +60,7 @@ crates/
 │       ├── shellcode_inject/   # Shellcode injection techniques (classic, etc.)
 │       ├── memory.rs           # commit/decommit/free memory
 │       ├── module.rs           # unload_module
-│       ├── process/            # create, ppid_spoof, hollow, ghost, ghostly_hollow
+│       ├── process/            # create, ppid_spoof, hollow, ghost, ghostly_hollow, herpaderp
 │       ├── token.rs            # steal_token
 │       ├── unhook.rs           # DLL unhooking (local + remote process)
 │       └── hook_scanner.rs     # IAT hook detection (E9/E8/EB/FF25/MOV+JMP patterns)
@@ -100,6 +101,7 @@ Access via context menu: **Miscellaneous → Shellcode Injection → Classic**, 
 - Process hollowing — full unmap, section-by-section write, relocations, PEB.ImageBaseAddress patch, section protection fix, thread context hijack (RCX)
 - **Process ghosting** — temp file → delete disposition → `SEC_IMAGE` section → orphaned section → `NtCreateProcessEx` → normalized process parameters → `NtCreateThreadEx`
 - **Ghostly hollowing** — Create ghost section (temp file → mark deleted → write PE → SEC_IMAGE section → file deleted), create legitimate host process SUSPENDED via `CreateProcessW`, map ghost section into remote process via `NtMapViewOfSection`, hijack thread (set RCX to entry point, patch PEB.ImageBase via `WriteProcessMemory`), resume thread
+- **Process herpaderping** — Write payload PE to a temp file, create an image section from it, create a process from the section, then overwrite the temp file with a legitimate PE. When AV/OS inspects the on-disk file, it sees the legitimate PE, but the in-memory image is the payload. Located in `crates/misc/src/process/herpaderp.rs`; function: `herpaderp_process(pe_path, pe_args, legit_img)`. Key NT APIs: `NtCreateSection`, `NtCreateProcessEx`, `NtCreateThreadEx`, `RtlCreateProcessParametersEx`. Note: the legitimate image should be larger than the payload PE.
 
 ### DLL Unhooking
 
@@ -145,6 +147,14 @@ Scan process IAT (Import Address Table) for inline hooks by comparing imported f
 - **Host executable** — Select legitimate Windows binary (e.g. `RuntimeBroker.exe`)
 - **PE payload** — Select 64-bit PE to execute via ghost section
 - Ghost section mapped into suspended host via `NtMapViewOfSection`, thread hijacked, PEB patched, resumed
+
+**Process Herpaderping** — Write payload PE to a temp file, create an image section from it, create a process from the section, then overwrite the temp file with a legitimate PE. When AV/OS inspects the on-disk file, it sees the legitimate PE, but the in-memory image is the payload. Access via the **Utilities** tab:
+
+- **PE Payload** — Select the 64-bit executable to run via herpaderping
+- **Command Arguments** — Optional command line arguments for the payload
+- **Legitimate Image** — Select a legitimate PE to overwrite the temp file with (should be larger than the payload PE)
+- Located in `crates/misc/src/process/herpaderp.rs`; function: `herpaderp_process(pe_path, pe_args, legit_img)`
+- Key NT APIs: `NtCreateSection`, `NtCreateProcessEx`, `NtCreateThreadEx`, `RtlCreateProcessParametersEx`
 
 ### System Events (Experimental)
 

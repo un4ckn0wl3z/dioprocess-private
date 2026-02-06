@@ -29,7 +29,7 @@ crates/
 │       ├── types.rs   # CallbackEvent, EventType, EventCategory, RegistryOperation
 │       ├── driver.rs  # Driver communication (is_driver_loaded, read_events)
 │       └── storage.rs # SQLite persistence (EventStorage, EventFilter, batched writes)
-├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, ghostly hollowing, token theft, module unloading, memory ops
+├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, ghostly hollowing, process herpaderping, token theft, module unloading, memory ops
 │   └── src/
 │       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
 │       ├── error.rs                    # MiscError enum, Display, Error impls
@@ -57,7 +57,8 @@ crates/
 │       │   ├── ppid_spoof.rs           # create_ppid_spoofed_process()
 │       │   ├── hollow.rs               # hollow_process()
 │       │   ├── ghostly_hollow.rs       # ghostly_hollow_process()
-│       │   └── ghost.rs                # ghost_process()
+│       │   ├── ghost.rs                # ghost_process()
+│       │   └── herpaderp.rs            # herpaderp_process()
 │       └── token.rs                    # steal_token()
 ├── ui/            # Dioxus components, routing, state, styles
 │   └── src/
@@ -184,7 +185,8 @@ Each process creation method is in its own file under `crates/misc/src/process/`
 2. **PPID Spoofing** (`ppid_spoof.rs`) — Open handle to target parent process, set up `STARTUPINFOEXW` with `InitializeProcThreadAttributeList` + `UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_PARENT_PROCESS)`, create process via `CreateProcessW` with `EXTENDED_STARTUPINFO_PRESENT` flag; the new process appears as a child of the specified parent PID; optionally combined with Block DLL Policy
 3. **Process Hollowing** (`hollow.rs`) — Create host process suspended, get PEB address via thread context Rdx, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, write PE headers and sections individually, apply base relocations if needed, patch PEB ImageBaseAddress, fix per-section memory permissions via `VirtualProtectEx` (R/RW/RX/RWX based on section characteristics), hijack thread entry point (RCX), resume thread
 4. **Process Ghosting** (`ghost.rs`) — Create temp file, open via `NtOpenFile` with DELETE permission, mark for deletion with `NtSetInformationFile(FileDispositionInformation)`, write payload via `NtWriteFile`, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, retrieve environment via `CreateEnvironmentBlock`, set up PEB process parameters with `RtlCreateProcessParametersEx` (NORMALIZED), allocate at exact params address in remote process via `NtAllocateVirtualMemory` (no pointer relocation), write params and environment via `NtWriteVirtualMemory` with two-scenario layout handling, create initial thread via `NtCreateThreadEx`
-5. **Ghostly Hollowing** (`ghostly_hollow.rs`) — Combine process ghosting with hollowing: create temp file, mark for deletion via `NtSetInformationFile`, write payload via `NtWriteFile`, create `SEC_IMAGE` section via `NtCreateSection`, close file (deleted, section survives), `CreateProcessW` with legitimate host executable (SUSPENDED), `NtMapViewOfSection` to map ghost section into suspended process, hijack thread context (set RCX to entry point), patch PEB.ImageBase, `ResumeThread`
+5. **Process Herpaderping** (`herpaderp.rs`) — Write payload PE to temp file, create SEC_IMAGE section via `NtCreateSection`, create process via `NtCreateProcessEx`, **overwrite temp file with legitimate PE content** (the "herpaderp" — AV/OS sees legit PE on disk), set up PEB/params/environment with `RtlCreateProcessParametersEx` (NORMALIZED), create initial thread via `NtCreateThreadEx` at payload entry point; supports optional command-line arguments for the payload
+6. **Ghostly Hollowing** (`ghostly_hollow.rs`) — Combine process ghosting with hollowing: create temp file, mark for deletion via `NtSetInformationFile`, write payload via `NtWriteFile`, create `SEC_IMAGE` section via `NtCreateSection`, close file (deleted, section survives), `CreateProcessW` with legitimate host executable (SUSPENDED), `NtMapViewOfSection` to map ghost section into suspended process, hijack thread context (set RCX to entry point), patch PEB.ImageBase, `ResumeThread`
 
 ## Token theft (misc crate)
 
@@ -388,6 +390,25 @@ Access via the **Utilities** tab → Ghostly Hollowing section:
 - **PE payload picker** — Select 64-bit PE payload to execute via ghost section
 - **Status feedback** — Success shows new PID, errors show detailed NT status codes
 - Uses `misc::ghostly_hollow_process()` function
+
+## Process Herpaderping (misc crate)
+
+Located in `crates/misc/src/process/herpaderp.rs`:
+
+`herpaderp_process(pe_path, pe_args, legit_img)` — Executes a PE payload while making the on-disk file appear legitimate. Algorithm:
+
+1. Read payload PE into memory, validate PE32+ (64-bit), extract entry point RVA
+2. Read legitimate PE (used to overwrite temp file later)
+3. Create temp file in %TEMP%, open with GENERIC_READ|GENERIC_WRITE and full sharing
+4. Write payload bytes to temp file via WriteFile + FlushFileBuffers + SetEndOfFile
+5. Create SEC_IMAGE section from temp file via NtCreateSection
+6. Create process from section via NtCreateProcessEx
+7. **Overwrite** temp file with legitimate PE content (the "herpaderp") — AV/OS sees legit PE on disk
+8. Close file handles
+9. Set up PEB, process parameters, environment block via RtlCreateProcessParametersEx (NORMALIZED)
+10. Create initial thread via NtCreateThreadEx at payload's entry point
+
+Access via Utilities tab in the main navigation. UI provides PE Payload picker, optional command arguments input, and Legitimate Image picker. Note: the legitimate image file should be larger than the payload PE.
 
 ## System Events - Experimental (callback crate)
 
