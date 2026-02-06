@@ -1818,14 +1818,15 @@ pub const CUSTOM_STYLES: &str = r#"
     /* Sub-tabs */
     .subtab-container {
         display: flex;
-        gap: 4px;
+        gap: 12px;
         padding: 0 20px;
         border-bottom: 2px solid rgba(0, 212, 255, 0.2);
         background: linear-gradient(to bottom, rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.2));
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
     }
     .subtab-button {
-        padding: 12px 24px;
+        padding: 12px 28px;
+        margin: 0 4px;
         font-size: 13px;
         font-weight: 600;
         color: #9ca3af;
@@ -1849,6 +1850,8 @@ pub const CUSTOM_STYLES: &str = r#"
         border-bottom-color: #00d4ff;
         background: linear-gradient(to bottom, rgba(0, 212, 255, 0.15), rgba(0, 212, 255, 0.08));
         box-shadow: 0 -2px 12px rgba(0, 212, 255, 0.2);
+        margin: 0 8px;
+        padding: 12px 32px;
     }
 
     /* Tab content */
