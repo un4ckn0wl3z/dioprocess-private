@@ -1305,53 +1305,110 @@ pub fn ProcessTab() -> Element {
 
                             div { class: "context-menu-separator" }
 
-                            // Kernel Shellcode Injection (requires driver)
-                            button {
-                                class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
-                                disabled: !is_driver_loaded(),
-                                onclick: move |_| {
-                                    if let Some(pid) = ctx_menu.pid {
-                                        let pid_for_spawn = pid;
-                                        context_menu.set(ContextMenuState::default());
-                                        spawn(async move {
-                                            let file = rfd::AsyncFileDialog::new()
-                                                .add_filter("Shellcode Binary", &["bin"])
-                                                .add_filter("All Files", &["*"])
-                                                .set_title("Select Shellcode for Kernel Injection")
-                                                .pick_file()
-                                                .await;
-                                            if let Some(file) = file {
-                                                match std::fs::read(file.path()) {
-                                                    Ok(shellcode) => {
-                                                        match misc::kernel_inject_shellcode(pid_for_spawn, &shellcode) {
-                                                            Ok(address) => {
+                            // Kernel Injection sub-submenu (requires driver)
+                            div {
+                                class: "context-menu-submenu",
+                                div {
+                                    class: if is_driver_loaded() { "context-menu-submenu-trigger" } else { "context-menu-submenu-trigger disabled" },
+                                    span { "🔥" }
+                                    span { "Kernel Injection" }
+                                    span { class: "arrow", "▶" }
+                                }
+                                div {
+                                    class: "context-menu-submenu-content",
+
+                                    // Kernel Shellcode Injection
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            if let Some(pid) = ctx_menu.pid {
+                                                let pid_for_spawn = pid;
+                                                context_menu.set(ContextMenuState::default());
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("Shellcode Binary", &["bin"])
+                                                        .add_filter("All Files", &["*"])
+                                                        .set_title("Select Shellcode for Kernel Injection")
+                                                        .pick_file()
+                                                        .await;
+                                                    if let Some(file) = file {
+                                                        match std::fs::read(file.path()) {
+                                                            Ok(shellcode) => {
+                                                                match misc::kernel_inject_shellcode(pid_for_spawn, &shellcode) {
+                                                                    Ok(address) => {
+                                                                        status_message.set(format!(
+                                                                            "✓ Kernel shellcode injection — PID: {}, Address: 0x{:X}",
+                                                                            pid_for_spawn, address
+                                                                        ));
+                                                                    }
+                                                                    Err(e) => {
+                                                                        status_message.set(format!(
+                                                                            "✗ Kernel shellcode injection failed: {}",
+                                                                            e
+                                                                        ));
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!("✗ Failed to read shellcode: {}", e));
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        span { "🎯" }
+                                        span { "Shellcode Injection" }
+                                    }
+
+                                    // Kernel DLL Injection
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            if let Some(pid) = ctx_menu.pid {
+                                                let pid_for_spawn = pid;
+                                                context_menu.set(ContextMenuState::default());
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("DLL Files", &["dll"])
+                                                        .add_filter("All Files", &["*"])
+                                                        .set_title("Select DLL for Kernel Injection")
+                                                        .pick_file()
+                                                        .await;
+                                                    if let Some(file) = file {
+                                                        let path = file.path().to_string_lossy().to_string();
+                                                        match misc::kernel_inject_dll(pid_for_spawn, &path) {
+                                                            Ok((dll_addr, loadlib_addr)) => {
                                                                 status_message.set(format!(
-                                                                    "✓ Kernel shellcode injection successful — PID: {}, Address: 0x{:X}",
-                                                                    pid_for_spawn, address
+                                                                    "✓ Kernel DLL injection — PID: {}, Path: 0x{:X}, LoadLibraryW: 0x{:X}",
+                                                                    pid_for_spawn, dll_addr, loadlib_addr
                                                                 ));
                                                             }
                                                             Err(e) => {
                                                                 status_message.set(format!(
-                                                                    "✗ Kernel shellcode injection failed: {}",
+                                                                    "✗ Kernel DLL injection failed: {}",
                                                                     e
                                                                 ));
                                                             }
                                                         }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+                                                            status_message.set(String::new());
+                                                        });
                                                     }
-                                                    Err(e) => {
-                                                        status_message.set(format!("✗ Failed to read shellcode file: {}", e));
-                                                    }
-                                                }
-                                                spawn(async move {
-                                                    tokio::time::sleep(std::time::Duration::from_secs(7)).await;
-                                                    status_message.set(String::new());
                                                 });
                                             }
-                                        });
+                                        },
+                                        span { "💉" }
+                                        span { "DLL Injection" }
                                     }
-                                },
-                                span { "🔥" }
-                                span { "Kernel Shellcode Injection" }
+                                }
                             }
 
                             div { class: "context-menu-separator" }

@@ -162,9 +162,11 @@ struct EventData
 #define IOCTL_DIOPROCESS_ENUM_IMAGE_CALLBACKS \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80B, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
-// Kernel shellcode injection IOCTL
+// Kernel injection IOCTLs
 #define IOCTL_DIOPROCESS_KERNEL_INJECT_SHELLCODE \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80C, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_KERNEL_INJECT_DLL \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80D, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 struct CollectionStateResponse
 {
@@ -179,7 +181,7 @@ struct TargetProcessRequest
 	ULONG ProcessId;
 };
 
-// ============== Kernel Shellcode Injection Structures ==============
+// ============== Kernel Injection Structures ==============
 
 struct KernelInjectShellcodeRequest
 {
@@ -191,6 +193,21 @@ struct KernelInjectShellcodeRequest
 struct KernelInjectShellcodeResponse
 {
 	ULONG64 AllocatedAddress;  // Where shellcode was written
+	BOOLEAN Success;
+};
+
+#define MAX_DLL_PATH_LENGTH 520
+
+struct KernelInjectDllRequest
+{
+	ULONG TargetProcessId;
+	WCHAR DllPath[MAX_DLL_PATH_LENGTH];
+};
+
+struct KernelInjectDllResponse
+{
+	ULONG64 AllocatedAddress;  // Where DLL path was written
+	ULONG64 LoadLibraryAddress;  // Address of LoadLibraryW
 	BOOLEAN Success;
 };
 
