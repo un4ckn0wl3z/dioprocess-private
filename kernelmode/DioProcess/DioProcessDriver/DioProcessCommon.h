@@ -168,6 +168,10 @@ struct EventData
 #define IOCTL_DIOPROCESS_KERNEL_INJECT_DLL \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80D, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// PspCidTable enumeration IOCTL
+#define IOCTL_DIOPROCESS_ENUM_PSPCIDTABLE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80F, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct CollectionStateResponse
 {
 	BOOLEAN IsCollecting;
@@ -209,6 +213,29 @@ struct KernelInjectDllResponse
 	ULONG64 AllocatedAddress;  // Where DLL path was written
 	ULONG64 LoadLibraryAddress;  // Address of LoadLibraryW
 	BOOLEAN Success;
+};
+
+// ============== PspCidTable Enumeration Structures ==============
+
+#define MAX_CID_ENTRIES 2048  // Maximum entries to return
+
+enum CidObjectType : UCHAR
+{
+	CidProcess = 1,
+	CidThread = 2
+};
+
+struct CidEntry
+{
+	ULONG Id;              // PID or TID
+	ULONG64 ObjectAddress; // EPROCESS or ETHREAD address
+	CidObjectType Type;    // Process or Thread
+};
+
+struct EnumCidTableResponse
+{
+	ULONG Count;           // Number of entries returned
+	CidEntry Entries[1];   // Variable length array
 };
 
 // ============== Callback Enumeration Structures ==============

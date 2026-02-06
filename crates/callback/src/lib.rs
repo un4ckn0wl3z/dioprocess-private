@@ -10,6 +10,7 @@
 
 mod driver;
 mod error;
+mod pspcidtable;
 pub mod storage;
 mod types;
 
@@ -20,5 +21,6 @@ pub use driver::{
     stop_collection, unprotect_process, unregister_callbacks, CallbackInfo,
 };
 pub use error::CallbackError;
+pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
 pub use storage::{EventFilter, EventStorage};
 pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};

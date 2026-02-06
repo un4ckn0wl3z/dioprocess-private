@@ -1,5 +1,6 @@
 //! Kernel Utilities Tab - Advanced kernel-mode features
 
+use callback::{enumerate_pspcidtable, CidEntry, CidObjectType};
 use dioxus::prelude::*;
 
 /// Callback type selector
@@ -19,6 +20,12 @@ pub fn KernelUtilitiesTab() -> Element {
     let mut is_enumerating = use_signal(|| false);
     let mut status_message = use_signal(|| String::new());
     let mut status_is_error = use_signal(|| false);
+
+    // PspCidTable enumeration state
+    let mut cid_entries = use_signal(|| Vec::<CidEntry>::new());
+    let mut cid_status = use_signal(|| String::new());
+    let mut cid_is_enumerating = use_signal(|| false);
+    let mut cid_status_is_error = use_signal(|| false);
 
     // Handle enumerate button click
     let handle_enumerate = move |_| {
@@ -60,11 +67,50 @@ pub fn KernelUtilitiesTab() -> Element {
         });
     };
 
+    // Handle PspCidTable enumerate button click
+    let handle_cid_enumerate = move |_| {
+        let is_running = *cid_is_enumerating.read();
+        if is_running {
+            return;
+        }
+
+        cid_is_enumerating.set(true);
+        cid_status.set(String::new());
+
+        spawn(async move {
+            let result = tokio::task::spawn_blocking(move || enumerate_pspcidtable()).await;
+
+            match result {
+                Ok(Ok(entries)) => {
+                    let count = entries.len();
+                    cid_entries.set(entries);
+                    cid_status.set(format!("Found {} CID entries (processes and threads)", count));
+                    cid_status_is_error.set(false);
+                }
+                Ok(Err(e)) => {
+                    cid_status.set(format!("Error: {}", e));
+                    cid_status_is_error.set(true);
+                }
+                Err(e) => {
+                    cid_status.set(format!("Task error: {}", e));
+                    cid_status_is_error.set(true);
+                }
+            }
+
+            cid_is_enumerating.set(false);
+        });
+    };
+
     let callback_list = callbacks.read().clone();
     let is_running = *is_enumerating.read();
     let status_msg = status_message.read().clone();
     let is_error = *status_is_error.read();
     let current_type = *callback_type.read();
+
+    let cid_list = cid_entries.read().clone();
+    let cid_is_running = *cid_is_enumerating.read();
+    let cid_status_msg = cid_status.read().clone();
+    let cid_is_error = *cid_status_is_error.read();
 
     rsx! {
         div {
@@ -203,6 +249,90 @@ pub fn KernelUtilitiesTab() -> Element {
                         div {
                             style: "text-align: center; padding: 40px; color: #6b7280; margin-top: 20px; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(0, 212, 255, 0.1); border-radius: 8px;",
                             "No active callbacks found for this type"
+                        }
+                    }
+                }
+
+                // PspCidTable Enumeration section
+                div {
+                    style: "background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(0, 212, 255, 0.15); border-radius: 8px; padding: 20px;",
+
+                    h2 {
+                        style: "color: #00d4ff; margin-bottom: 4px; font-size: 16px;",
+                        "PspCidTable Enumeration"
+                    }
+                    p {
+                        style: "color: #9ca3af; font-size: 12px; margin-bottom: 16px;",
+                        "Enumerate all processes and threads by parsing the kernel's PspCidTable handle table. This table stores all EPROCESS (process) and ETHREAD (thread) objects indexed by PID/TID. Uses signature scanning to dynamically locate PspCidTable (no hardcoded offsets). Read-only operation — PatchGuard/KPP safe."
+                    }
+
+                    // Enumerate button
+                    div {
+                        style: "display: flex; gap: 16px; align-items: flex-end;",
+                        button {
+                            class: "btn btn-primary",
+                            disabled: !driver_loaded || cid_is_running,
+                            onclick: handle_cid_enumerate,
+                            if cid_is_running {
+                                "Enumerating..."
+                            } else {
+                                "Enumerate PspCidTable"
+                            }
+                        }
+                    }
+
+                    // Status message
+                    if !cid_status_msg.is_empty() {
+                        div {
+                            class: if cid_is_error { "create-process-status create-process-status-error" } else { "create-process-status create-process-status-success" },
+                            style: "margin-top: 16px;",
+                            "{cid_status_msg}"
+                        }
+                    }
+
+                    // Results table
+                    if !cid_list.is_empty() {
+                        div {
+                            style: "margin-top: 20px;",
+
+                            // Table header
+                            div {
+                                style: "display: grid; grid-template-columns: 120px 140px 180px; gap: 12px; padding: 12px 16px; background: rgba(34, 211, 238, 0.1); border: 1px solid rgba(34, 211, 238, 0.2); border-radius: 8px 8px 0 0; font-weight: 600; font-size: 13px; color: #22d3ee;",
+                                div { "Type" }
+                                div { "ID" }
+                                div { "Object Address" }
+                            }
+
+                            // Table rows
+                            for entry in cid_list.iter() {
+                                div {
+                                    key: "{entry.id}-{entry.object_address}",
+                                    style: "display: grid; grid-template-columns: 120px 140px 180px; gap: 12px; padding: 12px 16px; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(0, 212, 255, 0.1); border-top: none; font-size: 13px; color: #d1d5db; transition: background 0.15s;",
+
+                                    div {
+                                        if entry.object_type == CidObjectType::Process {
+                                            span { style: "color: #10b981; font-weight: 600;", "Process" }
+                                        } else {
+                                            span { style: "color: #3b82f6; font-weight: 600;", "Thread" }
+                                        }
+                                    }
+                                    div { style: "color: #e2e8f0;", "{entry.id}" }
+                                    div { style: "font-family: 'Courier New', monospace; color: #22d3ee;", "0x{entry.object_address:016X}" }
+                                }
+                            }
+
+                            // Last row border fix
+                            div {
+                                style: "height: 1px; background: rgba(34, 211, 238, 0.2);",
+                            }
+                        }
+                    }
+
+                    // Empty state
+                    if cid_list.is_empty() && !cid_is_running && !cid_status_msg.is_empty() && !cid_is_error {
+                        div {
+                            style: "text-align: center; padding: 40px; color: #6b7280; margin-top: 20px; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(0, 212, 255, 0.1); border-radius: 8px;",
+                            "No CID entries found"
                         }
                     }
                 }

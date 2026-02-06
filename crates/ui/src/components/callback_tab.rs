@@ -1,8 +1,9 @@
 //! System Events tab component (Kernel Callback Monitor)
 
 use callback::{
-    get_collection_state, is_driver_loaded, read_events, start_collection, stop_collection,
-    CallbackEvent, EventCategory, EventFilter, EventStorage, EventType,
+    get_collection_state, is_driver_loaded, read_events, start_collection,
+    stop_collection, CallbackEvent, EventCategory, EventFilter,
+    EventStorage, EventType,
 };
 use dioxus::prelude::*;
 use std::sync::Arc;

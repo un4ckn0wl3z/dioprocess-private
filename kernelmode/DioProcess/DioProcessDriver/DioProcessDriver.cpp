@@ -1508,6 +1508,176 @@ NTSTATUS KernelInjectShellcode(ULONG ProcessId, PVOID Shellcode, SIZE_T Shellcod
 	}
 }
 
+// ============== PspCidTable Enumeration ==============
+
+// Find PspCidTable address dynamically via signature scanning
+PVOID64 GetPspCidTableAddress()
+{
+	// Get PsLookupProcessByProcessId address
+	UNICODE_STRING funcName;
+	RtlInitUnicodeString(&funcName, L"PsLookupProcessByProcessId");
+	PUCHAR funcAddr = (PUCHAR)MmGetSystemRoutineAddress(&funcName);
+	if (!funcAddr)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to get PsLookupProcessByProcessId address\n"));
+		return NULL;
+	}
+
+	// Search for CALL instruction (0xE8) in first 100 bytes
+	// This calls PspReferenceCidTableEntry
+	PUCHAR callSite = NULL;
+	for (INT i = 0; i < 100; i++)
+	{
+		if (funcAddr[i] == 0xE8)
+		{
+			callSite = funcAddr + i;
+			break;
+		}
+	}
+
+	if (!callSite)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find CALL to PspReferenceCidTableEntry\n"));
+		return NULL;
+	}
+
+	// Parse CALL offset and calculate target address
+	INT callOffset = *(INT*)(callSite + 1);
+	PUCHAR pspRefCidEntry = callSite + callOffset + 5;
+
+	// Inside PspReferenceCidTableEntry, search for "MOV rcx, [PspCidTable]"
+	// Pattern: 48 8B 0D ?? ?? ?? ??
+	for (INT i = 0; i < 0x120; i++)
+	{
+		if (pspRefCidEntry[i] == 0x48 &&
+			pspRefCidEntry[i + 1] == 0x8B &&
+			pspRefCidEntry[i + 2] == 0x0D)
+		{
+			// Parse MOV offset
+			INT movOffset = *(INT*)(pspRefCidEntry + i + 3);
+			PVOID64 pspCidTableAddr = (PVOID64)(pspRefCidEntry + i + movOffset + 7);
+
+			KdPrint((DRIVER_PREFIX "Found PspCidTable at: %p\n", pspCidTableAddr));
+			return pspCidTableAddr;
+		}
+	}
+
+	KdPrint((DRIVER_PREFIX "Failed to find PspCidTable reference\n"));
+	return NULL;
+}
+
+// Decrypt handle table entry (Windows 10/11)
+ULONG64 DecryptCidEntry(ULONG64 encryptedValue)
+{
+	// Decryption: (value >> 0x10) & 0xFFFFFFFFFFFFFFF0
+	ULONG64 decrypted = (LONG64)encryptedValue >> 0x10;
+	decrypted &= 0xFFFFFFFFFFFFFFF0;
+	return decrypted;
+}
+
+// Parse level-1 table (stores actual EPROCESS/ETHREAD entries)
+VOID ParseCidTable1(ULONG64 baseAddr, INT index1, INT index2, CidEntry* entries, ULONG* count, ULONG maxEntries)
+{
+	PEPROCESS eProcess = NULL;
+	PETHREAD eThread = NULL;
+
+	// Each entry is 16 bytes, 256 entries per table
+	for (INT i = 0; i < 256 && *count < maxEntries; i++)
+	{
+		ULONG64 entryAddr = baseAddr + (i * 16);
+
+		__try
+		{
+			if (!MmIsAddressValid((PVOID)entryAddr))
+				continue;
+
+			ULONG64 encryptedValue = *(PULONG64)entryAddr;
+			if (encryptedValue == 0)
+				continue;
+
+			// Decrypt entry
+			ULONG64 objectAddr = DecryptCidEntry(encryptedValue);
+			if (!MmIsAddressValid((PVOID)objectAddr))
+				continue;
+
+			// Calculate ID: i * 4 + 1024 * index1 + 512 * 1024 * index2
+			ULONG id = i * 4 + 1024 * index1 + 512 * 1024 * index2;
+
+			// Determine if it's a process or thread
+			if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)id, &eProcess)))
+			{
+				entries[*count].Id = id;
+				entries[*count].ObjectAddress = objectAddr;
+				entries[*count].Type = CidObjectType::CidProcess;
+				(*count)++;
+				ObDereferenceObject(eProcess);
+			}
+			else if (NT_SUCCESS(PsLookupThreadByThreadId((HANDLE)(ULONG_PTR)id, &eThread)))
+			{
+				entries[*count].Id = id;
+				entries[*count].ObjectAddress = objectAddr;
+				entries[*count].Type = CidObjectType::CidThread;
+				(*count)++;
+				ObDereferenceObject(eThread);
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			continue;
+		}
+	}
+}
+
+// Parse level-2 table (stores pointers to level-1 tables)
+VOID ParseCidTable2(ULONG64 baseAddr, INT index2, CidEntry* entries, ULONG* count, ULONG maxEntries)
+{
+	// Each entry is 8 bytes (pointer), 512 entries per table
+	for (INT i = 0; i < 512 && *count < maxEntries; i++)
+	{
+		__try
+		{
+			ULONG64 ptrAddr = baseAddr + (i * 8);
+			if (!MmIsAddressValid((PVOID)ptrAddr))
+				continue;
+
+			ULONG64 table1Addr = *(PULONG64)ptrAddr;
+			if (!MmIsAddressValid((PVOID)table1Addr))
+				continue;
+
+			ParseCidTable1(table1Addr, i, index2, entries, count, maxEntries);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			continue;
+		}
+	}
+}
+
+// Parse level-3 table (stores pointers to level-2 tables)
+VOID ParseCidTable3(ULONG64 baseAddr, CidEntry* entries, ULONG* count, ULONG maxEntries)
+{
+	// Each entry is 8 bytes (pointer), 512 entries per table
+	for (INT i = 0; i < 512 && *count < maxEntries; i++)
+	{
+		__try
+		{
+			ULONG64 ptrAddr = baseAddr + (i * 8);
+			if (!MmIsAddressValid((PVOID)ptrAddr))
+				continue;
+
+			ULONG64 table2Addr = *(PULONG64)ptrAddr;
+			if (!MmIsAddressValid((PVOID)table2Addr))
+				continue;
+
+			ParseCidTable2(table2Addr, i, entries, count, maxEntries);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			continue;
+		}
+	}
+}
+
 NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 {
 	auto irpSp = IoGetCurrentIrpStackLocation(Irp);
@@ -2308,6 +2478,97 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			response->LoadLibraryAddress = 0;
 			info = sizeof(KernelInjectDllResponse);
 			KdPrint((DRIVER_PREFIX "Kernel DLL injection failed: 0x%X\n", status));
+		}
+
+		break;
+	}
+
+	// ============== PspCidTable Enumeration IOCTL ==============
+
+	case IOCTL_DIOPROCESS_ENUM_PSPCIDTABLE:
+	{
+		KdPrint((DRIVER_PREFIX "PspCidTable enumeration request\n"));
+
+		auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+		ULONG requiredSize = sizeof(EnumCidTableResponse) + (sizeof(CidEntry) * (MAX_CID_ENTRIES - 1));
+
+		if (outputLen < requiredSize)
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		auto response = (EnumCidTableResponse*)Irp->AssociatedIrp.SystemBuffer;
+		if (!response)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		// Find PspCidTable
+		PVOID64 pspCidTableAddr = GetPspCidTableAddress();
+		if (!pspCidTableAddr)
+		{
+			KdPrint((DRIVER_PREFIX "Failed to locate PspCidTable\n"));
+			status = STATUS_NOT_FOUND;
+			break;
+		}
+
+		__try
+		{
+			// Get HANDLE_TABLE pointer
+			PVOID64 handleTable = *(PVOID64*)pspCidTableAddr;
+			if (!MmIsAddressValid(handleTable))
+			{
+				KdPrint((DRIVER_PREFIX "Invalid HANDLE_TABLE address\n"));
+				status = STATUS_INVALID_ADDRESS;
+				break;
+			}
+
+			// Get TableCode (offset +8 in _HANDLE_TABLE)
+			ULONG64 tableCode = *(PULONG64)((ULONG64)handleTable + 8);
+			KdPrint((DRIVER_PREFIX "TableCode: %p\n", tableCode));
+
+			// Extract table level from lower 2 bits
+			INT tableLevel = (INT)(tableCode & 3);
+			ULONG64 tableBase = tableCode & ~3ULL;
+
+			KdPrint((DRIVER_PREFIX "Table level: %d, Base: %p\n", tableLevel, tableBase));
+
+			// Initialize response
+			response->Count = 0;
+
+			// Parse based on table level
+			if (tableLevel == 0)
+			{
+				// Level-1 table
+				ParseCidTable1(tableBase, 0, 0, response->Entries, &response->Count, MAX_CID_ENTRIES);
+			}
+			else if (tableLevel == 1)
+			{
+				// Level-2 table
+				ParseCidTable2(tableBase, 0, response->Entries, &response->Count, MAX_CID_ENTRIES);
+			}
+			else if (tableLevel == 2)
+			{
+				// Level-3 table
+				ParseCidTable3(tableBase, response->Entries, &response->Count, MAX_CID_ENTRIES);
+			}
+			else
+			{
+				KdPrint((DRIVER_PREFIX "Invalid table level: %d\n", tableLevel));
+				status = STATUS_INVALID_PARAMETER;
+				break;
+			}
+
+			KdPrint((DRIVER_PREFIX "Enumerated %u CID entries\n", response->Count));
+			info = sizeof(EnumCidTableResponse) + (sizeof(CidEntry) * (response->Count > 0 ? response->Count - 1 : 0));
+			status = STATUS_SUCCESS;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			KdPrint((DRIVER_PREFIX "Exception during PspCidTable enumeration\n"));
+			status = STATUS_UNSUCCESSFUL;
 		}
 
 		break;
