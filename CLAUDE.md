@@ -29,10 +29,11 @@ crates/
 │       ├── types.rs   # CallbackEvent, EventType, EventCategory, RegistryOperation
 │       ├── driver.rs  # Driver communication (is_driver_loaded, read_events, protect_process, unprotect_process, enable_all_privileges)
 │       └── storage.rs # SQLite persistence (EventStorage, EventFilter, batched writes)
-├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, ghostly hollowing, process herpaderping, herpaderping hollowing, token theft, module unloading, memory ops
+├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, kernel injection, process creation, process hollowing, ghostly hollowing, process herpaderping, herpaderping hollowing, token theft, module unloading, memory ops
 │   └── src/
 │       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
 │       ├── error.rs                    # MiscError enum, Display, Error impls
+│       ├── kernel_inject.rs            # Kernel shellcode/DLL injection via RtlCreateUserThread
 │       ├── unhook.rs                   # DLL unhooking (restore .text from disk)
 │       ├── hook_scanner.rs             # IAT hook detection (E9/E8/EB/FF25/MOV+JMP patterns)
 │       ├── injection/
@@ -243,7 +244,47 @@ Win 11 24H2 (26100):  0x87a (⚠️ needs verification)
 Right-click process → Miscellaneous → **🛡️ Protect Process** / **🔓 Unprotect Process**
 (Buttons disabled/grayed when driver not loaded)
 
-### 2. Token Privilege Escalation
+### 2. Kernel Injection (shellcode + DLL)
+
+**Functions:**
+- `misc::kernel_inject_shellcode(pid: u32, shellcode: &[u8]) -> Result<u64, MiscError>` — Inject shellcode from kernel mode
+- `misc::kernel_inject_dll(pid: u32, dll_path: &str) -> Result<(u64, u64), MiscError>` — Inject DLL from kernel mode
+
+**Implementation:**
+Located in `kernelmode/DioProcess/DioProcessDriver/DioProcessDriver.cpp` (kernel functions) and `crates/misc/src/kernel_inject.rs` (Rust bindings).
+
+**Algorithm (Shellcode):**
+1. Dynamically resolve `RtlCreateUserThread` via `MmGetSystemRoutineAddress`
+2. `PsLookupProcessByProcessId()` to get `EPROCESS` pointer
+3. `KeStackAttachProcess()` to attach to target process context
+4. `ZwAllocateVirtualMemory()` to allocate RWX memory in target
+5. `RtlCopyMemory()` to write shellcode bytes
+6. `RtlCreateUserThread(process, NULL, FALSE, 0, 0, 0, shellcode_addr, NULL, &hThread, NULL)`
+7. `ZwClose(hThread)`, `KeUnstackDetachProcess()`, `ObDereferenceObject()`
+
+**Algorithm (DLL):**
+1. Resolve `RtlCreateUserThread` dynamically
+2. Get `LoadLibraryW` address in target process:
+   - Get PEB via `PROCESS_PEB_OFFSET[GetWindowsVersion()]`
+   - Walk `PEB->Ldr->InLoadOrderModuleList` to find `kernel32.dll`
+   - Parse PE export directory to find `LoadLibraryW`
+3. Attach to target process
+4. Allocate memory for wide-char DLL path
+5. Write DLL path via `RtlCopyMemory`
+6. `RtlCreateUserThread(process, NULL, FALSE, 0, 0, 0, LoadLibraryW_addr, dll_path_addr, &hThread, NULL)`
+7. Cleanup
+
+**IOCTLs:**
+```cpp
+IOCTL_DIOPROCESS_KERNEL_INJECT_SHELLCODE  // 0x00222030
+IOCTL_DIOPROCESS_KERNEL_INJECT_DLL        // 0x00222034
+```
+
+**UI Access:**
+Right-click process → Miscellaneous → **Kernel Injection** → Shellcode Injection / DLL Injection
+(Submenu disabled/grayed when driver not loaded)
+
+### 3. Token Privilege Escalation
 
 **Function:**
 - `callback::enable_all_privileges(pid: u32) -> Result<(), CallbackError>` — Enable all Windows privileges

@@ -32,6 +32,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - Supports Windows 10 (1507-22H2) and Windows 11 (21H2-24H2)
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
 - **Shellcode injection** — classic (from .bin file), web staging (download from URL via WinInet), and threadless (hook exported function, no new threads)
+- **Kernel injection** (requires driver) — shellcode & DLL injection from kernel mode via `RtlCreateUserThread`, bypasses usermode hooks
 - **DLL Unhooking** — restore hooked DLLs (ntdll, kernel32, kernelbase, user32, advapi32, ws2_32) by replacing .text section from disk
 - **Hook Detection & Unhooking** — scan IAT entries for inline hooks (E9 JMP, E8 CALL, EB short JMP, FF25 indirect JMP, MOV+JMP x64 patterns), compare with disk, and optionally unhook detected hooks
 - **Process String Scanning** — extract ASCII and UTF-16 strings from process memory with configurable min length, encoding filter, paginated results (1000/page), and text export
@@ -102,6 +103,23 @@ kernelmode/
 3. **Threadless** — Hook an exported function (e.g. `USER32!MessageBoxW`) with a CALL trampoline → payload fires when the function is naturally called by the target process (no `CreateRemoteThread`). Self-healing hook restores original bytes after execution.
 
 Access via context menu: **Miscellaneous → Shellcode Injection → Classic**, **Web Staging**, or **Threadless**
+
+### Kernel Injection (requires driver)
+
+Located in `crates/misc/src/kernel_inject.rs` + `kernelmode/DioProcess/DioProcessDriver/DioProcessDriver.cpp`:
+
+1. **Kernel Shellcode Injection** — Allocate RWX memory in target process, write shellcode, create thread via `RtlCreateUserThread` from kernel mode (bypasses usermode hooks)
+2. **Kernel DLL Injection** — Allocate memory for DLL path, resolve `LoadLibraryW` address in target process via PEB walking + PE export parsing, create thread with `RtlCreateUserThread(LoadLibraryW, dll_path)`
+
+**Implementation:**
+- Uses undocumented `RtlCreateUserThread` kernel API (resolved dynamically via `MmGetSystemRoutineAddress`)
+- Attaches to target process context via `KeStackAttachProcess`
+- Allocates memory via `ZwAllocateVirtualMemory`, writes data via `RtlCopyMemory`
+- For DLL injection: walks PEB→Ldr→InLoadOrderModuleList to find `kernel32.dll`, parses PE exports to find `LoadLibraryW`
+- Version-aware PEB access using `PROCESS_PEB_OFFSET[]` table (supports Windows 10 1507+ and Windows 11)
+- Returns `STATUS_NOT_SUPPORTED` for unsupported Windows versions
+
+**Access:** Right-click process → **Miscellaneous → Kernel Injection** → Shellcode Injection or DLL Injection (grayed out when driver not loaded)
 
 ### Process Creation & Stealth
 
