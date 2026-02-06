@@ -17,12 +17,15 @@ pub fn StringScanWindow(pid: u32, process_name: String) -> Element {
     let mut context_menu = use_signal(|| StringScanContextMenuState::default());
     let mut min_length = use_signal(|| 4usize);
     let mut encoding_filter = use_signal(|| EncodingFilter::All);
+    let mut current_page = use_signal(|| 0usize);
+    const ITEMS_PER_PAGE: usize = 1000;
 
     // Trigger scan
     let trigger_scan = move |_| {
         is_scanning.set(true);
         status_message.set("Scanning process memory for strings...".to_string());
         scan_results.set(Vec::new());
+        current_page.set(0);
 
         let min_len = *min_length.read();
 
@@ -81,6 +84,17 @@ pub fn StringScanWindow(pid: u32, process_name: String) -> Element {
 
     let total_count = scan_results.read().len();
     let filtered_count = filtered_results.len();
+    let total_pages = if filtered_count == 0 { 1 } else { (filtered_count + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE };
+
+    // Clamp current page if filters reduced results
+    if *current_page.read() >= total_pages {
+        current_page.set(total_pages.saturating_sub(1));
+    }
+
+    let page = *current_page.read();
+    let page_start = page * ITEMS_PER_PAGE;
+    let page_end = ((page + 1) * ITEMS_PER_PAGE).min(filtered_count);
+    let paged_results: Vec<(usize, StringResult)> = filtered_results[page_start..page_end].to_vec();
 
     // Export function
     let export_results = {
@@ -171,9 +185,9 @@ pub fn StringScanWindow(pid: u32, process_name: String) -> Element {
                     span {
                         class: "thread-count",
                         if filtered_count != total_count {
-                            "Strings: {filtered_count}/{total_count}"
+                            "Strings: {filtered_count}/{total_count} (page {page + 1}/{total_pages})"
                         } else {
-                            "Strings: {total_count}"
+                            "Strings: {total_count} (page {page + 1}/{total_pages})"
                         }
                     }
 
@@ -213,6 +227,7 @@ pub fn StringScanWindow(pid: u32, process_name: String) -> Element {
                                 "utf16" => encoding_filter.set(EncodingFilter::Utf16Only),
                                 _ => encoding_filter.set(EncodingFilter::All),
                             }
+                            current_page.set(0);
                         },
                         option { value: "all", "All Encodings" }
                         option { value: "ascii", "ASCII Only" }
@@ -225,7 +240,10 @@ pub fn StringScanWindow(pid: u32, process_name: String) -> Element {
                         r#type: "text",
                         placeholder: "Filter strings...",
                         value: "{filter_query}",
-                        oninput: move |e| filter_query.set(e.value().clone()),
+                        oninput: move |e| {
+                            filter_query.set(e.value().clone());
+                            current_page.set(0);
+                        },
                     }
 
                     button {
@@ -270,7 +288,7 @@ pub fn StringScanWindow(pid: u32, process_name: String) -> Element {
                             }
                         }
                         tbody {
-                            if filtered_results.is_empty() && !*is_scanning.read() {
+                            if paged_results.is_empty() && !*is_scanning.read() {
                                 tr {
                                     td { colspan: 5, style: "text-align: center; padding: 20px;",
                                         if total_count == 0 {
@@ -281,7 +299,7 @@ pub fn StringScanWindow(pid: u32, process_name: String) -> Element {
                                     }
                                 }
                             } else {
-                                for (idx, result) in filtered_results.iter() {
+                                for (idx, result) in paged_results.iter() {
                                     {
                                         let current_idx = *idx;
                                         let result_clone = result.clone();
@@ -328,6 +346,42 @@ pub fn StringScanWindow(pid: u32, process_name: String) -> Element {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Pagination controls
+                if total_pages > 1 {
+                    div {
+                        class: "pagination-controls",
+                        style: "display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 12px; border-top: 1px solid #374151;",
+                        button {
+                            class: "btn btn-small btn-secondary",
+                            disabled: page == 0,
+                            onclick: move |_| { current_page.set(0); },
+                            "<<"
+                        }
+                        button {
+                            class: "btn btn-small btn-secondary",
+                            disabled: page == 0,
+                            onclick: move |_| { current_page.set(page.saturating_sub(1)); },
+                            "<"
+                        }
+                        span {
+                            style: "color: #d1d5db; font-size: 13px;",
+                            "Page {page + 1} of {total_pages}"
+                        }
+                        button {
+                            class: "btn btn-small btn-secondary",
+                            disabled: page + 1 >= total_pages,
+                            onclick: move |_| { current_page.set(page + 1); },
+                            ">"
+                        }
+                        button {
+                            class: "btn btn-small btn-secondary",
+                            disabled: page + 1 >= total_pages,
+                            onclick: move |_| { current_page.set(total_pages - 1); },
+                            ">>"
                         }
                     }
                 }
