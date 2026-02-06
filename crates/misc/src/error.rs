@@ -42,6 +42,7 @@ pub enum MiscError {
     GhostSetupFailed(String),
     PPidSpoofFailed(String),
     HookScanFailed(String),
+    VirtualProtectFailed,
 }
 
 impl fmt::Display for MiscError {
@@ -96,6 +97,7 @@ impl fmt::Display for MiscError {
             MiscError::GhostSetupFailed(msg) => write!(f, "Ghost process setup failed: {}", msg),
             MiscError::PPidSpoofFailed(msg) => write!(f, "PPID spoofing failed: {}", msg),
             MiscError::HookScanFailed(msg) => write!(f, "Hook scan failed: {}", msg),
+            MiscError::VirtualProtectFailed => write!(f, "VirtualProtectEx failed to set memory protection"),
         }
     }
 }

@@ -24,6 +24,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - Registry operations (create, open, set, delete, rename, query)
   - **SQLite persistence** with 24-hour retention and paginated UI
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
+- **Shellcode injection** — classic remote shellcode execution from raw .bin files (VirtualAllocEx + WriteProcessMemory + CreateRemoteThread)
 - **DLL Unhooking** — restore hooked DLLs (ntdll, kernel32, kernelbase, user32, advapi32, ws2_32) by replacing .text section from disk
 - **Hook Detection & Unhooking** — scan IAT entries for inline hooks (E9 JMP, E8 CALL, EB short JMP, FF25 indirect JMP, MOV+JMP x64 patterns), compare with disk, and optionally unhook detected hooks
 - **Process String Scanning** — extract ASCII and UTF-16 strings from process memory with configurable min length, encoding filter, paginated results (1000/page), and text export
@@ -53,7 +54,8 @@ crates/
 │   └── src/
 │       ├── lib.rs              # Module declarations + pub use re-exports
 │       ├── error.rs            # MiscError enum
-│       ├── injection/          # 7 injection techniques (each in own file)
+│       ├── injection/          # 7 DLL injection techniques (each in own file)
+│       ├── shellcode_inject/   # Shellcode injection techniques (classic, etc.)
 │       ├── memory.rs           # commit/decommit/free memory
 │       ├── module.rs           # unload_module
 │       ├── process/            # create, ppid_spoof, hollow, ghost
@@ -81,6 +83,12 @@ kernelmode/
 5. **Remote Mapping** — `CreateFileMapping` + `NtMapViewOfSection` (no `VirtualAllocEx`)
 6. **Function Stomping** — Overwrite sacrificial function (e.g. `setupapi!SetupScanFileQueueA`) with shellcode
 7. **Manual Mapping** — PE parsing, section mapping, import resolution, per-section memory protections, `FlushInstructionCache`, call `DllMain`
+
+### Shellcode Injection Methods (misc crate)
+
+1. **Classic** — Read raw shellcode from `.bin` file → `VirtualAllocEx(RW)` → `WriteProcessMemory` → `VirtualProtectEx(RWX)` → `CreateRemoteThread`
+
+Access via context menu: **Miscellaneous → Shellcode Injection → Classic**
 
 ### Process Creation & Stealth
 

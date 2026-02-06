@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
-use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, unhook_dll_remote_by_path, enumerate_process_modules};
+use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, inject_shellcode_classic, unhook_dll_remote_by_path, enumerate_process_modules};
 use process::{
     get_processes, get_system_stats, kill_process, open_file_location, resume_process,
     suspend_process, ProcessInfo,
@@ -1201,6 +1201,63 @@ pub fn ProcessTab() -> Element {
                                         },
                                         span { "🗺️" }
                                         span { "Manual Map" }
+                                    }
+                                }
+                            }
+
+                            // Shellcode Injection sub-submenu
+                            div {
+                                class: "context-menu-submenu",
+                                div {
+                                    class: "context-menu-submenu-trigger",
+                                    span { "🎯" }
+                                    span { "Shellcode Injection" }
+                                    span { class: "arrow", "▶" }
+                                }
+                                div {
+                                    class: "context-menu-submenu-content",
+                                    // Classic method
+                                    button {
+                                        class: "context-menu-item",
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("Shellcode Binary", &["bin"])
+                                                        .add_filter("All Files", &["*"])
+                                                        .set_title("Select Shellcode (.bin)")
+                                                        .pick_file()
+                                                        .await;
+
+                                                    if let Some(file) = file {
+                                                        let path = file.path().to_string_lossy().to_string();
+                                                        match inject_shellcode_classic(pid, &path) {
+                                                            Ok(()) => {
+                                                                status_message.set(format!(
+                                                                    "✓ Shellcode injected into process {} (Classic)",
+                                                                    pid
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Shellcode injection failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        span { "🎯" }
+                                        span { "Classic" }
                                     }
                                 }
                             }

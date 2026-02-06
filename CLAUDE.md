@@ -46,6 +46,9 @@ crates/
 │       │   └── manual_map.rs           # inject_dll_manual_map()
 │       ├── memory.rs                   # commit_memory(), decommit_memory(), free_memory()
 │       ├── module.rs                   # unload_module()
+│       ├── shellcode_inject/
+│       │   ├── mod.rs                  # Re-exports all shellcode injection functions
+│       │   └── classic.rs              # inject_shellcode_classic()
 │       ├── process/
 │       │   ├── mod.rs                  # Re-exports all process functions
 │       │   ├── create.rs               # create_process()
@@ -152,6 +155,14 @@ Each injection method is in its own file under `crates/misc/src/injection/`:
 5. **Remote Mapping** (`remote_mapping.rs`) — CreateFileMappingW + MapViewOfFile locally + NtMapViewOfSection remotely; avoids VirtualAllocEx/WriteProcessMemory entirely
 6. **Function Stomping** (`function_stomping.rs`) — Overwrite a sacrificial function (default: setupapi.dll!SetupScanFileQueueA) in the remote process with LoadLibraryW shellcode; avoids new executable memory allocation
 7. **Manual Mapping** (`manual_map.rs`) — Parse PE, map sections, resolve imports with LoadLibraryA fallback, apply per-section memory protections (PAGE_EXECUTE_READ for .text, PAGE_READWRITE for .data, etc.), FlushInstructionCache, call DllMain via shellcode
+
+## Shellcode injection methods (misc crate)
+
+Each shellcode injection method is in its own file under `crates/misc/src/shellcode_inject/`:
+
+1. **Classic** (`classic.rs`) — Read raw shellcode from .bin file, `OpenProcess` → `VirtualAllocEx(PAGE_READWRITE)` → `WriteProcessMemory` → `VirtualProtectEx(PAGE_EXECUTE_READWRITE)` → `CreateRemoteThread` at shellcode address
+
+Access via right-click context menu > Miscellaneous > Shellcode Injection > Classic. User selects a `.bin` file containing raw shellcode bytes.
 
 ## Process creation methods (misc crate)
 
