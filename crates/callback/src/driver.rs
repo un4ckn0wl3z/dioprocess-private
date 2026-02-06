@@ -20,6 +20,8 @@ const READ_BUFFER_SIZE: usize = 1024 * 1024; // 1MB buffer
 const IOCTL_DIOPROCESS_START_COLLECTION: u32 = 0x00222000;
 const IOCTL_DIOPROCESS_STOP_COLLECTION: u32 = 0x00222004;
 const IOCTL_DIOPROCESS_GET_COLLECTION_STATE: u32 = 0x00222008;
+const IOCTL_DIOPROCESS_REGISTER_CALLBACKS: u32 = 0x0022200C;
+const IOCTL_DIOPROCESS_UNREGISTER_CALLBACKS: u32 = 0x00222010;
 
 /// Check if the ProcessMonitorEx driver is loaded
 pub fn is_driver_loaded() -> bool {
@@ -86,8 +88,70 @@ fn open_device() -> Result<HANDLE, CallbackError> {
     }
 }
 
+/// Register kernel callbacks
+pub fn register_callbacks() -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_REGISTER_CALLBACKS,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Unregister kernel callbacks
+pub fn unregister_callbacks() -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_UNREGISTER_CALLBACKS,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
 /// Start event collection in the kernel driver
+/// This will register callbacks if not already registered, then enable collection
 pub fn start_collection() -> Result<(), CallbackError> {
+    // First, register callbacks
+    register_callbacks()?;
+
     let handle = open_device()?;
 
     unsafe {
@@ -116,6 +180,7 @@ pub fn start_collection() -> Result<(), CallbackError> {
 }
 
 /// Stop event collection in the kernel driver
+/// This will disable collection and unregister all callbacks
 pub fn stop_collection() -> Result<(), CallbackError> {
     let handle = open_device()?;
 
@@ -140,6 +205,9 @@ pub fn stop_collection() -> Result<(), CallbackError> {
             return Err(CallbackError::IoctlFailed(err.0));
         }
     }
+
+    // Then, unregister callbacks
+    unregister_callbacks()?;
 
     Ok(())
 }

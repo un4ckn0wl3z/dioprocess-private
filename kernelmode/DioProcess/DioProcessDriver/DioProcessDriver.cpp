@@ -5,6 +5,7 @@
 DioProcessState g_State;
 PVOID g_ObCallbackHandle = nullptr;
 LARGE_INTEGER g_RegistryCookie = { 0 };
+BOOLEAN g_CallbacksRegistered = FALSE;
 
 // Forward declarations
 VOID OnProcessCallback(
@@ -60,11 +61,6 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 	NTSTATUS status;
 	PDEVICE_OBJECT devObj = nullptr;
 	bool symLinkCreated = false;
-	bool procNotifyCreated = false;
-	bool threadNotifyCreated = false;
-	bool imageNotifyCreated = false;
-	bool obCallbackCreated = false;
-	bool registryCallbackCreated = false;
 
 	UNICODE_STRING symName = RTL_CONSTANT_STRING(L"\\??\\DioProcess");
 	UNICODE_STRING devName = RTL_CONSTANT_STRING(L"\\Device\\DioProcess");
@@ -96,111 +92,12 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 		}
 		symLinkCreated = true;
 
-		// Register process callback
-		status = PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, FALSE);
-		if (!NT_SUCCESS(status))
-		{
-			KdPrint((DRIVER_PREFIX "Failed to register process callback (0x%X)\n", status));
-			break;
-		}
-		procNotifyCreated = true;
-		KdPrint((DRIVER_PREFIX "Process callback registered\n"));
-
-		// Register thread callback
-		status = PsSetCreateThreadNotifyRoutine(OnThreadCallback);
-		if (!NT_SUCCESS(status))
-		{
-			KdPrint((DRIVER_PREFIX "Failed to register thread callback (0x%X)\n", status));
-			break;
-		}
-		threadNotifyCreated = true;
-		KdPrint((DRIVER_PREFIX "Thread callback registered\n"));
-
-		// Register image load callback
-		status = PsSetLoadImageNotifyRoutine(OnImageLoadCallback);
-		if (!NT_SUCCESS(status))
-		{
-			KdPrint((DRIVER_PREFIX "Failed to register image load callback (0x%X)\n", status));
-			break;
-		}
-		imageNotifyCreated = true;
-		KdPrint((DRIVER_PREFIX "Image load callback registered\n"));
-
-		// Register Object Manager callbacks for process and thread handle operations
-		OB_CALLBACK_REGISTRATION obCallbackReg = { 0 };
-		OB_OPERATION_REGISTRATION obOpReg[2] = { 0 };
-
-		obOpReg[0].ObjectType = PsProcessType;
-		obOpReg[0].Operations = OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE;
-		obOpReg[0].PreOperation = OnPreProcessHandleOperation;
-		obOpReg[0].PostOperation = nullptr;
-
-		obOpReg[1].ObjectType = PsThreadType;
-		obOpReg[1].Operations = OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE;
-		obOpReg[1].PreOperation = OnPreThreadHandleOperation;
-		obOpReg[1].PostOperation = nullptr;
-
-		UNICODE_STRING altitude = RTL_CONSTANT_STRING(L"321000");
-		obCallbackReg.Version = OB_FLT_REGISTRATION_VERSION;
-		obCallbackReg.OperationRegistrationCount = 2;
-		obCallbackReg.Altitude = altitude;
-		obCallbackReg.RegistrationContext = nullptr;
-		obCallbackReg.OperationRegistration = obOpReg;
-
-		status = ObRegisterCallbacks(&obCallbackReg, &g_ObCallbackHandle);
-		if (!NT_SUCCESS(status))
-		{
-			KdPrint((DRIVER_PREFIX "Failed to register OB callbacks (0x%X)\n", status));
-			// Don't fail driver load, just continue without OB callbacks
-			status = STATUS_SUCCESS;
-		}
-		else
-		{
-			obCallbackCreated = true;
-			KdPrint((DRIVER_PREFIX "Object Manager callbacks registered\n"));
-		}
-
-		// Register registry callback
-		UNICODE_STRING regAltitude = RTL_CONSTANT_STRING(L"321001");
-		status = CmRegisterCallbackEx(OnRegistryCallback, &regAltitude, DriverObject, nullptr, &g_RegistryCookie, nullptr);
-		if (!NT_SUCCESS(status))
-		{
-			KdPrint((DRIVER_PREFIX "Failed to register registry callback (0x%X)\n", status));
-			// Don't fail driver load, just continue without registry callbacks
-			status = STATUS_SUCCESS;
-		}
-		else
-		{
-			registryCallbackCreated = true;
-			KdPrint((DRIVER_PREFIX "Registry callback registered\n"));
-		}
-
 	} while (false);
 
 	if (!NT_SUCCESS(status))
 	{
 		KdPrint((DRIVER_PREFIX "ERROR in DriverEntry (0x%X)\n", status));
 
-		if (registryCallbackCreated)
-		{
-			CmUnRegisterCallback(g_RegistryCookie);
-		}
-		if (obCallbackCreated)
-		{
-			ObUnRegisterCallbacks(g_ObCallbackHandle);
-		}
-		if (imageNotifyCreated)
-		{
-			PsRemoveLoadImageNotifyRoutine(OnImageLoadCallback);
-		}
-		if (threadNotifyCreated)
-		{
-			PsRemoveCreateThreadNotifyRoutine(OnThreadCallback);
-		}
-		if (procNotifyCreated)
-		{
-			PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, TRUE);
-		}
 		if (symLinkCreated)
 		{
 			IoDeleteSymbolicLink(&symName);
@@ -215,13 +112,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 	g_State.Lock.Init();
 	InitializeListHead(&g_State.ItemsHead);
 	g_State.CollectionEnabled = FALSE;  // Collection disabled by default
+	g_CallbacksRegistered = FALSE;      // Callbacks not registered by default
 
 	DriverObject->DriverUnload = DioProcessUnload;
 	DriverObject->MajorFunction[IRP_MJ_CREATE] = DriverObject->MajorFunction[IRP_MJ_CLOSE] = DioProcessCreateClose;
 	DriverObject->MajorFunction[IRP_MJ_READ] = DioProcessRead;
 	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = DioProcessDeviceControl;
 
-	KdPrint((DRIVER_PREFIX "Driver loaded successfully\n"));
+	KdPrint((DRIVER_PREFIX "Driver loaded successfully (callbacks NOT registered yet)\n"));
 	return STATUS_SUCCESS;
 }
 
@@ -707,27 +605,32 @@ void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 {
 	KdPrint((DRIVER_PREFIX "Unloading driver\n"));
 
-	// Unregister callbacks in reverse order
-	if (g_RegistryCookie.QuadPart != 0)
+	// Unregister callbacks in reverse order if they were registered
+	if (g_CallbacksRegistered)
 	{
-		CmUnRegisterCallback(g_RegistryCookie);
-		KdPrint((DRIVER_PREFIX "Registry callback unregistered\n"));
+		if (g_RegistryCookie.QuadPart != 0)
+		{
+			CmUnRegisterCallback(g_RegistryCookie);
+			KdPrint((DRIVER_PREFIX "Registry callback unregistered\n"));
+		}
+
+		if (g_ObCallbackHandle)
+		{
+			ObUnRegisterCallbacks(g_ObCallbackHandle);
+			KdPrint((DRIVER_PREFIX "Object Manager callbacks unregistered\n"));
+		}
+
+		PsRemoveLoadImageNotifyRoutine(OnImageLoadCallback);
+		KdPrint((DRIVER_PREFIX "Image load callback unregistered\n"));
+
+		PsRemoveCreateThreadNotifyRoutine(OnThreadCallback);
+		KdPrint((DRIVER_PREFIX "Thread callback unregistered\n"));
+
+		PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, TRUE);
+		KdPrint((DRIVER_PREFIX "Process callback unregistered\n"));
+
+		g_CallbacksRegistered = FALSE;
 	}
-
-	if (g_ObCallbackHandle)
-	{
-		ObUnRegisterCallbacks(g_ObCallbackHandle);
-		KdPrint((DRIVER_PREFIX "Object Manager callbacks unregistered\n"));
-	}
-
-	PsRemoveLoadImageNotifyRoutine(OnImageLoadCallback);
-	KdPrint((DRIVER_PREFIX "Image load callback unregistered\n"));
-
-	PsRemoveCreateThreadNotifyRoutine(OnThreadCallback);
-	KdPrint((DRIVER_PREFIX "Thread callback unregistered\n"));
-
-	PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, TRUE);
-	KdPrint((DRIVER_PREFIX "Process callback unregistered\n"));
 
 	UNICODE_STRING symName = RTL_CONSTANT_STRING(L"\\??\\DioProcess");
 	IoDeleteSymbolicLink(&symName);
@@ -836,6 +739,136 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	switch (irpSp->Parameters.DeviceIoControl.IoControlCode)
 	{
+	case IOCTL_DIOPROCESS_REGISTER_CALLBACKS:
+	{
+		if (g_CallbacksRegistered)
+		{
+			KdPrint((DRIVER_PREFIX "Callbacks already registered\n"));
+			status = STATUS_ALREADY_REGISTERED;
+			break;
+		}
+
+		// Register process callback
+		status = PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, FALSE);
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to register process callback (0x%X)\n", status));
+			break;
+		}
+		KdPrint((DRIVER_PREFIX "Process callback registered\n"));
+
+		// Register thread callback
+		status = PsSetCreateThreadNotifyRoutine(OnThreadCallback);
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to register thread callback (0x%X)\n", status));
+			PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, TRUE);
+			break;
+		}
+		KdPrint((DRIVER_PREFIX "Thread callback registered\n"));
+
+		// Register image load callback
+		status = PsSetLoadImageNotifyRoutine(OnImageLoadCallback);
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to register image load callback (0x%X)\n", status));
+			PsRemoveCreateThreadNotifyRoutine(OnThreadCallback);
+			PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, TRUE);
+			break;
+		}
+		KdPrint((DRIVER_PREFIX "Image load callback registered\n"));
+
+		// Register Object Manager callbacks
+		OB_CALLBACK_REGISTRATION obCallbackReg = { 0 };
+		OB_OPERATION_REGISTRATION obOpReg[2] = { 0 };
+
+		obOpReg[0].ObjectType = PsProcessType;
+		obOpReg[0].Operations = OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE;
+		obOpReg[0].PreOperation = OnPreProcessHandleOperation;
+		obOpReg[0].PostOperation = nullptr;
+
+		obOpReg[1].ObjectType = PsThreadType;
+		obOpReg[1].Operations = OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE;
+		obOpReg[1].PreOperation = OnPreThreadHandleOperation;
+		obOpReg[1].PostOperation = nullptr;
+
+		UNICODE_STRING altitude = RTL_CONSTANT_STRING(L"321000");
+		obCallbackReg.Version = OB_FLT_REGISTRATION_VERSION;
+		obCallbackReg.OperationRegistrationCount = 2;
+		obCallbackReg.Altitude = altitude;
+		obCallbackReg.RegistrationContext = nullptr;
+		obCallbackReg.OperationRegistration = obOpReg;
+
+		status = ObRegisterCallbacks(&obCallbackReg, &g_ObCallbackHandle);
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to register OB callbacks (0x%X)\n", status));
+			// Continue without OB callbacks
+			status = STATUS_SUCCESS;
+		}
+		else
+		{
+			KdPrint((DRIVER_PREFIX "Object Manager callbacks registered\n"));
+		}
+
+		// Register registry callback
+		UNICODE_STRING regAltitude = RTL_CONSTANT_STRING(L"321001");
+		PDRIVER_OBJECT driverObj = IoGetCurrentIrpStackLocation(Irp)->DeviceObject->DriverObject;
+		status = CmRegisterCallbackEx(OnRegistryCallback, &regAltitude, driverObj, nullptr, &g_RegistryCookie, nullptr);
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to register registry callback (0x%X)\n", status));
+			// Continue without registry callbacks
+			status = STATUS_SUCCESS;
+		}
+		else
+		{
+			KdPrint((DRIVER_PREFIX "Registry callback registered\n"));
+		}
+
+		g_CallbacksRegistered = TRUE;
+		KdPrint((DRIVER_PREFIX "All callbacks registered successfully\n"));
+		break;
+	}
+
+	case IOCTL_DIOPROCESS_UNREGISTER_CALLBACKS:
+	{
+		if (!g_CallbacksRegistered)
+		{
+			KdPrint((DRIVER_PREFIX "Callbacks not registered\n"));
+			break;
+		}
+
+		// Unregister in reverse order
+		if (g_RegistryCookie.QuadPart != 0)
+		{
+			CmUnRegisterCallback(g_RegistryCookie);
+			g_RegistryCookie.QuadPart = 0;
+			KdPrint((DRIVER_PREFIX "Registry callback unregistered\n"));
+		}
+
+		if (g_ObCallbackHandle)
+		{
+			ObUnRegisterCallbacks(g_ObCallbackHandle);
+			g_ObCallbackHandle = nullptr;
+			KdPrint((DRIVER_PREFIX "Object Manager callbacks unregistered\n"));
+		}
+
+		PsRemoveLoadImageNotifyRoutine(OnImageLoadCallback);
+		KdPrint((DRIVER_PREFIX "Image load callback unregistered\n"));
+
+		PsRemoveCreateThreadNotifyRoutine(OnThreadCallback);
+		KdPrint((DRIVER_PREFIX "Thread callback unregistered\n"));
+
+		PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, TRUE);
+		KdPrint((DRIVER_PREFIX "Process callback unregistered\n"));
+
+		g_CallbacksRegistered = FALSE;
+		g_State.CollectionEnabled = FALSE;
+		KdPrint((DRIVER_PREFIX "All callbacks unregistered\n"));
+		break;
+	}
+
 	case IOCTL_DIOPROCESS_START_COLLECTION:
 	{
 		g_State.CollectionEnabled = TRUE;
