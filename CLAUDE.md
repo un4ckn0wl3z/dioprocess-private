@@ -72,6 +72,7 @@ crates/
 │       │   ├── ghost_process_window.rs  # Process ghosting modal
 │       │   ├── hook_scan_window.rs      # IAT hook detection modal
 │       │   ├── string_scan_window.rs    # Process memory string scan modal
+│       │   ├── utilities_tab.rs         # Utilities tab (file bloating, etc.)
 │       │   └── callback_tab.rs          # System Events tab (Experimental)
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
@@ -325,6 +326,27 @@ Access via right-click context menu > Inspect > String Scan:
 - **Context menu** — Copy String, Copy Address, Copy Row
 - **Region type** — Each result shows whether it came from Private, Mapped, or Image memory
 - Uses `process::scan_process_strings()` function; scanning runs on `tokio::task::spawn_blocking` to avoid UI freeze
+
+## Utilities tab
+
+Access via "Utilities" tab in the main navigation (between Services and System Events). Hosts standalone utility tools for security research.
+
+### File Bloating
+
+Inflates file size by appending data to bypass security scanner file size limits. Two methods available:
+
+1. **Append Null Bytes (0x00)** — Copies source file to output path, appends `size_mb * 1MB` of zero bytes in 1MB chunks
+2. **Large Metadata / Random Data (0xFF)** — Same approach but appends `0xFF` bytes instead, simulating embedded binary resources
+
+**UI controls:**
+- **Source file picker** — Browse for any file via `rfd::AsyncFileDialog`
+- **Output file picker** — Save As dialog for destination path
+- **Method selector** — Dropdown to choose between Null Bytes and Random Data
+- **Size input** — 1–2000 MB (default: 200)
+- **Bloat File button** — Triggers the operation; disabled with "Bloating..." text while running
+- **Status feedback** — Success/error message with auto-dismiss after 5 seconds on success
+
+**Implementation:** Pure file I/O in `utilities_tab.rs` — no new crate, no unsafe code. Runs on `tokio::task::spawn_blocking` to avoid UI freeze.
 
 ## System Events - Experimental (callback crate)
 

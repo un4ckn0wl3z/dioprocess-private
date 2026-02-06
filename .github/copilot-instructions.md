@@ -1,7 +1,7 @@
 # DioProcess — Copilot Instructions
 
 ## Project Overview
-Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, **System Events (Experimental)** - kernel event monitoring (17 event types with SQLite persistence), 7 DLL injection methods, DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process memory string scanning (ASCII + UTF-16), process hollowing/ghosting, token theft.
+Windows desktop process monitor built with **Rust 2021** and **Dioxus 0.6** (desktop renderer). Requires administrator privileges (UAC manifest embedded via `build.rs`). Features: live process/network/service monitoring, **System Events (Experimental)** - kernel event monitoring (17 event types with SQLite persistence), 7 DLL injection methods, DLL unhooking, advanced hook detection (E9/E8/EB/FF25/MOV+JMP patterns) with integrated unhooking, process memory string scanning (ASCII + UTF-16), process hollowing/ghosting, token theft, **Utilities tab** with file bloating (append null bytes or random data to inflate file size).
 
 ## Build & Run
 ```powershell
@@ -84,6 +84,7 @@ pub fn SomeWindow() -> Element {
 | System event types | `crates/callback/src/types.rs` |
 | Kernel driver source | `kernelmode/DioProcess/DioProcessDriver/` |
 | UI component patterns | `crates/ui/src/components/process_tab.rs` |
+| Utilities tab UI | `crates/ui/src/components/utilities_tab.rs` |
 | System Events tab UI | `crates/ui/src/components/callback_tab.rs` |
 | Global state signals | `crates/ui/src/state.rs` |
 | UAC manifest | `crates/dioprocess/app.manifest` |

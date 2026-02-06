@@ -17,6 +17,7 @@ mod process_tab;
 mod service_tab;
 mod thread_window;
 mod token_thief_window;
+mod utilities_tab;
 
 pub use app::{App, Layout};
 pub use callback_tab::CallbackTab;
@@ -35,3 +36,4 @@ pub use process_tab::ProcessTab;
 pub use service_tab::ServiceTab;
 pub use thread_window::ThreadWindow;
 pub use token_thief_window::TokenThiefWindow;
+pub use utilities_tab::UtilitiesTab;

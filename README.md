@@ -33,6 +33,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - Classic process hollowing (unmap → map → relocations → PEB patch → thread hijack)
   - **Process ghosting** (fileless execution via orphaned image section + `NtCreateProcessEx`)
 - Primary token theft & impersonation (`CreateProcessAsUserW` under stolen token)
+- **Utilities tab** — File bloating (append null bytes or random data to inflate file size, 1–2000 MB)
 
 ## Project Structure (Cargo Workspace)
 
@@ -118,6 +119,15 @@ Scan process IAT (Import Address Table) for inline hooks by comparing imported f
 
 `OpenProcessToken → DuplicateTokenEx(TokenPrimary) → SeAssignPrimaryTokenPrivilege → ImpersonateLoggedOnUser → CreateProcessAsUserW → RevertToSelf`
 
+### Utilities — File Bloating
+
+Inflate file size to test security scanner file size limits. Access via the **Utilities** tab:
+
+- **Append Null Bytes** — Copy source file, append N MB of `0x00` bytes
+- **Large Metadata (Random Data)** — Copy source file, append N MB of `0xFF` bytes
+- Configurable size: 1–2000 MB (default 200)
+- Runs on background thread to keep UI responsive
+
 ### System Events (Experimental)
 
 Real-time kernel event capture via WDM driver with 17 event types:
@@ -141,7 +151,7 @@ Real-time kernel event capture via WDM driver with 17 event types:
 ## UI & Interaction Highlights
 
 - Borderless dark-themed window with custom title bar
-- Tabs: **Processes** · **Network** · **Services** · **System Events**
+- Tabs: **Processes** · **Network** · **Services** · **Utilities** · **System Events**
 - **Tree view** in Processes tab (DFS traversal, box-drawing connectors ├ │ └ ─, ancestor-inclusive search)
 - Modal inspectors: Threads · Handles · Modules · Memory · Performance graphs · String Scan
 - Real-time per-process CPU/memory graphs (60-second rolling history, SVG + fill)

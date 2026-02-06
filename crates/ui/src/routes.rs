@@ -2,7 +2,7 @@
 
 use dioxus::prelude::*;
 
-use crate::components::{CallbackTab, Layout, NetworkTab, ProcessTab, ServiceTab};
+use crate::components::{CallbackTab, Layout, NetworkTab, ProcessTab, ServiceTab, UtilitiesTab};
 
 /// Application routes
 #[derive(Clone, Routable, Debug, PartialEq)]
@@ -14,6 +14,8 @@ pub enum Route {
     NetworkTab {},
     #[route("/services")]
     ServiceTab {},
+    #[route("/utilities")]
+    UtilitiesTab {},
     #[route("/callback")]
     CallbackTab {},
 }

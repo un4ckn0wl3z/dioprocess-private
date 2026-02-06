@@ -36,6 +36,7 @@ pub fn Layout() -> Element {
     let is_process_tab = matches!(route, Route::ProcessTab {});
     let is_network_tab = matches!(route, Route::NetworkTab {});
     let is_service_tab = matches!(route, Route::ServiceTab {});
+    let is_utilities_tab = matches!(route, Route::UtilitiesTab {});
     let is_callback_tab = matches!(route, Route::CallbackTab {});
 
     let about_message = format!(
@@ -155,6 +156,11 @@ pub fn Layout() -> Element {
                         to: Route::ServiceTab {},
                         class: if is_service_tab { "tab-item tab-active" } else { "tab-item" },
                         "Services"
+                    }
+                    Link {
+                        to: Route::UtilitiesTab {},
+                        class: if is_utilities_tab { "tab-item tab-active" } else { "tab-item" },
+                        "Utilities"
                     }
                     Link {
                         to: Route::CallbackTab {},
