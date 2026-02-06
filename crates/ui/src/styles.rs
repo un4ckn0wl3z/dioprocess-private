@@ -1893,11 +1893,17 @@ pub const CUSTOM_STYLES: &str = r#"
 
     /* Toolbar enhancements */
     .toolbar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
         padding: 16px 20px;
-        gap: 16px;
+        gap: 20px;
         background: linear-gradient(to bottom, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.35));
         border-bottom: 2px solid rgba(0, 212, 255, 0.15);
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+    .toolbar .btn {
+        margin: 0 4px;
     }
 
     /* Search input improvements */
