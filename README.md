@@ -17,7 +17,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 - Live enumeration of processes, threads, handles, modules & virtual memory regions
 - TCP/UDP connection listing with owning process (via IP Helper API)
 - Windows Service enumeration, start/stop/create/delete (Service Control Manager)
-- **Kernel Callback Monitor** — real-time kernel event capture via custom WDM driver:
+- **System Events (Experimental)** — real-time kernel event capture via custom WDM driver:
   - Process/thread create & exit events
   - Image (DLL/EXE) load events
   - Handle operations (process/thread handle create & duplicate)
@@ -61,10 +61,11 @@ crates/
 ├── ui/            # Dioxus components, router, global signals, dark theme
 └── dioprocess/    # Binary crate — entry point, custom window, manifest embedding
 kernelmode/
-└── ProcessMonitorEx/  # WDM kernel driver (C++) for callback monitoring
-    ├── ProcessMonitorEx.cpp        # Driver code (device: \\.\DioProcess)
-    ├── ProcessMonitorExCommon.h    # Shared event structures
-    └── ProcessMonitorExCli/        # Test CLI client
+└── DioProcess/        # WDM kernel driver (C++) for system event monitoring
+    ├── DioProcessDriver/
+    │   ├── DioProcessDriver.cpp    # Driver code (device: \\.\DioProcess)
+    │   └── DioProcessCommon.h      # Shared event structures
+    └── DioProcessCli/              # Test CLI client
 ```
 
 ## Implemented Techniques — Summary
@@ -116,7 +117,7 @@ Scan process IAT (Import Address Table) for inline hooks by comparing imported f
 
 `OpenProcessToken → DuplicateTokenEx(TokenPrimary) → SeAssignPrimaryTokenPrivilege → ImpersonateLoggedOnUser → CreateProcessAsUserW → RevertToSelf`
 
-### Kernel Callback Monitor
+### System Events (Experimental)
 
 Real-time kernel event capture via WDM driver with 17 event types:
 
@@ -139,7 +140,7 @@ Real-time kernel event capture via WDM driver with 17 event types:
 ## UI & Interaction Highlights
 
 - Borderless dark-themed window with custom title bar
-- Tabs: **Processes** · **Network** · **Services** · **Callback Monitor**
+- Tabs: **Processes** · **Network** · **Services** · **System Events**
 - **Tree view** in Processes tab (DFS traversal, box-drawing connectors ├ │ └ ─, ancestor-inclusive search)
 - Modal inspectors: Threads · Handles · Modules · Memory · Performance graphs
 - Real-time per-process CPU/memory graphs (60-second rolling history, SVG + fill)

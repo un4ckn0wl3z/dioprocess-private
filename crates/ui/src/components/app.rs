@@ -159,7 +159,8 @@ pub fn Layout() -> Element {
                     Link {
                         to: Route::CallbackTab {},
                         class: if is_callback_tab { "tab-item tab-active" } else { "tab-item" },
-                        "Callback Monitor"
+                        "System Events"
+                        span { class: "experimental-badge", "Experimental" }
                     }
                 }
 

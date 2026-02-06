@@ -868,6 +868,21 @@ pub const CUSTOM_STYLES: &str = r#"
         background: rgba(34, 211, 238, 0.1);
     }
 
+    /* Experimental Badge */
+    .experimental-badge {
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 2px 6px;
+        margin-left: 6px;
+        border-radius: 4px;
+        background: rgba(251, 191, 36, 0.2);
+        color: #fbbf24;
+        border: 1px solid rgba(251, 191, 36, 0.3);
+        vertical-align: middle;
+    }
+
     /* Tab Content */
     .process-tab,
     .network-tab,

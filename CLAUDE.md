@@ -71,7 +71,7 @@ crates/
 │       │   ├── function_stomping_window.rs  # Function stomping injection modal
 │       │   ├── ghost_process_window.rs  # Process ghosting modal
 │       │   ├── hook_scan_window.rs      # IAT hook detection modal
-│       │   └── callback_tab.rs          # Kernel callback monitor tab
+│       │   └── callback_tab.rs          # System Events tab (Experimental)
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
 │       ├── helpers.rs            # Clipboard utilities
@@ -309,7 +309,7 @@ Access via right-click context menu > Inspect > Hook Scan:
 - Uses `misc::scan_process_hooks()` function from `hook_scanner.rs`
 - Helper functions: `misc::get_system_directory_path()`, `misc::enumerate_process_modules()`
 
-## Kernel Callback Monitor (callback crate)
+## System Events - Experimental (callback crate)
 
 Real-time monitoring of kernel callbacks via the DioProcess kernel driver. Captures process, thread, image load, handle operations, and registry events.
 
@@ -347,7 +347,7 @@ Real-time monitoring of kernel callbacks via the DioProcess kernel driver. Captu
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Event types (matching ProcessMonitorExCommon.h)
+### Event types (matching DioProcessCommon.h)
 
 | Category | Event Type | Description |
 |----------|------------|-------------|
@@ -412,9 +412,9 @@ struct RegistryOperationInfo {
 };
 ```
 
-### Callback tab features
+### System Events tab features
 
-Access via "Callback Monitor" tab in the main navigation:
+Access via "System Events" tab in the main navigation (marked as Experimental):
 - **Event table** — Time, Type, PID, Process Name, Details columns
 - **SQLite storage** — Events persisted to `%LOCALAPPDATA%\DioProcess\events.db`
 - **Batched writes** — 500 events or 100ms flush interval for performance
@@ -449,11 +449,11 @@ sc delete DioProcess
 
 ### Driver location
 
-The kernel driver source is in `kernelmode/ProcessMonitorEx/`:
-- `ProcessMonitorEx.sln` — Visual Studio solution (project files retain original name)
-- `ProcessMonitorEx/ProcessMonitorEx.cpp` — Main driver code (device name: `\\.\DioProcess`)
-- `ProcessMonitorEx/ProcessMonitorExCommon.h` — Shared data structures
-- `ProcessMonitorExCli/` — Test CLI client
+The kernel driver source is in `kernelmode/DioProcess/`:
+- `DioProcess.sln` — Visual Studio solution
+- `DioProcessDriver/DioProcessDriver.cpp` — Main driver code (device name: `\\.\DioProcess`)
+- `DioProcessDriver/DioProcessCommon.h` — Shared data structures
+- `DioProcessCli/` — Test CLI client
 
 ## No tests
 

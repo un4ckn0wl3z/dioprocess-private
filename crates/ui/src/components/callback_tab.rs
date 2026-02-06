@@ -1,4 +1,4 @@
-//! Kernel Callback Monitor tab component
+//! System Events tab component (Kernel Callback Monitor)
 
 use callback::{is_driver_loaded, read_events, CallbackEvent, EventCategory, EventFilter, EventStorage, EventType};
 use dioxus::prelude::*;
@@ -227,7 +227,10 @@ pub fn CallbackTab() -> Element {
 
             // Header
             div { class: "header-box",
-                h1 { class: "header-title", "Kernel Callback Monitor" }
+                h1 { class: "header-title",
+                    "System Events"
+                    span { class: "experimental-badge", "Experimental" }
+                }
                 div { class: "header-stats",
                     span { "Showing: {event_count} | Total: {total} | DB: {db_size_mb:.1} MB" }
                     span { class: "header-shortcuts", "F5: Refresh | Esc: Close menu" }
@@ -452,7 +455,7 @@ pub fn CallbackTab() -> Element {
                 if !is_driver_loaded {
                     div { class: "driver-not-loaded-notice",
                         h2 { "DioProcess Driver Not Loaded" }
-                        p { "To use the Callback Monitor, load the kernel driver:" }
+                        p { "To use System Events, load the kernel driver:" }
                         pre { class: "driver-instructions",
                             "sc create DioProcess type= kernel binPath= \"C:\\path\\to\\DioProcess.sys\"\nsc start DioProcess"
                         }
