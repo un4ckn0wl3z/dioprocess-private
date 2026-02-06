@@ -45,7 +45,8 @@ struct CreateServiceForm {
     name: String,
     display_name: String,
     binary_path: String,
-    start_type: String, // "auto", "manual", "disabled", "kernel"
+    start_type: String,    // "auto", "manual", "disabled", "boot", "system"
+    is_kernel_driver: bool, // true = Kernel Driver, false = Win32 Service
 }
 
 /// Service Tab component
@@ -127,6 +128,8 @@ pub fn ServiceTab() -> Element {
                 "auto" => s.start_type == ServiceStartType::Auto,
                 "manual" => s.start_type == ServiceStartType::Manual,
                 "disabled" => s.start_type == ServiceStartType::Disabled,
+                "boot" => s.start_type == ServiceStartType::Boot,
+                "system" => s.start_type == ServiceStartType::System,
                 "all" | "" => true,
                 _ => true,
             };
@@ -258,6 +261,8 @@ pub fn ServiceTab() -> Element {
                     option { value: "auto", "Automatic" }
                     option { value: "manual", "Manual" }
                     option { value: "disabled", "Disabled" }
+                    option { value: "boot", "Boot" }
+                    option { value: "system", "System" }
                 }
 
                 label { class: "checkbox-label",
@@ -287,6 +292,7 @@ pub fn ServiceTab() -> Element {
                             display_name: String::new(),
                             binary_path: String::new(),
                             start_type: "manual".to_string(),
+                            is_kernel_driver: false,
                         });
                     },
                     "+ Create Service"
@@ -637,12 +643,33 @@ pub fn ServiceTab() -> Element {
                             }
 
                             div { class: "create-svc-field",
+                                label { class: "create-svc-label", "Service Type" }
+                                select {
+                                    class: "filter-select",
+                                    value: if create_form.read().is_kernel_driver { "kernel" } else { "win32" },
+                                    onchange: move |e| {
+                                        let mut f = create_form.read().clone();
+                                        f.is_kernel_driver = e.value() == "kernel";
+                                        // Reset start type to a valid default for the chosen service type
+                                        if f.is_kernel_driver {
+                                            f.start_type = "system".to_string();
+                                        } else {
+                                            f.start_type = "manual".to_string();
+                                        }
+                                        create_form.set(f);
+                                    },
+                                    option { value: "win32", "Win32 Service" }
+                                    option { value: "kernel", "Kernel Driver" }
+                                }
+                            }
+
+                            div { class: "create-svc-field",
                                 label { class: "create-svc-label", "Binary Path" }
                                 div { class: "create-svc-path-row",
                                     input {
                                         class: "create-svc-input",
                                         r#type: "text",
-                                        placeholder: "C:\\Path\\To\\Service.exe",
+                                        placeholder: if create_form.read().is_kernel_driver { "C:\\Path\\To\\Driver.sys" } else { "C:\\Path\\To\\Service.exe" },
                                         value: "{create_form.read().binary_path}",
                                         oninput: move |e| {
                                             let mut f = create_form.read().clone();
@@ -653,18 +680,26 @@ pub fn ServiceTab() -> Element {
                                     button {
                                         class: "create-svc-btn-browse",
                                         onclick: move |_| {
+                                            let is_driver = create_form.read().is_kernel_driver;
                                             spawn(async move {
-                                                let file = rfd::AsyncFileDialog::new()
-                                                    .add_filter("Executable", &["exe"])
-                                                    .pick_file()
-                                                    .await;
+                                                let file = if is_driver {
+                                                    rfd::AsyncFileDialog::new()
+                                                        .add_filter("Driver", &["sys"])
+                                                        .add_filter("All Files", &["*"])
+                                                        .pick_file()
+                                                        .await
+                                                } else {
+                                                    rfd::AsyncFileDialog::new()
+                                                        .add_filter("Executable", &["exe"])
+                                                        .pick_file()
+                                                        .await
+                                                };
                                                 if let Some(path) = file {
                                                     let mut f = create_form.read().clone();
                                                     f.binary_path = path.path().to_string_lossy().into_owned();
                                                     create_form.set(f);
                                                 }
                                             });
-
                                         },
                                         "Browse..."
                                     }
@@ -681,10 +716,16 @@ pub fn ServiceTab() -> Element {
                                         f.start_type = e.value().clone();
                                         create_form.set(f);
                                     },
-                                    option { value: "auto", "Automatic" }
-                                    option { value: "manual", "Manual" }
-                                    option { value: "disabled", "Disabled" }
-                                    option { value: "kernel", "Kernel Driver" }
+                                    if create_form.read().is_kernel_driver {
+                                        option { value: "system", "System" }
+                                        option { value: "boot", "Boot" }
+                                        option { value: "manual", "Manual (Demand)" }
+                                        option { value: "disabled", "Disabled" }
+                                    } else {
+                                        option { value: "auto", "Automatic" }
+                                        option { value: "manual", "Manual" }
+                                        option { value: "disabled", "Disabled" }
+                                    }
                                 }
                             }
                         }
@@ -711,7 +752,8 @@ pub fn ServiceTab() -> Element {
                                     let start_type = match f.start_type.as_str() {
                                         "auto" => ServiceStartType::Auto,
                                         "disabled" => ServiceStartType::Disabled,
-                                        "kernel" => ServiceStartType::System,
+                                        "boot" => ServiceStartType::Boot,
+                                        "system" => ServiceStartType::System,
                                         _ => ServiceStartType::Manual,
                                     };
 
@@ -721,7 +763,7 @@ pub fn ServiceTab() -> Element {
                                         f.display_name.clone()
                                     };
 
-                                    if create_service(&f.name, &display, &f.binary_path, start_type) {
+                                    if create_service(&f.name, &display, &f.binary_path, start_type, f.is_kernel_driver) {
                                         status_message.set(format!("✓ Service '{}' created", f.name));
                                         services.set(get_services());
                                     } else {

@@ -146,7 +146,7 @@ fn to_wide(s: &str) -> Vec<u16> {
         .collect()
 }
 
-/// Enumerate all Win32 services
+/// Enumerate all services (Win32 + kernel/filesystem drivers)
 pub fn get_services() -> Vec<ServiceInfo> {
     let mut services = Vec::new();
 
@@ -166,10 +166,12 @@ pub fn get_services() -> Vec<ServiceInfo> {
         let mut services_returned: u32 = 0;
         let mut resume_handle: u32 = 0;
 
+        let service_type_filter = SERVICE_WIN32 | SERVICE_DRIVER;
+
         let _ = EnumServicesStatusExW(
             sc_manager,
             SC_ENUM_PROCESS_INFO,
-            SERVICE_WIN32,
+            service_type_filter,
             SERVICE_STATE_ALL,
             None,
             &mut bytes_needed,
@@ -189,7 +191,7 @@ pub fn get_services() -> Vec<ServiceInfo> {
         let result = EnumServicesStatusExW(
             sc_manager,
             SC_ENUM_PROCESS_INFO,
-            SERVICE_WIN32,
+            service_type_filter,
             SERVICE_STATE_ALL,
             Some(&mut buffer),
             &mut bytes_needed,
@@ -414,6 +416,7 @@ pub fn create_service(
     display_name: &str,
     binary_path: &str,
     start_type: ServiceStartType,
+    is_kernel_driver: bool,
 ) -> bool {
     unsafe {
         let sc_manager = match OpenSCManagerW(
@@ -428,8 +431,6 @@ pub fn create_service(
         let wide_name = to_wide(name);
         let wide_display = to_wide(display_name);
         let wide_path = to_wide(binary_path);
-
-        let is_kernel_driver = matches!(start_type, ServiceStartType::Boot | ServiceStartType::System);
 
         let win_start_type = match start_type {
             ServiceStartType::Auto => SERVICE_AUTO_START,
