@@ -422,7 +422,7 @@ pub fn UtilitiesTab() -> Element {
 
                     // Execute button
                     div {
-                        style: "display: flex; gap: 16px; align-items: flex-end;",
+                        style: "display: flex; gap: 16px; align-items: flex-end; margin-top: 8px;",
 
                         button {
                             class: "btn btn-primary",
