@@ -17,4 +17,5 @@ struct DioProcessState
 	LIST_ENTRY ItemsHead;
 	ULONG ItemCount;
 	FastMutex Lock;
+	BOOLEAN CollectionEnabled;
 };

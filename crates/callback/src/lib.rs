@@ -13,7 +13,9 @@ mod error;
 pub mod storage;
 mod types;
 
-pub use driver::{is_driver_loaded, read_events};
+pub use driver::{
+    get_collection_state, is_driver_loaded, read_events, start_collection, stop_collection,
+};
 pub use error::CallbackError;
 pub use storage::{EventFilter, EventStorage};
-pub use types::{CallbackEvent, EventCategory, EventType, RegistryOperation};
+pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};

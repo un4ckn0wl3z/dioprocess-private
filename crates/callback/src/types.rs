@@ -1,5 +1,12 @@
 //! Type definitions matching the kernel driver structures
 
+/// Collection state from the kernel driver
+#[derive(Clone, Copy, Debug)]
+pub struct CollectionState {
+    pub is_collecting: bool,
+    pub item_count: u32,
+}
+
 /// Event types from the kernel driver
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

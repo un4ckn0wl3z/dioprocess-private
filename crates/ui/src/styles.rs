@@ -1725,4 +1725,40 @@ pub const CUSTOM_STYLES: &str = r#"
         font-style: italic;
     }
 
+    /* Collection status indicator */
+    .collection-status {
+        font-size: 12px;
+        font-weight: 600;
+        padding: 4px 12px;
+        border-radius: 12px;
+        margin-left: 8px;
+    }
+    .collection-active {
+        background: rgba(74, 222, 128, 0.2);
+        color: #4ade80;
+        border: 1px solid rgba(74, 222, 128, 0.3);
+    }
+    .collection-inactive {
+        background: rgba(251, 191, 36, 0.2);
+        color: #fbbf24;
+        border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+
+    /* Success button */
+    .btn-success {
+        background: linear-gradient(to bottom right, #4ade80, #22c55e);
+        color: white;
+    }
+    .btn-success:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(74, 222, 128, 0.4);
+    }
+    .btn-success:active:not(:disabled) {
+        transform: translateY(0);
+    }
+    .btn-success:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
 "#;

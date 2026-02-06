@@ -15,6 +15,8 @@ pub enum CallbackError {
     BufferTooSmall,
     /// Invalid data received from driver
     InvalidData,
+    /// IOCTL operation failed
+    IoctlFailed(u32),
 }
 
 impl fmt::Display for CallbackError {
@@ -31,6 +33,9 @@ impl fmt::Display for CallbackError {
             }
             CallbackError::BufferTooSmall => write!(f, "Buffer too small"),
             CallbackError::InvalidData => write!(f, "Invalid data received from driver"),
+            CallbackError::IoctlFailed(code) => {
+                write!(f, "IOCTL operation failed: error code {}", code)
+            }
         }
     }
 }

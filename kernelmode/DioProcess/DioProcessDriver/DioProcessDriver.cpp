@@ -47,6 +47,7 @@ void AddItem(FullEventData* item);
 NTSTATUS CompleteRequest(PIRP Irp, NTSTATUS status = STATUS_SUCCESS, ULONG_PTR info = 0);
 NTSTATUS DioProcessCreateClose(PDEVICE_OBJECT, PIRP Irp);
 NTSTATUS DioProcessRead(PDEVICE_OBJECT, PIRP Irp);
+NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp);
 
 // Helper function to get process name
 void GetProcessImageName(PEPROCESS Process, PUNICODE_STRING ImageName);
@@ -213,10 +214,12 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 
 	g_State.Lock.Init();
 	InitializeListHead(&g_State.ItemsHead);
+	g_State.CollectionEnabled = FALSE;  // Collection disabled by default
 
 	DriverObject->DriverUnload = DioProcessUnload;
 	DriverObject->MajorFunction[IRP_MJ_CREATE] = DriverObject->MajorFunction[IRP_MJ_CLOSE] = DioProcessCreateClose;
 	DriverObject->MajorFunction[IRP_MJ_READ] = DioProcessRead;
+	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = DioProcessDeviceControl;
 
 	KdPrint((DRIVER_PREFIX "Driver loaded successfully\n"));
 	return STATUS_SUCCESS;
@@ -744,6 +747,13 @@ void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 
 void AddItem(FullEventData* item)
 {
+	// Check if collection is enabled before acquiring lock
+	if (!g_State.CollectionEnabled)
+	{
+		ExFreePool(item);
+		return;
+	}
+
 	Locker locker(g_State.Lock);
 
 	// Limit queue size to prevent memory exhaustion
@@ -814,6 +824,58 @@ NTSTATUS DioProcessRead(PDEVICE_OBJECT, PIRP Irp)
 		}
 
 	} while (false);
+
+	return CompleteRequest(Irp, status, info);
+}
+
+NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
+{
+	auto irpSp = IoGetCurrentIrpStackLocation(Irp);
+	auto status = STATUS_SUCCESS;
+	ULONG_PTR info = 0;
+
+	switch (irpSp->Parameters.DeviceIoControl.IoControlCode)
+	{
+	case IOCTL_DIOPROCESS_START_COLLECTION:
+	{
+		g_State.CollectionEnabled = TRUE;
+		KdPrint((DRIVER_PREFIX "Collection started\n"));
+		break;
+	}
+
+	case IOCTL_DIOPROCESS_STOP_COLLECTION:
+	{
+		g_State.CollectionEnabled = FALSE;
+		KdPrint((DRIVER_PREFIX "Collection stopped\n"));
+		break;
+	}
+
+	case IOCTL_DIOPROCESS_GET_COLLECTION_STATE:
+	{
+		auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+		if (outputLen < sizeof(CollectionStateResponse))
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		auto response = (CollectionStateResponse*)Irp->AssociatedIrp.SystemBuffer;
+		if (!response)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		response->IsCollecting = g_State.CollectionEnabled;
+		response->ItemCount = g_State.ItemCount;
+		info = sizeof(CollectionStateResponse);
+		break;
+	}
+
+	default:
+		status = STATUS_INVALID_DEVICE_REQUEST;
+		break;
+	}
 
 	return CompleteRequest(Irp, status, info);
 }

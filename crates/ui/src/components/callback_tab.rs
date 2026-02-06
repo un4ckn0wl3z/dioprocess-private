@@ -1,6 +1,9 @@
 //! System Events tab component (Kernel Callback Monitor)
 
-use callback::{is_driver_loaded, read_events, CallbackEvent, EventCategory, EventFilter, EventStorage, EventType};
+use callback::{
+    get_collection_state, is_driver_loaded, read_events, start_collection, stop_collection,
+    CallbackEvent, EventCategory, EventFilter, EventStorage, EventType,
+};
 use dioxus::prelude::*;
 use std::sync::Arc;
 
@@ -57,6 +60,8 @@ pub fn CallbackTab() -> Element {
     let mut current_page = use_signal(|| 0usize);
     // Trigger signal to force refresh from DB
     let mut refresh_trigger = use_signal(|| 0u64);
+    // Collection state - initialized from driver
+    let mut collection_active = use_signal(|| false);
 
     // Helper to build filter from current UI state
     let build_filter = |tf: &str, sq: &str| {
@@ -110,6 +115,18 @@ pub fn CallbackTab() -> Element {
         }
     });
 
+    // Effect to query driver collection state when driver_loaded changes
+    use_effect(move || {
+        let loaded = *driver_loaded.read();
+        if loaded {
+            if let Ok(state) = get_collection_state() {
+                collection_active.set(state.is_collecting);
+            }
+        } else {
+            collection_active.set(false);
+        }
+    });
+
     // Auto-refresh every 1 second
     use_future(move || async move {
         let mut cleanup_counter = 0u32;
@@ -118,7 +135,15 @@ pub fn CallbackTab() -> Element {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             driver_loaded.set(is_driver_loaded());
 
-            if *auto_refresh.read() && *driver_loaded.read() {
+            // Update collection state from driver
+            if *driver_loaded.read() {
+                if let Ok(state) = get_collection_state() {
+                    collection_active.set(state.is_collecting);
+                }
+            }
+
+            // Only read events if collection is active, auto-refresh is enabled, and driver is loaded
+            if *auto_refresh.read() && *driver_loaded.read() && *collection_active.read() {
                 match read_events() {
                     Ok(new_events) => {
                         if !new_events.is_empty() {
@@ -137,8 +162,10 @@ pub fn CallbackTab() -> Element {
                         }
                     }
                 }
+            }
 
-                // Trigger UI refresh
+            // Always trigger UI refresh when auto-refresh is enabled
+            if *auto_refresh.read() {
                 refresh_trigger += 1;
             }
 
@@ -166,6 +193,7 @@ pub fn CallbackTab() -> Element {
     let page = *current_page.read();
     let total_pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
     let is_driver_loaded = *driver_loaded.read();
+    let is_collection_active = *collection_active.read();
     let current_sort_col = *sort_column.read();
     let current_sort_ord = *sort_order.read();
     let ctx_menu = context_menu.read().clone();
@@ -243,6 +271,17 @@ pub fn CallbackTab() -> Element {
                             "Driver: Not Loaded"
                         }
                     }
+                    // Collection status indicator
+                    if is_driver_loaded {
+                        span {
+                            class: if is_collection_active { "collection-status collection-active" } else { "collection-status collection-inactive" },
+                            if is_collection_active {
+                                "Collecting"
+                            } else {
+                                "Paused"
+                            }
+                        }
+                    }
                 }
                 if !status_message.read().is_empty() {
                     div { class: "status-message", "{status_message}" }
@@ -313,6 +352,44 @@ pub fn CallbackTab() -> Element {
                         onchange: move |e| auto_refresh.set(e.checked()),
                     }
                     span { "Auto-refresh" }
+                }
+
+                // Start/Stop Collection button
+                button {
+                    class: if is_collection_active { "btn btn-danger" } else { "btn btn-success" },
+                    disabled: !is_driver_loaded,
+                    onclick: move |_| {
+                        if is_collection_active {
+                            match stop_collection() {
+                                Ok(()) => {
+                                    collection_active.set(false);
+                                    status_message.set("Collection stopped".to_string());
+                                }
+                                Err(e) => {
+                                    status_message.set(format!("Failed to stop collection: {}", e));
+                                }
+                            }
+                        } else {
+                            match start_collection() {
+                                Ok(()) => {
+                                    collection_active.set(true);
+                                    status_message.set("Collection started".to_string());
+                                }
+                                Err(e) => {
+                                    status_message.set(format!("Failed to start collection: {}", e));
+                                }
+                            }
+                        }
+                        spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            status_message.set(String::new());
+                        });
+                    },
+                    if is_collection_active {
+                        "Stop Collection"
+                    } else {
+                        "Start Collection"
+                    }
                 }
 
                 button {

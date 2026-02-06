@@ -1,7 +1,7 @@
 //! Driver communication functions
 
 use crate::error::CallbackError;
-use crate::types::{CallbackEvent, EventType, RegistryOperation};
+use crate::types::{CallbackEvent, CollectionState, EventType, RegistryOperation};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
@@ -10,10 +10,16 @@ use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE,
     OPEN_EXISTING,
 };
-use windows::Win32::System::IO::OVERLAPPED;
+use windows::Win32::System::IO::{DeviceIoControl, OVERLAPPED};
 
 const DEVICE_PATH: &str = r"\\.\DioProcess";
 const READ_BUFFER_SIZE: usize = 1024 * 1024; // 1MB buffer
+
+// IOCTL codes (calculated using CTL_CODE macro: FILE_DEVICE_UNKNOWN=0x22, METHOD_BUFFERED=0, FILE_ANY_ACCESS=0)
+// CTL_CODE(0x22, 0x800, 0, 0) = (0x22 << 16) | (0 << 14) | (0x800 << 2) | 0 = 0x00222000
+const IOCTL_DIOPROCESS_START_COLLECTION: u32 = 0x00222000;
+const IOCTL_DIOPROCESS_STOP_COLLECTION: u32 = 0x00222004;
+const IOCTL_DIOPROCESS_GET_COLLECTION_STATE: u32 = 0x00222008;
 
 /// Check if the ProcessMonitorEx driver is loaded
 pub fn is_driver_loaded() -> bool {
@@ -77,6 +83,106 @@ fn open_device() -> Result<HANDLE, CallbackError> {
                 }
             }
         }
+    }
+}
+
+/// Start event collection in the kernel driver
+pub fn start_collection() -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_START_COLLECTION,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Stop event collection in the kernel driver
+pub fn stop_collection() -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_STOP_COLLECTION,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Get the current collection state from the kernel driver
+pub fn get_collection_state() -> Result<CollectionState, CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        // CollectionStateResponse: BOOLEAN (1 byte padded to 4) + ULONG (4 bytes) = 8 bytes
+        let mut buffer = [0u8; 8];
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_GET_COLLECTION_STATE,
+            None,
+            0,
+            Some(buffer.as_mut_ptr() as *mut _),
+            buffer.len() as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+
+        if bytes_returned < 8 {
+            return Err(CallbackError::InvalidData);
+        }
+
+        // Parse response - BOOLEAN is 1 byte but padded to 4 bytes in struct
+        let is_collecting = buffer[0] != 0;
+        let item_count = u32::from_ne_bytes([buffer[4], buffer[5], buffer[6], buffer[7]]);
+
+        Ok(CollectionState {
+            is_collecting,
+            item_count,
+        })
     }
 }
 
