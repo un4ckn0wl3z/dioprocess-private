@@ -429,11 +429,21 @@ pub fn create_service(
         let wide_display = to_wide(display_name);
         let wide_path = to_wide(binary_path);
 
+        let is_kernel_driver = matches!(start_type, ServiceStartType::Boot | ServiceStartType::System);
+
         let win_start_type = match start_type {
             ServiceStartType::Auto => SERVICE_AUTO_START,
             ServiceStartType::Manual => SERVICE_DEMAND_START,
             ServiceStartType::Disabled => SERVICE_DISABLED,
+            ServiceStartType::Boot => SERVICE_BOOT_START,
+            ServiceStartType::System => SERVICE_SYSTEM_START,
             _ => SERVICE_DEMAND_START,
+        };
+
+        let service_type = if is_kernel_driver {
+            SERVICE_KERNEL_DRIVER
+        } else {
+            SERVICE_WIN32_OWN_PROCESS
         };
 
         let result = CreateServiceW(
@@ -441,7 +451,7 @@ pub fn create_service(
             PCWSTR(wide_name.as_ptr()),
             PCWSTR(wide_display.as_ptr()),
             SERVICE_ALL_ACCESS,
-            SERVICE_WIN32_OWN_PROCESS,
+            service_type,
             win_start_type,
             SERVICE_ERROR_NORMAL,
             PCWSTR(wide_path.as_ptr()),

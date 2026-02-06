@@ -45,7 +45,7 @@ struct CreateServiceForm {
     name: String,
     display_name: String,
     binary_path: String,
-    start_type: String, // "auto", "manual", "disabled"
+    start_type: String, // "auto", "manual", "disabled", "kernel"
 }
 
 /// Service Tab component
@@ -684,6 +684,7 @@ pub fn ServiceTab() -> Element {
                                     option { value: "auto", "Automatic" }
                                     option { value: "manual", "Manual" }
                                     option { value: "disabled", "Disabled" }
+                                    option { value: "kernel", "Kernel Driver" }
                                 }
                             }
                         }
@@ -710,6 +711,7 @@ pub fn ServiceTab() -> Element {
                                     let start_type = match f.start_type.as_str() {
                                         "auto" => ServiceStartType::Auto,
                                         "disabled" => ServiceStartType::Disabled,
+                                        "kernel" => ServiceStartType::System,
                                         _ => ServiceStartType::Manual,
                                     };
 

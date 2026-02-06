@@ -68,6 +68,10 @@ pub fn Layout() -> Element {
                             let window = dioxus::desktop::window();
                             let _ = window.drag_window();
                         },
+                        ondoubleclick: move |_| {
+                            let window = dioxus::desktop::window();
+                            window.set_maximized(!window.is_maximized());
+                        },
                         span { class: "title-text", "🖥️ DioProcess | Windows System Monitor Tool v{version}" }
                     }
                     div { class: "title-bar-buttons",
