@@ -59,6 +59,8 @@ pub const CUSTOM_STYLES: &str = r#"
         align-items: center;
         padding-left: 12px;
         cursor: move;
+        app-region: drag;
+        -webkit-app-region: drag;
     }
     .title-text {
         font-size: 14px;
@@ -68,6 +70,8 @@ pub const CUSTOM_STYLES: &str = r#"
     .title-bar-buttons {
         display: flex;
         height: 100%;
+        app-region: no-drag;
+        -webkit-app-region: no-drag;
     }
     .title-btn {
         width: 48px;
