@@ -44,6 +44,7 @@ pub enum MiscError {
     HookScanFailed(String),
     VirtualProtectFailed,
     WebStagingFailed(String),
+    ThreadlessInjectFailed(String),
 }
 
 impl fmt::Display for MiscError {
@@ -100,6 +101,7 @@ impl fmt::Display for MiscError {
             MiscError::HookScanFailed(msg) => write!(f, "Hook scan failed: {}", msg),
             MiscError::VirtualProtectFailed => write!(f, "VirtualProtectEx failed to set memory protection"),
             MiscError::WebStagingFailed(msg) => write!(f, "Web staging failed: {}", msg),
+            MiscError::ThreadlessInjectFailed(msg) => write!(f, "Threadless injection failed: {}", msg),
         }
     }
 }

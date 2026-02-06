@@ -17,6 +17,7 @@ mod process_tab;
 mod service_tab;
 mod shellcode_inject_window;
 mod thread_window;
+mod threadless_inject_window;
 mod token_thief_window;
 mod utilities_tab;
 
@@ -37,5 +38,6 @@ pub use process_tab::ProcessTab;
 pub use service_tab::ServiceTab;
 pub use shellcode_inject_window::ShellcodeInjectWindow;
 pub use thread_window::ThreadWindow;
+pub use threadless_inject_window::ThreadlessInjectWindow;
 pub use token_thief_window::TokenThiefWindow;
 pub use utilities_tab::UtilitiesTab;

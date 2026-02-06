@@ -49,7 +49,8 @@ crates/
 │       ├── shellcode_inject/
 │       │   ├── mod.rs                  # Re-exports all shellcode injection functions
 │       │   ├── classic.rs              # inject_shellcode_classic(), inject_shellcode_bytes()
-│       │   └── web_staging.rs          # inject_shellcode_url()
+│       │   ├── web_staging.rs          # inject_shellcode_url()
+│       │   └── threadless.rs           # inject_shellcode_threadless()
 │       ├── process/
 │       │   ├── mod.rs                  # Re-exports all process functions
 │       │   ├── create.rs               # create_process()
@@ -76,6 +77,7 @@ crates/
 │       │   ├── ghost_process_window.rs  # Process ghosting modal
 │       │   ├── hook_scan_window.rs      # IAT hook detection modal
 │       │   ├── shellcode_inject_window.rs # Shellcode injection (web staging) modal
+│       │   ├── threadless_inject_window.rs # Threadless shellcode injection modal
 │       │   ├── string_scan_window.rs    # Process memory string scan modal
 │       │   ├── utilities_tab.rs         # Utilities tab (file bloating, etc.)
 │       │   └── callback_tab.rs          # System Events tab (Experimental)
@@ -140,7 +142,7 @@ The binary opens a 1100x700 borderless window with custom title bar, dark theme,
 - **Naming:** snake_case functions, PascalCase types, SCREAMING_SNAKE_CASE constants
 - **Error handling:** Custom error enums (`MiscError`, `ServiceError`) with `Result<T, E>`
 - **Unsafe:** Used for all Windows API calls; always paired with proper resource cleanup (CloseHandle)
-- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `FUNCTION_STOMPING_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`, `HOOK_SCAN_WINDOW_STATE`, `STRING_SCAN_WINDOW_STATE`, `SHELLCODE_INJECT_WINDOW_STATE`); local signals for view mode (`ProcessViewMode::Flat`/`Tree`) and expanded PIDs (`HashSet<u32>`)
+- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `FUNCTION_STOMPING_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`, `HOOK_SCAN_WINDOW_STATE`, `STRING_SCAN_WINDOW_STATE`, `SHELLCODE_INJECT_WINDOW_STATE`, `THREADLESS_INJECT_WINDOW_STATE`); local signals for view mode (`ProcessViewMode::Flat`/`Tree`) and expanded PIDs (`HashSet<u32>`)
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
@@ -164,12 +166,14 @@ Each shellcode injection method is in its own file under `crates/misc/src/shellc
 
 1. **Classic** (`classic.rs`) — Read raw shellcode from .bin file, `OpenProcess` → `VirtualAllocEx(PAGE_READWRITE)` → `WriteProcessMemory` → `VirtualProtectEx(PAGE_EXECUTE_READWRITE)` → `CreateRemoteThread` at shellcode address
 2. **Web Staging** (`web_staging.rs`) — Download raw shellcode from URL via WinInet (`InternetOpenW` → `InternetOpenUrlW` → `InternetReadFile` in 1024-byte chunks), then inject using the classic technique
+3. **Threadless** (`threadless.rs`) — No `CreateRemoteThread`. Hooks an exported function (e.g. `USER32!MessageBoxW`) with a 5-byte CALL trampoline. Allocates a "memory hole" within ±1.75 GB of the target function, writes a 63-byte hook shellcode stub (saves registers, restores original bytes, calls payload, jumps back) + the main shellcode payload. Payload fires when the target process naturally calls the hooked function. Self-healing: the hook restores the original function bytes after first execution.
 
-Shared injection core in `inject_shellcode_bytes()` (`classic.rs`) is used by both methods.
+Shared injection core in `inject_shellcode_bytes()` (`classic.rs`) is used by Classic and Web Staging.
 
 Access via right-click context menu > Miscellaneous > Shellcode Injection:
 - **Classic** — file picker for `.bin` shellcode files
 - **Web Staging** — opens modal window with URL input field (HTTP/HTTPS)
+- **Threadless** — opens modal window with shellcode file picker + target DLL/function inputs (defaults: USER32 / MessageBoxW)
 
 ## Process creation methods (misc crate)
 

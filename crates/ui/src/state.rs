@@ -35,8 +35,12 @@ pub static HOOK_SCAN_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
 pub static STRING_SCAN_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
     Signal::global(|| None);
 
-/// Shellcode inject window state - stores PID and process name to open shellcode inject modal
+/// Shellcode inject window state (web staging) - stores PID and process name
 pub static SHELLCODE_INJECT_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
+    Signal::global(|| None);
+
+/// Threadless inject window state - stores PID and process name
+pub static THREADLESS_INJECT_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
     Signal::global(|| None);
 
 /// Ghost process window state - controls visibility of ghost process modal
