@@ -33,6 +33,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - PPID spoofing (`PROC_THREAD_ATTRIBUTE_PARENT_PROCESS`)
   - Classic process hollowing (unmap → map → relocations → PEB patch → thread hijack)
   - **Process ghosting** (fileless execution via orphaned image section + `NtCreateProcessEx`)
+  - **Ghostly hollowing** (ghost section mapped into suspended legitimate process via `NtMapViewOfSection` + thread hijack)
 - Primary token theft & impersonation (`CreateProcessAsUserW` under stolen token)
 - **Utilities tab** — File bloating (append null bytes or random data to inflate file size, 1–2000 MB)
 
@@ -58,7 +59,7 @@ crates/
 │       ├── shellcode_inject/   # Shellcode injection techniques (classic, etc.)
 │       ├── memory.rs           # commit/decommit/free memory
 │       ├── module.rs           # unload_module
-│       ├── process/            # create, ppid_spoof, hollow, ghost
+│       ├── process/            # create, ppid_spoof, hollow, ghost, ghostly_hollow
 │       ├── token.rs            # steal_token
 │       ├── unhook.rs           # DLL unhooking (local + remote process)
 │       └── hook_scanner.rs     # IAT hook detection (E9/E8/EB/FF25/MOV+JMP patterns)
@@ -98,6 +99,7 @@ Access via context menu: **Miscellaneous → Shellcode Injection → Classic**, 
 - PPID spoofing via extended startup attributes
 - Process hollowing — full unmap, section-by-section write, relocations, PEB.ImageBaseAddress patch, section protection fix, thread context hijack (RCX)
 - **Process ghosting** — temp file → delete disposition → `SEC_IMAGE` section → orphaned section → `NtCreateProcessEx` → normalized process parameters → `NtCreateThreadEx`
+- **Ghostly hollowing** — Create ghost section (temp file → mark deleted → write PE → SEC_IMAGE section → file deleted), create legitimate host process SUSPENDED via `CreateProcessW`, map ghost section into remote process via `NtMapViewOfSection`, hijack thread (set RCX to entry point, patch PEB.ImageBase via `WriteProcessMemory`), resume thread
 
 ### DLL Unhooking
 
@@ -129,14 +131,20 @@ Scan process IAT (Import Address Table) for inline hooks by comparing imported f
 
 `OpenProcessToken → DuplicateTokenEx(TokenPrimary) → SeAssignPrimaryTokenPrivilege → ImpersonateLoggedOnUser → CreateProcessAsUserW → RevertToSelf`
 
-### Utilities — File Bloating
+### Utilities
 
-Inflate file size to test security scanner file size limits. Access via the **Utilities** tab:
+**File Bloating** — Inflate file size to test security scanner file size limits. Access via the **Utilities** tab:
 
 - **Append Null Bytes** — Copy source file, append N MB of `0x00` bytes
 - **Large Metadata (Random Data)** — Copy source file, append N MB of `0xFF` bytes
 - Configurable size: 1–2000 MB (default 200)
 - Runs on background thread to keep UI responsive
+
+**Ghostly Hollowing** — Combine process ghosting + hollowing for fileless execution inside a legitimate process:
+
+- **Host executable** — Select legitimate Windows binary (e.g. `RuntimeBroker.exe`)
+- **PE payload** — Select 64-bit PE to execute via ghost section
+- Ghost section mapped into suspended host via `NtMapViewOfSection`, thread hijacked, PEB patched, resumed
 
 ### System Events (Experimental)
 

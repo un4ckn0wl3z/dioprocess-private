@@ -29,7 +29,7 @@ crates/
 │       ├── types.rs   # CallbackEvent, EventType, EventCategory, RegistryOperation
 │       ├── driver.rs  # Driver communication (is_driver_loaded, read_events)
 │       └── storage.rs # SQLite persistence (EventStorage, EventFilter, batched writes)
-├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, token theft, module unloading, memory ops
+├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, ghostly hollowing, token theft, module unloading, memory ops
 │   └── src/
 │       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
 │       ├── error.rs                    # MiscError enum, Display, Error impls
@@ -56,6 +56,7 @@ crates/
 │       │   ├── create.rs               # create_process()
 │       │   ├── ppid_spoof.rs           # create_ppid_spoofed_process()
 │       │   ├── hollow.rs               # hollow_process()
+│       │   ├── ghostly_hollow.rs       # ghostly_hollow_process()
 │       │   └── ghost.rs                # ghost_process()
 │       └── token.rs                    # steal_token()
 ├── ui/            # Dioxus components, routing, state, styles
@@ -183,6 +184,7 @@ Each process creation method is in its own file under `crates/misc/src/process/`
 2. **PPID Spoofing** (`ppid_spoof.rs`) — Open handle to target parent process, set up `STARTUPINFOEXW` with `InitializeProcThreadAttributeList` + `UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_PARENT_PROCESS)`, create process via `CreateProcessW` with `EXTENDED_STARTUPINFO_PRESENT` flag; the new process appears as a child of the specified parent PID; optionally combined with Block DLL Policy
 3. **Process Hollowing** (`hollow.rs`) — Create host process suspended, get PEB address via thread context Rdx, unmap original image via `NtUnmapViewOfSection`, allocate memory at payload's preferred base, write PE headers and sections individually, apply base relocations if needed, patch PEB ImageBaseAddress, fix per-section memory permissions via `VirtualProtectEx` (R/RW/RX/RWX based on section characteristics), hijack thread entry point (RCX), resume thread
 4. **Process Ghosting** (`ghost.rs`) — Create temp file, open via `NtOpenFile` with DELETE permission, mark for deletion with `NtSetInformationFile(FileDispositionInformation)`, write payload via `NtWriteFile`, create SEC_IMAGE section via `NtCreateSection`, close file (deleted while section survives), create process via `NtCreateProcessEx`, retrieve environment via `CreateEnvironmentBlock`, set up PEB process parameters with `RtlCreateProcessParametersEx` (NORMALIZED), allocate at exact params address in remote process via `NtAllocateVirtualMemory` (no pointer relocation), write params and environment via `NtWriteVirtualMemory` with two-scenario layout handling, create initial thread via `NtCreateThreadEx`
+5. **Ghostly Hollowing** (`ghostly_hollow.rs`) — Combine process ghosting with hollowing: create temp file, mark for deletion via `NtSetInformationFile`, write payload via `NtWriteFile`, create `SEC_IMAGE` section via `NtCreateSection`, close file (deleted, section survives), `CreateProcessW` with legitimate host executable (SUSPENDED), `NtMapViewOfSection` to map ghost section into suspended process, hijack thread context (set RCX to entry point), patch PEB.ImageBase, `ResumeThread`
 
 ## Token theft (misc crate)
 
@@ -369,6 +371,23 @@ Inflates file size by appending data to bypass security scanner file size limits
 - **Status feedback** — Success/error message with auto-dismiss after 5 seconds on success
 
 **Implementation:** Pure file I/O in `utilities_tab.rs` — no new crate, no unsafe code. Runs on `tokio::task::spawn_blocking` to avoid UI freeze.
+
+### Ghostly Hollowing
+
+Combine process ghosting with process hollowing for fileless execution inside a legitimate process. Access via the **Utilities** tab:
+
+- **Host executable** — Legitimate Windows binary (e.g. `RuntimeBroker.exe`) created SUSPENDED
+- **PE payload** — 64-bit PE whose ghost section is mapped into the host process
+- **Algorithm** — Create ghost section (temp file → delete disposition → write PE → SEC_IMAGE section → file deleted), then map section into suspended host via `NtMapViewOfSection`, hijack thread (set RCX = entry point, patch PEB.ImageBase), resume
+- Runs on background thread to keep UI responsive
+
+## Ghostly hollowing (Utilities tab)
+
+Access via the **Utilities** tab → Ghostly Hollowing section:
+- **Host executable picker** — Select legitimate 64-bit Windows executable (host process)
+- **PE payload picker** — Select 64-bit PE payload to execute via ghost section
+- **Status feedback** — Success shows new PID, errors show detailed NT status codes
+- Uses `misc::ghostly_hollow_process()` function
 
 ## System Events - Experimental (callback crate)
 

@@ -1,6 +1,7 @@
 //! Utilities tab component
 
 use dioxus::prelude::*;
+use misc::ghostly_hollow_process;
 
 /// Bloating method
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -12,6 +13,7 @@ enum BloatMethod {
 /// Utilities Tab component
 #[component]
 pub fn UtilitiesTab() -> Element {
+    // ---- File Bloating state ----
     let mut source_path = use_signal(|| String::new());
     let mut output_path = use_signal(|| String::new());
     let mut bloat_method = use_signal(|| BloatMethod::NullBytes);
@@ -19,6 +21,15 @@ pub fn UtilitiesTab() -> Element {
     let mut status_message = use_signal(|| String::new());
     let mut status_is_error = use_signal(|| false);
     let mut is_running = use_signal(|| false);
+
+    // ---- Ghostly Hollowing state ----
+    let mut gh_host_path = use_signal(|| String::new());
+    let mut gh_payload_path = use_signal(|| String::new());
+    let mut gh_status_message = use_signal(|| String::new());
+    let mut gh_status_is_error = use_signal(|| false);
+    let mut gh_is_running = use_signal(|| false);
+
+    // ---- File Bloating handlers ----
 
     let browse_source = move |_| {
         spawn(async move {
@@ -142,9 +153,99 @@ pub fn UtilitiesTab() -> Element {
         });
     };
 
+    // ---- Ghostly Hollowing handlers ----
+
+    let browse_gh_host = move |_| {
+        spawn(async move {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("Executables", &["exe"])
+                .add_filter("All Files", &["*"])
+                .set_title("Select Legitimate Host Executable")
+                .pick_file()
+                .await;
+
+            if let Some(file) = file {
+                gh_host_path.set(file.path().to_string_lossy().to_string());
+            }
+        });
+    };
+
+    let browse_gh_payload = move |_| {
+        spawn(async move {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("Executables", &["exe"])
+                .add_filter("All Files", &["*"])
+                .set_title("Select PE Payload (64-bit)")
+                .pick_file()
+                .await;
+
+            if let Some(file) = file {
+                gh_payload_path.set(file.path().to_string_lossy().to_string());
+            }
+        });
+    };
+
+    let handle_ghostly_hollow = move |_| {
+        if *gh_is_running.read() {
+            return;
+        }
+
+        let host = gh_host_path.read().clone();
+        let payload = gh_payload_path.read().clone();
+
+        if host.is_empty() {
+            gh_status_message.set("Please select a host executable".to_string());
+            gh_status_is_error.set(true);
+            return;
+        }
+
+        if payload.is_empty() {
+            gh_status_message.set("Please select a PE payload".to_string());
+            gh_status_is_error.set(true);
+            return;
+        }
+
+        gh_is_running.set(true);
+        gh_status_message.set(String::new());
+
+        spawn(async move {
+            let result =
+                tokio::task::spawn_blocking(move || ghostly_hollow_process(&host, &payload)).await;
+
+            match result {
+                Ok(Ok(pid)) => {
+                    gh_status_message.set(format!(
+                        "Ghostly hollowing successful — PID: {}",
+                        pid
+                    ));
+                    gh_status_is_error.set(false);
+                }
+                Ok(Err(e)) => {
+                    gh_status_message.set(format!("Error: {}", e));
+                    gh_status_is_error.set(true);
+                }
+                Err(e) => {
+                    gh_status_message.set(format!("Task error: {}", e));
+                    gh_status_is_error.set(true);
+                }
+            }
+
+            gh_is_running.set(false);
+
+            if !*gh_status_is_error.read() {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                gh_status_message.set(String::new());
+            }
+        });
+    };
+
     let status_msg = status_message.read().clone();
     let is_error = *status_is_error.read();
     let running = *is_running.read();
+
+    let gh_status_msg = gh_status_message.read().clone();
+    let gh_is_error = *gh_status_is_error.read();
+    let gh_running = *gh_is_running.read();
 
     rsx! {
         div {
@@ -159,10 +260,10 @@ pub fn UtilitiesTab() -> Element {
                 }
             }
 
-            // File Bloating section
             div {
-                style: "padding: 16px; display: flex; flex-direction: column; gap: 16px;",
+                style: "padding: 16px; display: flex; flex-direction: column; gap: 16px; flex: 1; overflow-y: auto;",
 
+                // File Bloating section
                 div {
                     style: "background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(0, 212, 255, 0.15); border-radius: 8px; padding: 20px;",
 
@@ -264,6 +365,82 @@ pub fn UtilitiesTab() -> Element {
                         div {
                             class: if is_error { "create-process-status create-process-status-error" } else { "create-process-status create-process-status-success" },
                             "{status_msg}"
+                        }
+                    }
+                }
+
+                // Ghostly Hollowing section
+                div {
+                    style: "background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(0, 212, 255, 0.15); border-radius: 8px; padding: 20px;",
+
+                    h2 {
+                        style: "color: #00d4ff; margin-bottom: 4px; font-size: 16px;",
+                        "Ghostly Hollowing"
+                    }
+                    p {
+                        style: "color: #9ca3af; font-size: 12px; margin-bottom: 16px;",
+                        "Create a ghost section from payload PE (file deleted, section survives), then map it into a suspended legitimate process and hijack execution. Combines process ghosting + hollowing."
+                    }
+
+                    // Host executable
+                    div { class: "create-process-field",
+                        label { class: "create-process-label", "Host Executable (Legitimate)" }
+                        div { class: "create-process-path-row",
+                            input {
+                                class: "create-process-input",
+                                r#type: "text",
+                                placeholder: "e.g. C:\\Windows\\system32\\RuntimeBroker.exe",
+                                value: "{gh_host_path}",
+                                oninput: move |e| gh_host_path.set(e.value().clone()),
+                            }
+                            button {
+                                class: "create-process-btn-browse",
+                                onclick: browse_gh_host,
+                                "Browse"
+                            }
+                        }
+                    }
+
+                    // PE Payload
+                    div { class: "create-process-field",
+                        label { class: "create-process-label", "PE Payload (64-bit)" }
+                        div { class: "create-process-path-row",
+                            input {
+                                class: "create-process-input",
+                                r#type: "text",
+                                placeholder: "Path to 64-bit PE payload...",
+                                value: "{gh_payload_path}",
+                                oninput: move |e| gh_payload_path.set(e.value().clone()),
+                            }
+                            button {
+                                class: "create-process-btn-browse",
+                                onclick: browse_gh_payload,
+                                "Browse"
+                            }
+                        }
+                    }
+
+                    // Execute button
+                    div {
+                        style: "display: flex; gap: 16px; align-items: flex-end;",
+
+                        button {
+                            class: "btn btn-primary",
+                            disabled: gh_running,
+                            onclick: handle_ghostly_hollow,
+                            if gh_running {
+                                "Executing..."
+                            } else {
+                                "Execute Ghostly Hollowing"
+                            }
+                        }
+                    }
+
+                    // Status message
+                    if !gh_status_msg.is_empty() {
+                        div {
+                            class: if gh_is_error { "create-process-status create-process-status-error" } else { "create-process-status create-process-status-success" },
+                            "{gh_status_msg}"
                         }
                     }
                 }

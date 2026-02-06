@@ -45,6 +45,7 @@ pub enum MiscError {
     VirtualProtectFailed,
     WebStagingFailed(String),
     ThreadlessInjectFailed(String),
+    GhostlyHollowFailed(String),
 }
 
 impl fmt::Display for MiscError {
@@ -102,6 +103,7 @@ impl fmt::Display for MiscError {
             MiscError::VirtualProtectFailed => write!(f, "VirtualProtectEx failed to set memory protection"),
             MiscError::WebStagingFailed(msg) => write!(f, "Web staging failed: {}", msg),
             MiscError::ThreadlessInjectFailed(msg) => write!(f, "Threadless injection failed: {}", msg),
+            MiscError::GhostlyHollowFailed(msg) => write!(f, "Ghostly hollowing failed: {}", msg),
         }
     }
 }
