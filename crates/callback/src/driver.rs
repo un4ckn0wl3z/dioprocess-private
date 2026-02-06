@@ -22,6 +22,9 @@ const IOCTL_DIOPROCESS_STOP_COLLECTION: u32 = 0x00222004;
 const IOCTL_DIOPROCESS_GET_COLLECTION_STATE: u32 = 0x00222008;
 const IOCTL_DIOPROCESS_REGISTER_CALLBACKS: u32 = 0x0022200C;
 const IOCTL_DIOPROCESS_UNREGISTER_CALLBACKS: u32 = 0x00222010;
+const IOCTL_DIOPROCESS_PROTECT_PROCESS: u32 = 0x00222014;
+const IOCTL_DIOPROCESS_UNPROTECT_PROCESS: u32 = 0x00222018;
+const IOCTL_DIOPROCESS_ENABLE_PRIVILEGES: u32 = 0x0022201C;
 
 /// Check if the ProcessMonitorEx driver is loaded
 pub fn is_driver_loaded() -> bool {
@@ -1099,4 +1102,99 @@ fn extract_process_name_from_cmdline(cmdline: &str) -> String {
     } else {
         path.to_string()
     }
+}
+
+// ============== Security Research Functions ==============
+
+/// Protect a process with PPL (Protected Process Light)
+/// Requires the DioProcess kernel driver to be loaded
+pub fn protect_process(pid: u32) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = pid;
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_PROTECT_PROCESS,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<u32>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove protection from a protected process
+/// Requires the DioProcess kernel driver to be loaded
+pub fn unprotect_process(pid: u32) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = pid;
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_UNPROTECT_PROCESS,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<u32>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Enable all privileges for a process token
+/// Requires the DioProcess kernel driver to be loaded
+pub fn enable_all_privileges(pid: u32) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = pid;
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_ENABLE_PRIVILEGES,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<u32>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
 }

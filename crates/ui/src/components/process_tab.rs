@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use callback::{enable_all_privileges, is_driver_loaded, protect_process, unprotect_process};
 use dioxus::prelude::*;
 use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, inject_shellcode_classic, unhook_dll_remote_by_path, enumerate_process_modules};
 use process::{
@@ -1383,6 +1384,114 @@ pub fn ProcessTab() -> Element {
                                 },
                                 span { "🔑" }
                                 span { "Steal Token" }
+                            }
+
+                            div { class: "context-menu-separator" }
+
+                            // Security Research features (only enabled when driver loaded)
+                            // Protect Process button
+                            button {
+                                class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                disabled: !is_driver_loaded(),
+                                onclick: move |_| {
+                                    let target_pid = ctx_menu.pid;
+                                    context_menu.set(ContextMenuState::default());
+
+                                    if let Some(pid) = target_pid {
+                                        spawn(async move {
+                                            match protect_process(pid) {
+                                                Ok(()) => {
+                                                    status_message.set(format!(
+                                                        "✓ Process {} protected with PPL",
+                                                        pid
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ Process protection failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        });
+                                    }
+                                },
+                                span { "🛡️" }
+                                span { "Protect Process" }
+                            }
+
+                            // Unprotect Process button
+                            button {
+                                class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                disabled: !is_driver_loaded(),
+                                onclick: move |_| {
+                                    let target_pid = ctx_menu.pid;
+                                    context_menu.set(ContextMenuState::default());
+
+                                    if let Some(pid) = target_pid {
+                                        spawn(async move {
+                                            match unprotect_process(pid) {
+                                                Ok(()) => {
+                                                    status_message.set(format!(
+                                                        "✓ Process {} unprotected",
+                                                        pid
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ Process unprotection failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        });
+                                    }
+                                },
+                                span { "🔓" }
+                                span { "Unprotect Process" }
+                            }
+
+                            // Enable All Privileges button
+                            button {
+                                class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                disabled: !is_driver_loaded(),
+                                onclick: move |_| {
+                                    let target_pid = ctx_menu.pid;
+                                    context_menu.set(ContextMenuState::default());
+
+                                    if let Some(pid) = target_pid {
+                                        spawn(async move {
+                                            match enable_all_privileges(pid) {
+                                                Ok(()) => {
+                                                    status_message.set(format!(
+                                                        "✓ All privileges enabled for process {}",
+                                                        pid
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ Privilege escalation failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        });
+                                    }
+                                },
+                                span { "⚡" }
+                                span { "Enable All Privileges" }
                             }
                         }
                     }
