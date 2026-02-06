@@ -1186,6 +1186,285 @@ pub fn get_memory_type_name(mem_type: u32) -> &'static str {
     }
 }
 
+/// String encoding type for string scan results
+#[derive(Clone, Debug, PartialEq, Copy)]
+pub enum StringEncoding {
+    Ascii,
+    Utf16,
+}
+
+impl std::fmt::Display for StringEncoding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StringEncoding::Ascii => write!(f, "ASCII"),
+            StringEncoding::Utf16 => write!(f, "UTF-16"),
+        }
+    }
+}
+
+/// String scan result
+#[derive(Clone, Debug)]
+pub struct StringResult {
+    pub address: usize,
+    pub value: String,
+    pub encoding: StringEncoding,
+    pub length: usize,
+    pub region_type: String,
+}
+
+/// Configuration for string scanning
+pub struct StringScanConfig {
+    pub min_length: usize,
+    pub scan_ascii: bool,
+    pub scan_utf16: bool,
+    pub max_string_length: usize,
+}
+
+impl Default for StringScanConfig {
+    fn default() -> Self {
+        Self {
+            min_length: 4,
+            scan_ascii: true,
+            scan_utf16: true,
+            max_string_length: 512,
+        }
+    }
+}
+
+/// Scan process memory for ASCII and UTF-16 strings
+pub fn scan_process_strings(pid: u32, config: &StringScanConfig) -> Vec<StringResult> {
+    let mut results = Vec::new();
+
+    // Get all memory regions
+    let regions = get_process_memory_regions(pid);
+
+    unsafe {
+        let handle = match OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
+            Ok(h) => h,
+            Err(_) => return results,
+        };
+
+        for region in &regions {
+            // Only scan committed regions with readable protection
+            if region.state != MEM_COMMIT.0 {
+                continue;
+            }
+
+            // Skip PAGE_NOACCESS and PAGE_GUARD regions
+            let base_protect = region.protect & 0xFF;
+            if base_protect == PAGE_NOACCESS.0 || region.protect & PAGE_GUARD.0 != 0 {
+                continue;
+            }
+
+            // Get region type name
+            let region_type = get_memory_type_name(region.mem_type).to_string();
+
+            // Read memory in chunks (max 1MB per read)
+            let chunk_size = region.region_size.min(1024 * 1024);
+            let mut offset = 0;
+
+            while offset < region.region_size {
+                let read_size = (region.region_size - offset).min(chunk_size);
+                let mut buffer = vec![0u8; read_size];
+                let mut bytes_read: usize = 0;
+
+                let read_result = ReadProcessMemory(
+                    handle,
+                    (region.base_address + offset) as *const _,
+                    buffer.as_mut_ptr() as *mut _,
+                    read_size,
+                    Some(&mut bytes_read),
+                );
+
+                if read_result.is_err() || bytes_read == 0 {
+                    break;
+                }
+
+                buffer.truncate(bytes_read);
+
+                // Scan for ASCII strings
+                if config.scan_ascii {
+                    let ascii_strings = extract_ascii_strings(
+                        &buffer,
+                        region.base_address + offset,
+                        config.min_length,
+                        config.max_string_length,
+                        &region_type,
+                    );
+                    results.extend(ascii_strings);
+                }
+
+                // Scan for UTF-16 strings
+                if config.scan_utf16 {
+                    let utf16_strings = extract_utf16_strings(
+                        &buffer,
+                        region.base_address + offset,
+                        config.min_length,
+                        config.max_string_length,
+                        &region_type,
+                    );
+                    results.extend(utf16_strings);
+                }
+
+                offset += bytes_read;
+            }
+        }
+
+        let _ = CloseHandle(handle);
+    }
+
+    results
+}
+
+/// Extract ASCII strings from a memory buffer
+fn extract_ascii_strings(
+    buffer: &[u8],
+    base_address: usize,
+    min_length: usize,
+    max_length: usize,
+    region_type: &str,
+) -> Vec<StringResult> {
+    let mut results = Vec::new();
+    let mut start: Option<usize> = None;
+
+    for (i, &byte) in buffer.iter().enumerate() {
+        let is_printable = is_printable_ascii(byte);
+
+        match (start, is_printable) {
+            (None, true) => {
+                start = Some(i);
+            }
+            (Some(s), false) => {
+                let len = i - s;
+                if len >= min_length {
+                    let end = s + len.min(max_length);
+                    let value = String::from_utf8_lossy(&buffer[s..end]).to_string();
+                    results.push(StringResult {
+                        address: base_address + s,
+                        value,
+                        encoding: StringEncoding::Ascii,
+                        length: len,
+                        region_type: region_type.to_string(),
+                    });
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+
+    // Check for string at end of buffer
+    if let Some(s) = start {
+        let len = buffer.len() - s;
+        if len >= min_length {
+            let end = s + len.min(max_length);
+            let value = String::from_utf8_lossy(&buffer[s..end]).to_string();
+            results.push(StringResult {
+                address: base_address + s,
+                value,
+                encoding: StringEncoding::Ascii,
+                length: len,
+                region_type: region_type.to_string(),
+            });
+        }
+    }
+
+    results
+}
+
+/// Extract UTF-16 (Little Endian) strings from a memory buffer
+fn extract_utf16_strings(
+    buffer: &[u8],
+    base_address: usize,
+    min_length: usize,
+    max_length: usize,
+    region_type: &str,
+) -> Vec<StringResult> {
+    let mut results = Vec::new();
+
+    if buffer.len() < 2 {
+        return results;
+    }
+
+    let mut start: Option<usize> = None;
+    let mut i = 0;
+
+    while i + 1 < buffer.len() {
+        let low = buffer[i];
+        let high = buffer[i + 1];
+
+        // UTF-16LE printable character: high byte is 0x00, low byte is printable ASCII
+        let is_printable = high == 0 && is_printable_ascii(low);
+
+        match (start, is_printable) {
+            (None, true) => {
+                start = Some(i);
+            }
+            (Some(s), false) => {
+                let char_count = (i - s) / 2;
+                if char_count >= min_length {
+                    let end_chars = char_count.min(max_length);
+                    let end_bytes = s + end_chars * 2;
+
+                    // Convert to string
+                    let wide_chars: Vec<u16> = buffer[s..end_bytes]
+                        .chunks_exact(2)
+                        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                        .collect();
+                    let value = String::from_utf16_lossy(&wide_chars);
+
+                    results.push(StringResult {
+                        address: base_address + s,
+                        value,
+                        encoding: StringEncoding::Utf16,
+                        length: char_count,
+                        region_type: region_type.to_string(),
+                    });
+                }
+                start = None;
+            }
+            _ => {}
+        }
+
+        i += 2;
+    }
+
+    // Check for string at end of buffer
+    if let Some(s) = start {
+        let char_count = (buffer.len() - s) / 2;
+        if char_count >= min_length {
+            let end_chars = char_count.min(max_length);
+            let end_bytes = s + end_chars * 2;
+
+            if end_bytes <= buffer.len() {
+                let wide_chars: Vec<u16> = buffer[s..end_bytes]
+                    .chunks_exact(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                let value = String::from_utf16_lossy(&wide_chars);
+
+                results.push(StringResult {
+                    address: base_address + s,
+                    value,
+                    encoding: StringEncoding::Utf16,
+                    length: char_count,
+                    region_type: region_type.to_string(),
+                });
+            }
+        }
+    }
+
+    results
+}
+
+/// Check if a byte is a printable ASCII character
+#[inline]
+fn is_printable_ascii(byte: u8) -> bool {
+    // Printable range: 0x20-0x7E (space to tilde)
+    // Also include tab (0x09) and newline (0x0A, 0x0D)
+    matches!(byte, 0x20..=0x7E | 0x09 | 0x0A | 0x0D)
+}
+
 /// Get human-readable protection name
 pub fn get_memory_protect_name(protect: u32) -> String {
     if protect == 0 {

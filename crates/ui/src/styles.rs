@@ -1585,6 +1585,56 @@ pub const CUSTOM_STYLES: &str = r#"
         font-size: 13px;
     }
 
+    /* String Scan Window */
+    .string-scan-modal {
+        width: 1000px;
+    }
+    .cell-string-value {
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        font-size: 12px;
+        max-width: 400px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .encoding-badge {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-weight: 500;
+    }
+    .encoding-ascii {
+        color: #4ade80;
+        background: rgba(74, 222, 128, 0.15);
+    }
+    .encoding-utf16 {
+        color: #a78bfa;
+        background: rgba(167, 139, 250, 0.15);
+    }
+    .min-length-input {
+        width: 60px;
+        padding: 6px 10px;
+        border: 1px solid rgba(34, 211, 238, 0.2);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.08);
+        color: white;
+        font-size: 13px;
+        outline: none;
+        text-align: center;
+    }
+    .min-length-input:focus {
+        border-color: rgba(34, 211, 238, 0.5);
+        background: rgba(255, 255, 255, 0.12);
+    }
+    .context-menu-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 49;
+    }
+
     /* Callback Tab Styles */
     .callback-tab {
         flex: 1;

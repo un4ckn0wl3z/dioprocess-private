@@ -31,6 +31,10 @@ pub static FUNCTION_STOMPING_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
 pub static HOOK_SCAN_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
     Signal::global(|| None);
 
+/// String Scan window state - stores PID and process name to open string scan modal
+pub static STRING_SCAN_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
+    Signal::global(|| None);
+
 /// Ghost process window state - controls visibility of ghost process modal
 pub static GHOST_PROCESS_WINDOW_STATE: GlobalSignal<bool> = Signal::global(|| false);
 
