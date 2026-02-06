@@ -26,6 +26,10 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - Handle operations (process/thread handle create & duplicate)
   - Registry operations (create, open, set, delete, rename, query)
   - **SQLite persistence** with 24-hour retention and paginated UI
+- **Security Research Features (Kernel Driver)** — Direct kernel structure manipulation for process protection and privilege escalation:
+  - **Process Protection** — Apply/remove PPL (Protected Process Light) protection via `_EPROCESS` modification
+  - **Token Privilege Escalation** — Enable all 40 Windows privileges via `_TOKEN` modification
+  - Supports Windows 10 (1507-22H2) and Windows 11 (21H2-24H2)
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
 - **Shellcode injection** — classic (from .bin file), web staging (download from URL via WinInet), and threadless (hook exported function, no new threads)
 - **DLL Unhooking** — restore hooked DLLs (ntdll, kernel32, kernelbase, user32, advapi32, ws2_32) by replacing .text section from disk
@@ -49,10 +53,10 @@ crates/
 ├── process/       # ToolHelp32, NtQueryInformationThread, VirtualQueryEx, modules, memory regions, string scanning
 ├── network/       # GetExtendedTcpTable / GetUdpTable → PID mapping
 ├── service/       # SCM: EnumServicesStatusEx, Start/Stop/Create/Delete service
-├── callback/      # Kernel driver communication + SQLite event storage
+├── callback/      # Kernel driver communication + SQLite event storage + security research IOCTLs
 │   └── src/
-│       ├── lib.rs     # Module re-exports
-│       ├── driver.rs  # ReadFile from \\.\DioProcess device
+│       ├── lib.rs     # Module re-exports (protect/unprotect/enable_privileges)
+│       ├── driver.rs  # ReadFile + IOCTLs (protection/privilege manipulation)
 │       ├── storage.rs # SQLite persistence (WAL mode, batched writes)
 │       ├── types.rs   # CallbackEvent, EventType, EventCategory
 │       └── error.rs   # CallbackError enum
@@ -71,10 +75,11 @@ crates/
 ├── ui/            # Dioxus components, router, global signals, dark theme
 └── dioprocess/    # Binary crate — entry point, custom window, manifest embedding
 kernelmode/
-└── DioProcess/        # WDM kernel driver (C++) for system event monitoring
+└── DioProcess/        # WDM kernel driver (C++) for system event monitoring + security research
     ├── DioProcessDriver/
     │   ├── DioProcessDriver.cpp    # Driver code (device: \\.\DioProcess)
-    │   └── DioProcessCommon.h      # Shared event structures
+    │   ├── DioProcessDriver.h      # Protection structures, Windows version detection
+    │   └── DioProcessCommon.h      # Shared event structures + security IOCTLs
     └── DioProcessCli/              # Test CLI client
 ```
 
@@ -137,6 +142,34 @@ Scan process IAT (Import Address Table) for inline hooks by comparing imported f
 ### Token Theft
 
 `OpenProcessToken → DuplicateTokenEx(TokenPrimary) → SeAssignPrimaryTokenPrivilege → ImpersonateLoggedOnUser → CreateProcessAsUserW → RevertToSelf`
+
+### Security Research Features (Kernel Driver Required)
+
+**Process Protection Manipulation** — Apply or remove Protected Process Light (PPL) protection via direct `_EPROCESS` structure modification:
+- **🛡️ Protect Process** — Set PPL WinTcb-Light protection (SignatureLevel=0x3E, SectionSignatureLevel=0x3C, Type=2, Signer=6)
+- **🔓 Unprotect Process** — Zero out all protection fields (SignatureLevel, SectionSignatureLevel, Type, Signer)
+- Can protect unprotected processes or unprotect protected processes (lsass.exe, AV, etc.)
+- Bypasses normal process protection mechanisms for security research
+
+**Token Privilege Escalation** — Enable all Windows privileges for a process token:
+- **⚡ Enable All Privileges** — Set all privilege bitmasks to 0xFF in `_TOKEN.Privileges`
+- Grants all 40 Windows privileges including:
+  - `SeDebugPrivilege` — Debug any process
+  - `SeLoadDriverPrivilege` — Load kernel drivers
+  - `SeTcbPrivilege` — Act as part of the operating system
+  - `SeBackupPrivilege`, `SeRestorePrivilege`, `SeImpersonatePrivilege`, etc.
+- Direct `_TOKEN` structure manipulation bypasses `AdjustTokenPrivileges` restrictions
+
+**Implementation Details:**
+- Requires DioProcess kernel driver to be loaded and running
+- UI features automatically disabled when driver not loaded (grayed out in context menu)
+- Supports Windows 10 (1507-22H2) and Windows 11 (21H2-24H2)
+- Uses version-specific structure offsets (auto-detected via `RtlGetVersion`)
+- Data-only modifications — **does not trigger PatchGuard/KPP**
+- Located in: `kernelmode/DioProcess/DioProcessDriver/` (driver) and `crates/callback/src/driver.rs` (Rust bindings)
+- Access via: Right-click process → **Miscellaneous** → Protect/Unprotect/Enable Privileges
+
+**Offset Verification:** See `tools/verify_offsets.md` for testing and updating structure offsets for your Windows version
 
 ### Utilities
 

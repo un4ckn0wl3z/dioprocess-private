@@ -2,7 +2,7 @@
 
 ## What is this project?
 
-DioProcess is a Windows desktop system monitoring and process management tool built with **Rust** and **Dioxus 0.6**. It provides real-time process, network, and service monitoring with advanced capabilities like DLL injection, thread control, and handle inspection. Requires administrator privileges (UAC manifest embedded at build time).
+DioProcess is a Windows desktop system monitoring and process management tool built with **Rust** and **Dioxus 0.6**. It provides real-time process, network, and service monitoring with advanced capabilities like DLL injection, thread control, handle inspection, and kernel-level security research features (process protection manipulation, token privilege escalation). Requires administrator privileges (UAC manifest embedded at build time).
 
 ## Tech stack
 
@@ -22,12 +22,12 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory, string scanning
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
-├── callback/      # Kernel driver communication + SQLite event storage
+├── callback/      # Kernel driver communication + SQLite event storage + security research IOCTLs
 │   └── src/
-│       ├── lib.rs     # Module declarations + pub use re-exports
+│       ├── lib.rs     # Module declarations + pub use re-exports (protect/unprotect/enable_privileges)
 │       ├── error.rs   # CallbackError enum
 │       ├── types.rs   # CallbackEvent, EventType, EventCategory, RegistryOperation
-│       ├── driver.rs  # Driver communication (is_driver_loaded, read_events)
+│       ├── driver.rs  # Driver communication (is_driver_loaded, read_events, protect_process, unprotect_process, enable_all_privileges)
 │       └── storage.rs # SQLite persistence (EventStorage, EventFilter, batched writes)
 ├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, process creation, process hollowing, ghostly hollowing, process herpaderping, herpaderping hollowing, token theft, module unloading, memory ops
 │   └── src/
@@ -195,6 +195,164 @@ Each process creation method is in its own file under `crates/misc/src/process/`
 Located in `crates/misc/src/token.rs`:
 
 `steal_token(pid, exe_path, args)` — Open target process with `PROCESS_QUERY_LIMITED_INFORMATION`, obtain its primary token via `OpenProcessToken`, duplicate as a primary token with `DuplicateTokenEx(SecurityAnonymous, TokenPrimary)`, enable `SeAssignPrimaryTokenPrivilege` via `AdjustTokenPrivileges`, impersonate with `ImpersonateLoggedOnUser`, spawn a new process under that token via `CreateProcessAsUserW`, then `RevertToSelf`. Access via right-click context menu > Miscellaneous > Steal Token.
+
+## Security Research Features (callback crate + kernel driver)
+
+**Requires DioProcess kernel driver to be loaded.** Three offensive capabilities via direct kernel structure manipulation:
+
+### 1. Process Protection Manipulation
+
+**Functions:**
+- `callback::protect_process(pid: u32) -> Result<(), CallbackError>` — Apply PPL protection
+- `callback::unprotect_process(pid: u32) -> Result<(), CallbackError>` — Remove PPL protection
+
+**Implementation:**
+Located in `kernelmode/DioProcess/DioProcessDriver/DioProcessDriver.cpp` (IOCTL handlers) and `crates/callback/src/driver.rs` (Rust bindings).
+
+**Algorithm (Protect):**
+1. Call `GetWindowsVersion()` to detect current Windows build (10240-26100)
+2. `PsLookupProcessByProcessId()` to get `EPROCESS` pointer from PID
+3. Calculate protection structure address: `EPROCESS + PROCESS_PROTECTION_OFFSET[version]`
+4. Write protection values to `_EPROCESS.Protection` structure:
+   - `SignatureLevel = 0x3E` (SE_SIGNING_LEVEL_WINDOWS_TCB)
+   - `SectionSignatureLevel = 0x3C` (SE_SIGNING_LEVEL_WINDOWS)
+   - `Protection.Type = 2` (PsProtectedTypeProtectedLight)
+   - `Protection.Signer = 6` (PsProtectedSignerWinTcb)
+5. `ObDereferenceObject(eProcess)`
+
+**Algorithm (Unprotect):**
+Same as above, but zero out all protection fields instead of setting them.
+
+**Structure Offsets:**
+```cpp
+// PROCESS_PROTECTION_OFFSET array (indexed by WINDOWS_VERSION)
+Win 10 1809 (17763):  0x6ca
+Win 10 2004 (19041):  0x87a
+Win 11 21H2 (22000):  0x87a
+Win 11 22H2 (22621):  0x87a
+Win 11 23H2 (22631):  0x87a
+Win 11 24H2 (26100):  0x87a (⚠️ needs verification)
+```
+
+**Use Cases:**
+- Protect benign processes from termination/injection
+- Remove protection from protected processes (lsass.exe, AV, etc.) for research
+- Test PPL bypass techniques
+
+**UI Access:**
+Right-click process → Miscellaneous → **🛡️ Protect Process** / **🔓 Unprotect Process**
+(Buttons disabled/grayed when driver not loaded)
+
+### 2. Token Privilege Escalation
+
+**Function:**
+- `callback::enable_all_privileges(pid: u32) -> Result<(), CallbackError>` — Enable all Windows privileges
+
+**Implementation:**
+Located in `kernelmode/DioProcess/DioProcessDriver/DioProcessDriver.cpp` (IOCTL handler) and `crates/callback/src/driver.rs` (Rust binding).
+
+**Algorithm:**
+1. Call `GetWindowsVersion()` to detect current Windows build
+2. `PsLookupProcessByProcessId()` to get `EPROCESS` pointer from PID
+3. `PsReferencePrimaryToken(eProcess)` to get `TOKEN` pointer
+4. Calculate privilege structure address: `TOKEN + PROCESS_PRIVILEGE_OFFSET[version]` (usually 0x40)
+5. Set all privilege bitmasks to 0xFF:
+   ```cpp
+   tokenPrivs->Present[0-4] = 0xff;
+   tokenPrivs->Enabled[0-4] = 0xff;
+   tokenPrivs->EnabledByDefault[0-4] = 0xff;
+   ```
+6. `PsDereferencePrimaryToken(pToken)` and `ObDereferenceObject(eProcess)`
+
+**Privileges Enabled (40 total):**
+- `SeDebugPrivilege` — Debug any process
+- `SeLoadDriverPrivilege` — Load kernel drivers
+- `SeTcbPrivilege` — Act as part of OS
+- `SeBackupPrivilege`, `SeRestorePrivilege`, `SeImpersonatePrivilege`
+- Plus 34 more Windows privileges
+
+**Structure Offset:**
+Token privilege offset is **0x40** across all Windows 10/11 versions (very stable).
+
+**Use Cases:**
+- Grant unrestricted access to a process without restarting it
+- Bypass privilege checks for security research
+- Test privilege escalation detection
+
+**UI Access:**
+Right-click process → Miscellaneous → **⚡ Enable All Privileges**
+(Button disabled/grayed when driver not loaded)
+
+### Driver Communication
+
+**IOCTLs (defined in DioProcessCommon.h):**
+```cpp
+IOCTL_DIOPROCESS_PROTECT_PROCESS      // 0x00222014
+IOCTL_DIOPROCESS_UNPROTECT_PROCESS    // 0x00222018
+IOCTL_DIOPROCESS_ENABLE_PRIVILEGES    // 0x0022201C
+```
+
+**Request Structure:**
+```cpp
+struct TargetProcessRequest {
+    ULONG ProcessId;  // Target PID
+};
+```
+
+**Error Handling:**
+- `STATUS_NOT_SUPPORTED` — Unsupported Windows version (< Win 10 or unrecognized build)
+- `STATUS_BUFFER_TOO_SMALL` — Invalid request size
+- `STATUS_INVALID_PARAMETER` — NULL request buffer
+- `PsLookupProcessByProcessId` failures return NTSTATUS error codes
+
+### Windows Version Support
+
+**Supported Versions:**
+- ✅ Windows 10: 1507 (10240) through 22H2 (19045)
+- ✅ Windows 11: 21H2 (22000) through 24H2 (26100)
+
+**Version Detection:**
+`GetWindowsVersion()` in `DioProcessDriver.cpp` uses `RtlGetVersion()` to get build number and maps to `WINDOWS_VERSION` enum. If build is unrecognized but >= 19041, uses Windows 10 2004 offsets as fallback.
+
+**Offset Verification:**
+See `tools/verify_offsets.md` for instructions on:
+- Testing offsets on your system via DbgView
+- Using WinDbg to find correct offsets: `dt nt!_EPROCESS`, `dt nt!_TOKEN`
+- Using Vergilius Project (online PDB browser)
+- Updating offset arrays if needed
+
+### PatchGuard / KPP Safety
+
+**These operations DO NOT trigger PatchGuard** because:
+- ✅ Data-only modifications to per-process/per-token structures
+- ✅ No kernel code patching
+- ✅ No SSDT/IDT/GDT modifications
+- ✅ No function hooking
+
+PatchGuard only cares about **code patches** and **critical kernel table modifications**. Direct writes to `_EPROCESS` and `_TOKEN` fields are pure data modifications and safe.
+
+### Debug Logging
+
+The driver logs all operations via `KdPrint()` for verification:
+```
+DioProcess: Windows Build: 10.0 (Build 26100)
+DioProcess: Protecting process PID 1234 (EPROCESS=0x..., Offset=0x87A)
+DioProcess: Current Protection: SigLvl=0x00, SectSigLvl=0x00, Type=0, Signer=0
+DioProcess: New Protection: SigLvl=0x3E, SectSigLvl=0x3C, Type=2, Signer=6
+DioProcess: Process PID 1234 protected successfully
+```
+
+Use **DbgView** (SysInternals) to capture debug output for verification.
+
+### Security Notes
+
+⚠️ **These are offensive security research capabilities:**
+- Bypasses Windows process protection mechanisms
+- Grants arbitrary privileges without restrictions
+- Can be used to unprotect security products or system processes
+- **For authorized security research and testing only**
+- Requires administrator privileges + kernel driver loaded
+- Test on VM/non-production systems first
 
 ## DLL Unhooking (misc crate)
 
