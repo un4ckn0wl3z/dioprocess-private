@@ -1393,3 +1393,171 @@ fn enumerate_callbacks_internal(ioctl_code: u32) -> Result<Vec<CallbackInfo>, Ca
 
     Ok(callbacks)
 }
+
+// ============== Object Callback Enumeration ==============
+
+const IOCTL_DIOPROCESS_ENUM_OBJECT_CALLBACKS: u32 = 0x00222040; // CTL_CODE(0x22, 0x810, 0, 0)
+
+/// Object type being monitored by the callback
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectCallbackType {
+    Process = 1,
+    Thread = 2,
+}
+
+impl ObjectCallbackType {
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(ObjectCallbackType::Process),
+            2 => Some(ObjectCallbackType::Thread),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ObjectCallbackType::Process => "Process",
+            ObjectCallbackType::Thread => "Thread",
+        }
+    }
+}
+
+/// Operations monitored by the callback
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectCallbackOperations {
+    pub handle_create: bool,
+    pub handle_duplicate: bool,
+}
+
+impl ObjectCallbackOperations {
+    pub fn from_u32(value: u32) -> Self {
+        Self {
+            handle_create: (value & 1) != 0,
+            handle_duplicate: (value & 2) != 0,
+        }
+    }
+
+    pub fn as_string(&self) -> String {
+        let mut ops = Vec::new();
+        if self.handle_create {
+            ops.push("Create");
+        }
+        if self.handle_duplicate {
+            ops.push("Duplicate");
+        }
+        if ops.is_empty() {
+            "None".to_string()
+        } else {
+            ops.join(", ")
+        }
+    }
+}
+
+/// Information about an object callback (ObRegisterCallbacks)
+#[derive(Debug, Clone)]
+pub struct ObjectCallbackInfo {
+    pub module_name: String,
+    pub altitude: String,
+    pub pre_operation_callback: u64,
+    pub post_operation_callback: u64,
+    pub object_type: ObjectCallbackType,
+    pub operations: ObjectCallbackOperations,
+    pub index: u32,
+}
+
+/// Enumerate registered object callbacks (ObRegisterCallbacks)
+/// Returns callbacks for both Process and Thread object types
+pub fn enumerate_object_callbacks() -> Result<Vec<ObjectCallbackInfo>, CallbackError> {
+    let handle = open_device()?;
+
+    const MAX_ENTRIES: usize = 64;
+    const MAX_MODULE_NAME: usize = 256;
+    const MAX_ALTITUDE: usize = 64;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RawObjectCallbackInfo {
+        module_name: [u8; MAX_MODULE_NAME],
+        altitude: [u8; MAX_ALTITUDE],
+        pre_operation_callback: u64,
+        post_operation_callback: u64,
+        object_type: u8,
+        _padding: [u8; 3],
+        operations: u32,
+        index: u32,
+    }
+
+    #[repr(C)]
+    struct RawResponse {
+        count: u32,
+        entries: [RawObjectCallbackInfo; MAX_ENTRIES],
+    }
+
+    let buffer_size = std::mem::size_of::<RawResponse>();
+    let mut buffer: Vec<u8> = vec![0; buffer_size];
+
+    unsafe {
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_ENUM_OBJECT_CALLBACKS,
+            None,
+            0,
+            Some(buffer.as_mut_ptr() as *mut _),
+            buffer_size as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+
+        let response = &*(buffer.as_ptr() as *const RawResponse);
+        let count = response.count as usize;
+
+        let mut callbacks = Vec::with_capacity(count);
+        for i in 0..count.min(MAX_ENTRIES) {
+            let raw = &response.entries[i];
+
+            // Skip entries with no callbacks
+            if raw.pre_operation_callback == 0 && raw.post_operation_callback == 0 {
+                continue;
+            }
+
+            let module_name_len = raw
+                .module_name
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(MAX_MODULE_NAME);
+            let module_name =
+                String::from_utf8_lossy(&raw.module_name[..module_name_len]).to_string();
+
+            let altitude_len = raw
+                .altitude
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(MAX_ALTITUDE);
+            let altitude = String::from_utf8_lossy(&raw.altitude[..altitude_len]).to_string();
+
+            let object_type =
+                ObjectCallbackType::from_u8(raw.object_type).unwrap_or(ObjectCallbackType::Process);
+
+            callbacks.push(ObjectCallbackInfo {
+                module_name,
+                altitude,
+                pre_operation_callback: raw.pre_operation_callback,
+                post_operation_callback: raw.post_operation_callback,
+                object_type,
+                operations: ObjectCallbackOperations::from_u32(raw.operations),
+                index: raw.index,
+            });
+        }
+
+        Ok(callbacks)
+    }
+}

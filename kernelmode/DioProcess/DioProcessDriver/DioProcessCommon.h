@@ -172,6 +172,10 @@ struct EventData
 #define IOCTL_DIOPROCESS_ENUM_PSPCIDTABLE \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80F, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// Object callback enumeration IOCTL
+#define IOCTL_DIOPROCESS_ENUM_OBJECT_CALLBACKS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x810, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct CollectionStateResponse
 {
 	BOOLEAN IsCollecting;
@@ -251,4 +255,40 @@ struct CallbackInformation
 	CHAR ModuleName[MAX_MODULE_NAME_LENGTH];
 	ULONG64 CallbackAddress;
 	ULONG Index;  // Position in the callback array
+};
+
+// ============== Object Callback Enumeration Structures ==============
+
+#define MAX_OBJECT_CALLBACK_ENTRIES 64
+#define MAX_ALTITUDE_LENGTH 64
+
+// Object type being monitored by the callback
+enum ObjectCallbackType : UCHAR
+{
+	ObjectCallbackProcess = 1,
+	ObjectCallbackThread = 2
+};
+
+// Operations the callback monitors
+enum ObjectCallbackOperations : ULONG
+{
+	OpHandleCreate = 1,      // OB_OPERATION_HANDLE_CREATE
+	OpHandleDuplicate = 2    // OB_OPERATION_HANDLE_DUPLICATE
+};
+
+struct ObjectCallbackInfo
+{
+	CHAR ModuleName[MAX_MODULE_NAME_LENGTH];      // Driver that registered the callback
+	CHAR Altitude[MAX_ALTITUDE_LENGTH];           // Callback altitude (priority)
+	ULONG64 PreOperationCallback;                 // Pre-operation callback address
+	ULONG64 PostOperationCallback;                // Post-operation callback address
+	ObjectCallbackType ObjectType;                // Process or Thread
+	ObjectCallbackOperations Operations;          // Which operations are monitored
+	ULONG Index;                                  // Entry index
+};
+
+struct EnumObjectCallbacksResponse
+{
+	ULONG Count;                                  // Number of entries returned
+	ObjectCallbackInfo Entries[1];                // Variable length array
 };

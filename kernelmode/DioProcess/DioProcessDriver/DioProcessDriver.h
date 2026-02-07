@@ -235,3 +235,51 @@ const ULONG ETHREAD_CID_OFFSET[] =
 	0x4e0,  // WINDOWS_11_23H2  (22631)
 	0x4e0   // WINDOWS_11_24H2  (26100)
 };
+
+// CallbackList offset in _OBJECT_TYPE (for ObRegisterCallbacks enumeration)
+const ULONG OBJECT_TYPE_CALLBACKLIST_OFFSET[] =
+{
+	0x00,   // WINDOWS_UNSUPPORTED
+	0xC8,   // WINDOWS_10_1507  (10240)
+	0xC8,   // WINDOWS_10_1511  (10586)
+	0xC8,   // WINDOWS_10_1607  (14393)
+	0xC8,   // WINDOWS_10_1703  (15063)
+	0xC8,   // WINDOWS_10_1709  (16299)
+	0xC8,   // WINDOWS_10_1803  (17134)
+	0xC8,   // WINDOWS_10_1809  (17763)
+	0xC8,   // WINDOWS_10_1903  (18362)
+	0xC8,   // WINDOWS_10_1909  (18363)
+	0xC8,   // WINDOWS_10_2004  (19041)
+	0xC8,   // WINDOWS_10_20H2  (19042)
+	0xC8,   // WINDOWS_10_21H1  (19043)
+	0xC8,   // WINDOWS_10_21H2  (19044)
+	0xC8,   // WINDOWS_10_22H2  (19045)
+	0xC8,   // WINDOWS_11_21H2  (22000)
+	0xC8,   // WINDOWS_11_22H2  (22621)
+	0xC8,   // WINDOWS_11_23H2  (22631)
+	0xC8    // WINDOWS_11_24H2  (26100)
+};
+
+// ============== Object Callback Internal Structures ==============
+// These are undocumented structures used by ObRegisterCallbacks
+
+typedef struct _CALLBACK_ENTRY_ITEM {
+	LIST_ENTRY EntryItemList;
+	OB_OPERATION Operations;
+	struct _CALLBACK_ENTRY* CallbackEntry;
+	POBJECT_TYPE ObjectType;
+	POB_PRE_OPERATION_CALLBACK PreOperation;
+	POB_POST_OPERATION_CALLBACK PostOperation;
+	__int64 unk;
+} CALLBACK_ENTRY_ITEM, *PCALLBACK_ENTRY_ITEM;
+
+typedef struct _CALLBACK_ENTRY {
+	__int16 Version;
+	char buffer1[6];
+	POB_OPERATION_REGISTRATION RegistrationContext;
+	__int16 AltitudeLength1;
+	__int16 AltitudeLength2;
+	char buffer2[4];
+	WCHAR* AltitudeString;
+	CALLBACK_ENTRY_ITEM Items;
+} CALLBACK_ENTRY, *PCALLBACK_ENTRY;

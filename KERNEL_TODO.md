@@ -10,6 +10,7 @@ Future kernel-mode features and improvements for security research. All features
 | Token Privilege Escalation | Data modification | ✅ | Done |
 | Clear Debug Flags | Data modification | ✅ | Done |
 | Callback Enumeration (Process/Thread/Image) | Read-only | ✅ | Done |
+| **Object Callback Enumeration (ObRegisterCallbacks)** | Read-only | ✅ | **Done** |
 | PspCidTable Enumeration | Read-only | ✅ | Done |
 | Kernel Injection (Shellcode/DLL) | Thread creation | ✅ | Done |
 
@@ -356,7 +357,7 @@ IOCTL_QUEUE_USER_APC          // Queue user-mode APC
 
 | Priority | Feature | Effort | Value |
 |----------|---------|--------|-------|
-| 🔴 High | Object Callback Enumeration | Medium | Find EDR handle hooks |
+| ✅ Done | Object Callback Enumeration | Medium | Find EDR handle hooks |
 | 🔴 High | Minifilter Enumeration | Medium | Find FS monitoring |
 | 🔴 High | VAD Tree Enumeration | Medium | Detect hidden memory |
 | 🟡 Medium | Driver Enumeration | Low | Detect hidden drivers |

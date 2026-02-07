@@ -782,8 +782,8 @@ NTSTATUS DioProcessRead(PDEVICE_OBJECT, PIRP Irp)
 			if (!link)
 				break;
 
-#pragma warning(suppress: 6001)
 			auto item = CONTAINING_RECORD(link, FullEventData, Link);
+#pragma warning(suppress: 6001)
 			auto size = item->Data.Header.Size;
 			if (size > len)
 			{
@@ -2427,6 +2427,216 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		break;
 	}
 
+	// ============== Object Callback Enumeration IOCTL ==============
+
+	case IOCTL_DIOPROCESS_ENUM_OBJECT_CALLBACKS:
+	{
+		KdPrint((DRIVER_PREFIX "Enumerating object callbacks (ObRegisterCallbacks)\n"));
+
+		WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+		if (windowsVersion == WINDOWS_UNSUPPORTED)
+		{
+			status = STATUS_NOT_SUPPORTED;
+			KdPrint((DRIVER_PREFIX "Windows version unsupported for object callback enumeration\n"));
+			break;
+		}
+
+		auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+		ULONG requiredSize = sizeof(EnumObjectCallbacksResponse) +
+			(sizeof(ObjectCallbackInfo) * (MAX_OBJECT_CALLBACK_ENTRIES - 1));
+
+		if (outputLen < requiredSize)
+		{
+			status = STATUS_BUFFER_TOO_SMALL;
+			KdPrint((DRIVER_PREFIX "Buffer too small (need %d bytes, got %d)\n", requiredSize, outputLen));
+			break;
+		}
+
+		auto response = (EnumObjectCallbacksResponse*)Irp->AssociatedIrp.SystemBuffer;
+		if (!response)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		RtlZeroMemory(response, requiredSize);
+
+		ULONG callbackCount = 0;
+		ULONG callbackListOffset = OBJECT_TYPE_CALLBACKLIST_OFFSET[windowsVersion];
+
+		// Enumerate Process object callbacks
+		__try
+		{
+			// Get the Process object type
+			POBJECT_TYPE processType = *PsProcessType;
+			if (processType)
+			{
+				KdPrint((DRIVER_PREFIX "Process ObjectType at 0x%p\n", processType));
+
+				// Get CallbackList at offset in _OBJECT_TYPE
+				PLIST_ENTRY callbackListHead = (PLIST_ENTRY)((ULONG_PTR)processType + callbackListOffset);
+				KdPrint((DRIVER_PREFIX "Process CallbackList head at 0x%p\n", callbackListHead));
+
+				// Walk the callback list
+				PLIST_ENTRY entry = callbackListHead->Flink;
+				while (entry != callbackListHead && callbackCount < MAX_OBJECT_CALLBACK_ENTRIES)
+				{
+					// Entry points to EntryItemList in CALLBACK_ENTRY_ITEM
+					PCALLBACK_ENTRY_ITEM callbackItem = CONTAINING_RECORD(entry, CALLBACK_ENTRY_ITEM, EntryItemList);
+
+					if (callbackItem && MmIsAddressValid(callbackItem))
+					{
+						ObjectCallbackInfo* cbInfo = &response->Entries[callbackCount];
+						cbInfo->ObjectType = ObjectCallbackProcess;
+						cbInfo->Operations = (ObjectCallbackOperations)callbackItem->Operations;
+						cbInfo->Index = callbackCount;
+
+						// Get Pre/Post operation callbacks
+						if (callbackItem->PreOperation && MmIsAddressValid(callbackItem->PreOperation))
+						{
+							cbInfo->PreOperationCallback = (ULONG64)callbackItem->PreOperation;
+						}
+						if (callbackItem->PostOperation && MmIsAddressValid(callbackItem->PostOperation))
+						{
+							cbInfo->PostOperationCallback = (ULONG64)callbackItem->PostOperation;
+						}
+
+						// Get altitude from parent CALLBACK_ENTRY
+						if (callbackItem->CallbackEntry && MmIsAddressValid(callbackItem->CallbackEntry))
+						{
+							PCALLBACK_ENTRY callbackEntry = callbackItem->CallbackEntry;
+							if (callbackEntry->AltitudeString && MmIsAddressValid(callbackEntry->AltitudeString))
+							{
+								// Convert altitude to ANSI
+								UNICODE_STRING altitudeUnicode;
+								altitudeUnicode.Buffer = callbackEntry->AltitudeString;
+								altitudeUnicode.Length = callbackEntry->AltitudeLength1;
+								altitudeUnicode.MaximumLength = callbackEntry->AltitudeLength2;
+
+								ANSI_STRING altitudeAnsi;
+								altitudeAnsi.Buffer = cbInfo->Altitude;
+								altitudeAnsi.Length = 0;
+								altitudeAnsi.MaximumLength = MAX_ALTITUDE_LENGTH - 1;
+
+								RtlUnicodeStringToAnsiString(&altitudeAnsi, &altitudeUnicode, FALSE);
+							}
+						}
+
+						// Resolve module name for pre-operation callback
+						if (cbInfo->PreOperationCallback)
+						{
+							CallbackInformation tempInfo = { 0 };
+							tempInfo.CallbackAddress = cbInfo->PreOperationCallback;
+							SearchLoadedModules(&tempInfo);
+							RtlCopyMemory(cbInfo->ModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
+						}
+						else if (cbInfo->PostOperationCallback)
+						{
+							CallbackInformation tempInfo = { 0 };
+							tempInfo.CallbackAddress = cbInfo->PostOperationCallback;
+							SearchLoadedModules(&tempInfo);
+							RtlCopyMemory(cbInfo->ModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
+						}
+
+						KdPrint((DRIVER_PREFIX "Process callback[%d]: Pre=0x%llX Post=0x%llX Ops=0x%X -> %s (Alt: %s)\n",
+							callbackCount, cbInfo->PreOperationCallback, cbInfo->PostOperationCallback,
+							cbInfo->Operations, cbInfo->ModuleName, cbInfo->Altitude));
+
+						callbackCount++;
+					}
+
+					entry = entry->Flink;
+				}
+			}
+
+			// Enumerate Thread object callbacks
+			POBJECT_TYPE threadType = *PsThreadType;
+			if (threadType)
+			{
+				KdPrint((DRIVER_PREFIX "Thread ObjectType at 0x%p\n", threadType));
+
+				PLIST_ENTRY callbackListHead = (PLIST_ENTRY)((ULONG_PTR)threadType + callbackListOffset);
+				KdPrint((DRIVER_PREFIX "Thread CallbackList head at 0x%p\n", callbackListHead));
+
+				PLIST_ENTRY entry = callbackListHead->Flink;
+				while (entry != callbackListHead && callbackCount < MAX_OBJECT_CALLBACK_ENTRIES)
+				{
+					PCALLBACK_ENTRY_ITEM callbackItem = CONTAINING_RECORD(entry, CALLBACK_ENTRY_ITEM, EntryItemList);
+
+					if (callbackItem && MmIsAddressValid(callbackItem))
+					{
+						ObjectCallbackInfo* cbInfo = &response->Entries[callbackCount];
+						cbInfo->ObjectType = ObjectCallbackThread;
+						cbInfo->Operations = (ObjectCallbackOperations)callbackItem->Operations;
+						cbInfo->Index = callbackCount;
+
+						if (callbackItem->PreOperation && MmIsAddressValid(callbackItem->PreOperation))
+						{
+							cbInfo->PreOperationCallback = (ULONG64)callbackItem->PreOperation;
+						}
+						if (callbackItem->PostOperation && MmIsAddressValid(callbackItem->PostOperation))
+						{
+							cbInfo->PostOperationCallback = (ULONG64)callbackItem->PostOperation;
+						}
+
+						if (callbackItem->CallbackEntry && MmIsAddressValid(callbackItem->CallbackEntry))
+						{
+							PCALLBACK_ENTRY callbackEntry = callbackItem->CallbackEntry;
+							if (callbackEntry->AltitudeString && MmIsAddressValid(callbackEntry->AltitudeString))
+							{
+								UNICODE_STRING altitudeUnicode;
+								altitudeUnicode.Buffer = callbackEntry->AltitudeString;
+								altitudeUnicode.Length = callbackEntry->AltitudeLength1;
+								altitudeUnicode.MaximumLength = callbackEntry->AltitudeLength2;
+
+								ANSI_STRING altitudeAnsi;
+								altitudeAnsi.Buffer = cbInfo->Altitude;
+								altitudeAnsi.Length = 0;
+								altitudeAnsi.MaximumLength = MAX_ALTITUDE_LENGTH - 1;
+
+								RtlUnicodeStringToAnsiString(&altitudeAnsi, &altitudeUnicode, FALSE);
+							}
+						}
+
+						if (cbInfo->PreOperationCallback)
+						{
+							CallbackInformation tempInfo = { 0 };
+							tempInfo.CallbackAddress = cbInfo->PreOperationCallback;
+							SearchLoadedModules(&tempInfo);
+							RtlCopyMemory(cbInfo->ModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
+						}
+						else if (cbInfo->PostOperationCallback)
+						{
+							CallbackInformation tempInfo = { 0 };
+							tempInfo.CallbackAddress = cbInfo->PostOperationCallback;
+							SearchLoadedModules(&tempInfo);
+							RtlCopyMemory(cbInfo->ModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
+						}
+
+						KdPrint((DRIVER_PREFIX "Thread callback[%d]: Pre=0x%llX Post=0x%llX Ops=0x%X -> %s (Alt: %s)\n",
+							callbackCount, cbInfo->PreOperationCallback, cbInfo->PostOperationCallback,
+							cbInfo->Operations, cbInfo->ModuleName, cbInfo->Altitude));
+
+						callbackCount++;
+					}
+
+					entry = entry->Flink;
+				}
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			KdPrint((DRIVER_PREFIX "Exception during object callback enumeration\n"));
+			status = STATUS_UNSUCCESSFUL;
+			break;
+		}
+
+		response->Count = callbackCount;
+		KdPrint((DRIVER_PREFIX "Found %d total object callbacks\n", callbackCount));
+		info = requiredSize;
+		break;
+	}
+
 	// ============== Kernel Shellcode Injection IOCTL ==============
 
 	case IOCTL_DIOPROCESS_KERNEL_INJECT_SHELLCODE:
@@ -2603,13 +2813,13 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 			// Get TableCode (offset +8 in _HANDLE_TABLE)
 			ULONG64 tableCode = *(PULONG64)((ULONG64)handleTable + 8);
-			KdPrint((DRIVER_PREFIX "TableCode: %p\n", tableCode));
+			KdPrint((DRIVER_PREFIX "TableCode: 0x%llX\n", tableCode));
 
 			// Extract table level from lower 2 bits
 			INT tableLevel = (INT)(tableCode & 3);
 			ULONG64 tableBase = tableCode & ~3ULL;
 
-			KdPrint((DRIVER_PREFIX "Table level: %d, Base: %p\n", tableLevel, tableBase));
+			KdPrint((DRIVER_PREFIX "Table level: %d, Base: 0x%llX\n", tableLevel, tableBase));
 
 			// Initialize response
 			response->Count = 0;

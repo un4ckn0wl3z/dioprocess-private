@@ -137,6 +137,9 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `AppConfig` | ui | theme |
 | `ConfigStorage` | ui | SQLite wrapper for app settings |
 | `CallbackInfo` | callback | index, callback_address, module_name |
+| `ObjectCallbackInfo` | callback | module_name, altitude, pre_operation_callback, post_operation_callback, object_type, operations, index |
+| `ObjectCallbackType` | callback | Process, Thread |
+| `ObjectCallbackOperations` | callback | handle_create, handle_duplicate |
 | `CidEntry` | callback | id, object_address, object_type, parent_pid, process_name |
 | `CidObjectType` | callback | Process, Thread |
 
@@ -706,12 +709,13 @@ Access via "Kernel Utilities" tab in the main navigation. Hosts kernel-mode secu
 
 ### Callback Enumeration sub-tab
 
-Enumerate registered kernel callbacks (process, thread, image load notifications):
+Enumerate registered kernel callbacks (process, thread, image load, and object notifications):
 
 **Functions (callback crate):**
 - `callback::enumerate_process_callbacks() -> Result<Vec<CallbackInfo>, CallbackError>` — List `PsSetCreateProcessNotifyRoutineEx` callbacks
 - `callback::enumerate_thread_callbacks() -> Result<Vec<CallbackInfo>, CallbackError>` — List `PsSetCreateThreadNotifyRoutine` callbacks
 - `callback::enumerate_image_callbacks() -> Result<Vec<CallbackInfo>, CallbackError>` — List `PsSetLoadImageNotifyRoutine` callbacks
+- `callback::enumerate_object_callbacks() -> Result<Vec<ObjectCallbackInfo>, CallbackError>` — List `ObRegisterCallbacks` handle operation callbacks
 
 **CallbackInfo struct:**
 ```rust
@@ -722,18 +726,33 @@ pub struct CallbackInfo {
 }
 ```
 
+**ObjectCallbackInfo struct:**
+```rust
+pub struct ObjectCallbackInfo {
+    pub module_name: String,           // Driver that registered the callback
+    pub altitude: String,              // Callback altitude (priority)
+    pub pre_operation_callback: u64,   // Pre-operation callback address
+    pub post_operation_callback: u64,  // Post-operation callback address
+    pub object_type: ObjectCallbackType, // Process or Thread
+    pub operations: ObjectCallbackOperations, // Create, Duplicate, or both
+    pub index: u32,
+}
+```
+
 **IOCTLs:**
 ```cpp
 IOCTL_DIOPROCESS_ENUM_PROCESS_CALLBACKS  // 0x00222024
 IOCTL_DIOPROCESS_ENUM_THREAD_CALLBACKS   // 0x00222028
 IOCTL_DIOPROCESS_ENUM_IMAGE_CALLBACKS    // 0x0022202C
+IOCTL_DIOPROCESS_ENUM_OBJECT_CALLBACKS   // 0x00222040
 ```
 
 **UI Features:**
-- **Callback type selector** — Process, Thread, or Image Load buttons
-- **Callback table** — Index, Callback Address (hex), Driver Module columns
+- **Callback type selector** — Process, Thread, Image Load, or Object buttons
+- **Regular callback table** — Index, Callback Address (hex), Driver Module columns
+- **Object callback table** — Type (Process/Thread), Pre-Operation, Post-Operation, Module, Altitude, Operations columns
 - **Sorting** — Click column headers to sort ascending/descending
-- **Search filter** — Filter by module name, address, or index
+- **Search filter** — Filter by module name, address, altitude, or type
 - **CSV export** — Export enumerated callbacks to CSV file
 - **Context menu** — Copy Index, Copy Address, Copy Module
 - **Keyboard shortcuts** — F5 (refresh), Escape (close menu)
@@ -743,6 +762,8 @@ IOCTL_DIOPROCESS_ENUM_IMAGE_CALLBACKS    // 0x0022202C
 - Identify EDR/AV callbacks for security research
 - Understand which drivers are monitoring process/thread/image events
 - Detect rootkits that register malicious callbacks
+- Find handle operation hooks (ObRegisterCallbacks) used by security products
+- Analyze callback altitudes to understand driver priority order
 
 ### PspCidTable sub-tab
 

@@ -132,9 +132,13 @@ Enumerate registered kernel callbacks via the **Kernel Utilities** tab → **Cal
 - **Process callbacks** — `PsSetCreateProcessNotifyRoutineEx` registrations (AV/EDR process monitoring)
 - **Thread callbacks** — `PsSetCreateThreadNotifyRoutine` registrations
 - **Image load callbacks** — `PsSetLoadImageNotifyRoutine` registrations (DLL/EXE load monitoring)
+- **Object callbacks** — `ObRegisterCallbacks` registrations (handle operation monitoring for process/thread handles)
+  - Shows pre-operation and post-operation callback addresses
+  - Displays callback altitude (priority) and monitored operations (Create/Duplicate)
+  - Commonly used by EDR/AV to monitor handle access to protected processes
 - Returns callback address, slot index, and owning driver module name
 - Useful for identifying EDR hooks, rootkit callbacks, security product registrations
-- Located in `crates/callback/src/driver.rs`: `enumerate_process_callbacks()`, `enumerate_thread_callbacks()`, `enumerate_image_callbacks()`
+- Located in `crates/callback/src/driver.rs`: `enumerate_process_callbacks()`, `enumerate_thread_callbacks()`, `enumerate_image_callbacks()`, `enumerate_object_callbacks()`
 
 ### PspCidTable Enumeration
 

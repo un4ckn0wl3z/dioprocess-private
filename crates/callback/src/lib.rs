@@ -16,9 +16,10 @@ mod types;
 
 pub use driver::{
     clear_debug_flags, enable_all_privileges, enumerate_image_callbacks,
-    enumerate_process_callbacks, enumerate_thread_callbacks, get_collection_state,
-    is_driver_loaded, protect_process, read_events, register_callbacks, start_collection,
-    stop_collection, unprotect_process, unregister_callbacks, CallbackInfo,
+    enumerate_object_callbacks, enumerate_process_callbacks, enumerate_thread_callbacks,
+    get_collection_state, is_driver_loaded, protect_process, read_events, register_callbacks,
+    start_collection, stop_collection, unprotect_process, unregister_callbacks, CallbackInfo,
+    ObjectCallbackInfo, ObjectCallbackOperations, ObjectCallbackType,
 };
 pub use error::CallbackError;
 pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
