@@ -82,7 +82,7 @@ pub fn KernelUtilitiesTab() -> Element {
 
             // Header
             div { class: "header-box",
-                h1 { class: "header-title", "⚙️ Kernel Utilities" }
+                h1 { class: "header-title", "Kernel Utilities" }
                 div { class: "header-stats",
                     span {
                         class: if driver_loaded { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
@@ -96,17 +96,18 @@ pub fn KernelUtilitiesTab() -> Element {
                 }
             }
 
-            // Sub-tabs
+            // Sub-tabs (styled like controls bar)
             div {
-                class: "subtab-container",
+                class: "controls",
+                style: "border-bottom: 1px solid var(--border-secondary); padding-bottom: 12px;",
                 button {
-                    class: if *active_tab.read() == KernelUtilityTab::CallbackEnum { "subtab-button active" } else { "subtab-button" },
+                    class: if *active_tab.read() == KernelUtilityTab::CallbackEnum { "btn btn-secondary active" } else { "btn btn-secondary" },
                     onclick: move |_| active_tab.set(KernelUtilityTab::CallbackEnum),
                     "Callback Enumeration"
                 }
 
                 button {
-                    class: if *active_tab.read() == KernelUtilityTab::PspCidTable { "subtab-button active" } else { "subtab-button" },
+                    class: if *active_tab.read() == KernelUtilityTab::PspCidTable { "btn btn-secondary active" } else { "btn btn-secondary" },
                     onclick: move |_| active_tab.set(KernelUtilityTab::PspCidTable),
                     "PspCidTable"
                 }
@@ -273,18 +274,13 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
 
     rsx! {
         div {
-            class: "tab-content",
+            style: "display: flex; flex-direction: column; flex: 1; overflow: hidden;",
             tabindex: "0",
             onkeydown: handle_keydown,
             onclick: move |_| context_menu.set(CallbackContextMenuState::default()),
 
-            // Status message in header
-            if !status_msg.is_empty() {
-                div { class: "status-message", "{status_msg}" }
-            }
-
-            // Toolbar
-            div { class: "toolbar",
+            // Controls
+            div { class: "controls",
                 // Callback type selector
                 button {
                     class: if current_type == CallbackType::Process { "btn btn-secondary active" } else { "btn btn-secondary" },
@@ -328,7 +324,7 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
                     class: "btn btn-primary",
                     disabled: !driver_loaded || is_running,
                     onclick: move |_| handle_enumerate(()),
-                    if is_running { "Enumerating..." } else { "🔄 Refresh" }
+                    if is_running { "Enumerating..." } else { "Refresh" }
                 }
 
                 button {
@@ -336,6 +332,11 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
                     disabled: callback_list.is_empty(),
                     onclick: export_csv,
                     "Export CSV"
+                }
+
+                // Status message inline
+                if !status_msg.is_empty() {
+                    span { class: "status-message", "{status_msg}" }
                 }
             }
 
@@ -383,7 +384,7 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
                             for cb in filtered_list.into_iter() {
                                 tr {
                                     key: "{cb.index}",
-                                    class: if *selected_index.read() == Some(cb.index) { "table-row selected" } else { "table-row" },
+                                    class: if *selected_index.read() == Some(cb.index) { "process-row selected" } else { "process-row" },
                                     onclick: move |_| {
                                         let current = *selected_index.read();
                                         if current == Some(cb.index) {
@@ -405,9 +406,9 @@ fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                         });
                                     },
 
-                                    td { class: "td", "{cb.index}" }
-                                    td { class: "td mono", "0x{cb.callback_address:016X}" }
-                                    td { class: "td", "{cb.module_name}" }
+                                    td { class: "cell", "{cb.index}" }
+                                    td { class: "cell mono", "0x{cb.callback_address:016X}" }
+                                    td { class: "cell", "{cb.module_name}" }
                                 }
                             }
                         }
@@ -619,18 +620,13 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
 
     rsx! {
         div {
-            class: "tab-content",
+            style: "display: flex; flex-direction: column; flex: 1; overflow: hidden;",
             tabindex: "0",
             onkeydown: handle_keydown,
             onclick: move |_| context_menu.set(CidContextMenuState::default()),
 
-            // Status message in header
-            if !cid_status_msg.is_empty() {
-                div { class: "status-message", "{cid_status_msg}" }
-            }
-
-            // Toolbar
-            div { class: "toolbar",
+            // Controls
+            div { class: "controls",
                 // Type filter
                 button {
                     class: if filter.is_empty() { "btn btn-secondary active" } else { "btn btn-secondary" },
@@ -662,7 +658,7 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
                     class: "btn btn-primary",
                     disabled: !driver_loaded || cid_is_running,
                     onclick: move |_| handle_cid_enumerate(()),
-                    if cid_is_running { "Enumerating..." } else { "🔄 Refresh" }
+                    if cid_is_running { "Enumerating..." } else { "Refresh" }
                 }
 
                 button {
@@ -670,6 +666,11 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
                     disabled: cid_list.is_empty(),
                     onclick: export_csv,
                     "Export CSV"
+                }
+
+                // Status message inline
+                if !cid_status_msg.is_empty() {
+                    span { class: "status-message", "{cid_status_msg}" }
                 }
             }
 
@@ -727,7 +728,7 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
                             for entry in filtered_list.into_iter() {
                                 tr {
                                     key: "{entry.id}-{entry.object_address}",
-                                    class: if *selected_id.read() == Some(entry.id) { "table-row selected" } else { "table-row" },
+                                    class: if *selected_id.read() == Some(entry.id) { "process-row selected" } else { "process-row" },
                                     onclick: move |_| {
                                         let current = *selected_id.read();
                                         if current == Some(entry.id) {
@@ -751,18 +752,18 @@ fn PspCidTableTab(driver_loaded: bool) -> Element {
                                     },
 
                                     td {
-                                        class: "td",
+                                        class: "cell",
                                         if entry.object_type == CidObjectType::Process {
-                                            span { style: "color: #10b981; font-weight: 600;", "Process" }
+                                            span { class: "cpu-low", style: "font-weight: 600;", "Process" }
                                         } else {
-                                            span { style: "color: #3b82f6; font-weight: 600;", "Thread" }
+                                            span { style: "color: #60a5fa; font-weight: 600;", "Thread" }
                                         }
                                     }
-                                    td { class: "td", "{entry.id}" }
-                                    td { class: "td", style: "color: #fbbf24; font-family: monospace;", "{entry.process_name_str()}" }
-                                    td { class: "td mono", "0x{entry.object_address:016X}" }
+                                    td { class: "cell", "{entry.id}" }
+                                    td { class: "cell cell-pid", "{entry.process_name_str()}" }
+                                    td { class: "cell mono", "0x{entry.object_address:016X}" }
                                     td {
-                                        class: "td",
+                                        class: "cell",
                                         if entry.parent_pid != 0 {
                                             "{entry.parent_pid}"
                                         } else {
