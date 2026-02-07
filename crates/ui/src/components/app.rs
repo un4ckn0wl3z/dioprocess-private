@@ -30,7 +30,55 @@ pub fn Layout() -> Element {
     let mut license_input = use_signal(|| String::new());
     let mut license_error = use_signal(|| String::new());
     let mut show_install_warning = use_signal(|| false);
+    let mut license_validated = use_signal(|| false);
     let route: Route = use_route();
+
+    // Validate license on startup
+    use_future(move || async move {
+        if has_pat() {
+            let result = tokio::task::spawn_blocking(|| {
+                if let Some(pat) = load_pat() {
+                    // Test the PAT by making a simple API call
+                    let response = ureq::get("https://api.github.com/user")
+                        .set("Authorization", &format!("Bearer {}", pat))
+                        .set("User-Agent", "DioProcess")
+                        .call();
+
+                    match response {
+                        Ok(r) if r.status() == 200 => true,
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }).await;
+
+            match result {
+                Ok(true) => {
+                    license_validated.set(true);
+                }
+                _ => {
+                    // License is invalid or expired, delete it
+                    delete_pat();
+
+                    // Stop and remove driver if running
+                    if is_driver_loaded() {
+                        let _ = tokio::task::spawn_blocking(|| {
+                            let _ = Command::new("sc").args(["stop", "dpdrv"]).output();
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                            let _ = Command::new("sc").args(["delete", "dpdrv"]).output();
+                        }).await;
+                        driver_loaded.set(false);
+                    }
+
+                    install_status.set("License expired - driver removed".to_string());
+                    // Clear status after 5 seconds
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    install_status.set(String::new());
+                }
+            }
+        }
+    });
 
     // Auto-refresh system stats and driver status every 3 seconds
     use_future(move || async move {
@@ -293,12 +341,12 @@ pub fn Layout() -> Element {
                                                 let result = tokio::task::spawn_blocking(move || {
                                                     let pat = match load_pat() {
                                                         Some(p) => p,
-                                                        None => return Err("License key not configured".to_string()),
+                                                        None => return Err("Error: E1001".to_string()),
                                                     };
 
                                                     let appdata = match std::env::var("LOCALAPPDATA") {
                                                         Ok(p) => std::path::PathBuf::from(p),
-                                                        Err(_) => return Err("Installation failed".to_string()),
+                                                        Err(_) => return Err("Error: E1002".to_string()),
                                                     };
                                                     let dioprocess_dir = appdata.join("DioProcess");
                                                     let zip_path = dioprocess_dir.join("dpdrv.zip");
@@ -306,7 +354,7 @@ pub fn Layout() -> Element {
                                                     // Create directory
                                                     let _ = std::fs::create_dir_all(&dioprocess_dir);
 
-                                                    // Clean up old zip and any dpdrv directories
+                                                    // Clean up old files
                                                     let _ = std::fs::remove_file(&zip_path);
                                                     if let Ok(entries) = std::fs::read_dir(&dioprocess_dir) {
                                                         for entry in entries.flatten() {
@@ -318,7 +366,7 @@ pub fn Layout() -> Element {
                                                         }
                                                     }
 
-                                                    // Download zip using ureq with GitHub API
+                                                    // Fetch package
                                                     let zip_url = "https://api.github.com/repos/un4ckn0wl3z/dpdrv/zipball/main";
 
                                                     let response = match ureq::get(zip_url)
@@ -328,32 +376,32 @@ pub fn Layout() -> Element {
                                                         .call()
                                                     {
                                                         Ok(r) => r,
-                                                        Err(e) => return Err(format!("Download failed: {}", e)),
+                                                        Err(_) => return Err("Error: E1003".to_string()),
                                                     };
 
-                                                    // Read response body to file
+                                                    // Write package
                                                     let mut file = match std::fs::File::create(&zip_path) {
                                                         Ok(f) => f,
-                                                        Err(_) => return Err("Failed to create zip file".to_string()),
+                                                        Err(_) => return Err("Error: E1004".to_string()),
                                                     };
 
                                                     if let Err(_) = std::io::copy(&mut response.into_reader(), &mut file) {
-                                                        return Err("Failed to write zip file".to_string());
+                                                        return Err("Error: E1004".to_string());
                                                     }
 
                                                     if !zip_path.exists() {
-                                                        return Err("Download failed".to_string());
+                                                        return Err("Error: E1003".to_string());
                                                     }
 
-                                                    // Extract zip using zip crate
+                                                    // Process package
                                                     let zip_file = match std::fs::File::open(&zip_path) {
                                                         Ok(f) => f,
-                                                        Err(_) => return Err("Failed to open zip file".to_string()),
+                                                        Err(_) => return Err("Error: E1005".to_string()),
                                                     };
 
                                                     let mut archive = match zip::ZipArchive::new(zip_file) {
                                                         Ok(a) => a,
-                                                        Err(_) => return Err("Failed to read zip archive".to_string()),
+                                                        Err(_) => return Err("Error: E1005".to_string()),
                                                     };
 
                                                     for i in 0..archive.len() {
@@ -379,10 +427,9 @@ pub fn Layout() -> Element {
                                                         }
                                                     }
 
-                                                    // Delete zip
                                                     let _ = std::fs::remove_file(&zip_path);
 
-                                                    // Find the extracted directory (GitHub API creates un4ckn0wl3z-dpdrv-{sha})
+                                                    // Locate setup
                                                     let extract_dir = match std::fs::read_dir(&dioprocess_dir) {
                                                         Ok(entries) => {
                                                             let mut found = None;
@@ -396,25 +443,17 @@ pub fn Layout() -> Element {
                                                             }
                                                             match found {
                                                                 Some(p) => p,
-                                                                None => return Err("Extraction failed".to_string()),
+                                                                None => return Err("Error: E1005".to_string()),
                                                             }
                                                         }
-                                                        Err(_) => return Err("Extraction failed".to_string()),
+                                                        Err(_) => return Err("Error: E1005".to_string()),
                                                     };
 
-                                                    // Run install script (cmd version)
+                                                    // Run setup
                                                     let install_script = extract_dir.join("install.cmd");
                                                     if !install_script.exists() {
-                                                        // List files in extract_dir for debugging
-                                                        let files: Vec<String> = std::fs::read_dir(&extract_dir)
-                                                            .map(|entries| {
-                                                                entries.flatten()
-                                                                    .map(|e| e.file_name().to_string_lossy().to_string())
-                                                                    .collect()
-                                                            })
-                                                            .unwrap_or_default();
                                                         let _ = std::fs::remove_dir_all(&extract_dir);
-                                                        return Err(format!("install.cmd not found. Files: {:?}", files));
+                                                        return Err("Error: E1006".to_string());
                                                     }
 
                                                     let install_result = Command::new("cmd")
@@ -422,7 +461,7 @@ pub fn Layout() -> Element {
                                                         .current_dir(&extract_dir)
                                                         .output();
 
-                                                    // Log output to file
+                                                    // Log output
                                                     let log_path = dioprocess_dir.join("install.log");
                                                     let write_log = |output: &std::process::Output| {
                                                         use std::io::Write;
@@ -435,13 +474,11 @@ pub fn Layout() -> Element {
                                                                 .duration_since(std::time::UNIX_EPOCH)
                                                                 .map(|d| d.as_secs())
                                                                 .unwrap_or(0);
-                                                            let _ = writeln!(file, "\n=== Install attempt at {} ===", timestamp);
-                                                            let _ = writeln!(file, "Exit code: {:?}", output.status.code());
-                                                            let _ = writeln!(file, "--- STDOUT ---");
+                                                            let _ = writeln!(file, "\n=== {} ===", timestamp);
+                                                            let _ = writeln!(file, "Code: {:?}", output.status.code());
                                                             let _ = file.write_all(&output.stdout);
-                                                            let _ = writeln!(file, "\n--- STDERR ---");
                                                             let _ = file.write_all(&output.stderr);
-                                                            let _ = writeln!(file, "=== End ===\n");
+                                                            let _ = writeln!(file, "===\n");
                                                         }
                                                     };
 
@@ -453,15 +490,13 @@ pub fn Layout() -> Element {
                                                         }
                                                         Ok(output) => {
                                                             write_log(&output);
-                                                            let stderr = String::from_utf8_lossy(&output.stderr);
-                                                            let stdout = String::from_utf8_lossy(&output.stdout);
                                                             let code = output.status.code().unwrap_or(-1);
                                                             let _ = std::fs::remove_dir_all(&extract_dir);
-                                                            Err(format!("Install failed (exit {}): {} {}", code, stdout, stderr))
+                                                            Err(format!("Error: E1007 ({})", code))
                                                         }
-                                                        Err(e) => {
+                                                        Err(_) => {
                                                             let _ = std::fs::remove_dir_all(&extract_dir);
-                                                            Err(format!("Failed to run install.cmd: {}", e))
+                                                            Err("Error: E1006".to_string())
                                                         }
                                                     }
                                                 }).await;
@@ -475,7 +510,7 @@ pub fn Layout() -> Element {
                                                         install_status.set(e);
                                                     }
                                                     Err(_) => {
-                                                        install_status.set("Installation failed".to_string());
+                                                        install_status.set("Error: E1000".to_string());
                                                     }
                                                 }
                                                 installing.set(false);
