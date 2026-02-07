@@ -278,6 +278,21 @@ Real-time kernel event capture via WDM driver with 17 event types:
 
 **Driver:** Build with Visual Studio + WDK, load via `sc create DioProcess type= kernel binPath= "path\to\DioProcess.sys" && sc start DioProcess`
 
+### Driver Installation Requirements
+
+⚠️ **Before installing the kernel driver, you MUST:**
+
+1. **Disable Hyper-V:** `bcdedit /set hypervisorlaunchtype off` (reboot required)
+2. **Disable Secure Boot** in BIOS/UEFI settings
+3. **Disable Windows driver protections:**
+   - Disable Driver Signature Enforcement (test mode or boot options)
+   - Disable Vulnerable Driver Blocklist (Windows Security → Device Security → Core Isolation)
+   - Disable Memory Integrity / HVCI if enabled
+
+⚠️ **Use ONLY on test systems. You are responsible for any damage.**
+
+**Install Log:** Driver installation output is logged to `%LOCALAPPDATA%\DioProcess\install.log` for troubleshooting.
+
 ## UI & Interaction Highlights
 
 - Borderless window with custom title bar

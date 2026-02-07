@@ -931,6 +931,21 @@ Access via "System Events" tab in the main navigation (marked as Experimental):
 - **Color coding** — Green (process create), red (process exit), blue (thread create), yellow (thread exit), purple (image load), pink (handle ops), cyan/orange (registry read/write)
 - **Context menu** — Copy PID, Copy Process Name, Copy Command Line, Filter by PID/Name
 
+### Driver Installation Requirements
+
+⚠️ **Before installing the kernel driver, you MUST:**
+
+1. **Disable Hyper-V:** `bcdedit /set hypervisorlaunchtype off` (reboot required)
+2. **Disable Secure Boot** in BIOS/UEFI settings
+3. **Disable Windows driver protections:**
+   - Disable Driver Signature Enforcement (test mode or boot options)
+   - Disable Vulnerable Driver Blocklist (Windows Security → Device Security → Core Isolation)
+   - Disable Memory Integrity / HVCI if enabled
+
+⚠️ **Use ONLY on test systems. You are responsible for any damage.**
+
+**Install Log:** Driver installation output is logged to `%LOCALAPPDATA%\DioProcess\install.log` for troubleshooting.
+
 ### Loading the driver
 
 ```batch
@@ -976,5 +991,11 @@ The app uses SQLite for persistent storage (two separate databases):
 - **Engine:** rusqlite 0.31 with bundled SQLite
 - **Mode:** WAL mode
 - **Schema:** Simple key-value table (`config(key TEXT PRIMARY KEY, value INTEGER)`)
+
+### Install log (`install.log`)
+- **Location:** `%LOCALAPPDATA%\DioProcess\install.log`
+- **Purpose:** Driver installation output for troubleshooting
+- **Format:** Timestamped entries with exit code, stdout, and stderr
+- **Mode:** Append-only (preserves history of all install attempts)
 
 No external services, network connections, or cloud storage — fully self-contained.
