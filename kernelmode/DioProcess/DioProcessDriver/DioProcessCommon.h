@@ -341,3 +341,32 @@ struct EnumMinifiltersResponse
 	ULONG Count;                                  // Number of entries returned
 	MinifilterInfo Entries[1];                    // Variable length array
 };
+
+// ============== Kernel Driver Enumeration ==============
+
+// Driver enumeration IOCTL
+#define IOCTL_DIOPROCESS_ENUM_DRIVERS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x813, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define MAX_DRIVER_ENTRIES 512
+#define MAX_DRIVER_NAME_LENGTH 64
+#define MAX_DRIVER_PATH_LENGTH 260
+
+struct KernelDriverInfo
+{
+	ULONG64 BaseAddress;                          // Driver base address in kernel
+	ULONG64 Size;                                 // Driver size in bytes
+	ULONG64 EntryPoint;                           // Driver entry point
+	ULONG64 DriverObject;                         // Pointer to DRIVER_OBJECT (if available)
+	ULONG Flags;                                  // Driver flags
+	ULONG LoadCount;                              // Reference/load count
+	CHAR DriverName[MAX_DRIVER_NAME_LENGTH];      // Driver name (e.g., "ntoskrnl.exe")
+	WCHAR DriverPath[MAX_DRIVER_PATH_LENGTH];     // Full driver path
+	ULONG Index;                                  // Entry index
+};
+
+struct EnumDriversResponse
+{
+	ULONG Count;                                  // Number of entries returned
+	KernelDriverInfo Entries[1];                  // Variable length array
+};

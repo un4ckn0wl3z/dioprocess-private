@@ -14,6 +14,7 @@ Future kernel-mode features and improvements for security research. All features
 | PspCidTable Enumeration | Read-only | ✅ | Done |
 | Kernel Injection (Shellcode/DLL) | Thread creation | ✅ | Done |
 | **Minifilter Enumeration (FltRegisterFilter)** | Read-only | ✅ | **Done** |
+| **Driver Enumeration (PsLoadedModuleList)** | Read-only | ✅ | **Done** |
 
 ---
 
@@ -42,7 +43,7 @@ IOCTL_ENUM_OBJECT_CALLBACKS  // Enumerate OB_CALLBACK_REGISTRATION entries
 
 ---
 
-### 2. Driver/Module Enumeration from Kernel
+### 2. Driver/Module Enumeration from Kernel ✅ DONE
 
 Enumerate loaded drivers directly from `PsLoadedModuleList`:
 
@@ -64,7 +65,7 @@ IOCTL_ENUM_KERNEL_MODULES  // List all loaded drivers
 - Compare with usermode `EnumDeviceDrivers()` results
 - View driver entry points for analysis
 
-**Priority:** 🟡 Medium
+**Status:** ✅ Implemented - See Kernel Utilities > Drivers tab
 
 ---
 

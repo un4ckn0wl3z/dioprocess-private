@@ -343,3 +343,24 @@ typedef struct _FLT_FILTER_PARTIAL {
 // FltGlobals offsets in fltmgr.sys
 // We'll pattern scan to find FltGlobals, then access FrameList at offset
 #define FLTGLOBALS_FRAMELIST_OFFSET        0x058   // LIST_ENTRY FrameList
+
+// ============== Kernel Driver Enumeration Structures ==============
+
+// KLDR_DATA_TABLE_ENTRY - describes a loaded kernel module in PsLoadedModuleList
+// This is a simplified version with the fields we need
+typedef struct _KLDR_DATA_TABLE_ENTRY {
+	LIST_ENTRY InLoadOrderLinks;           // +0x000 Links in PsLoadedModuleList
+	PVOID ExceptionTable;                  // +0x010
+	ULONG ExceptionTableSize;              // +0x018
+	PVOID GpValue;                         // +0x020
+	PVOID NonPagedDebugInfo;               // +0x028
+	PVOID DllBase;                         // +0x030 Base address of the module
+	PVOID EntryPoint;                      // +0x038 Entry point
+	ULONG SizeOfImage;                     // +0x040 Size of the image
+	UNICODE_STRING FullDllName;            // +0x048 Full path (e.g., \SystemRoot\system32\ntoskrnl.exe)
+	UNICODE_STRING BaseDllName;            // +0x058 Base name (e.g., ntoskrnl.exe)
+	ULONG Flags;                           // +0x068
+	USHORT LoadCount;                      // +0x06C
+	USHORT TlsIndex;                       // +0x06E (or u1 union)
+	// ... more fields follow but we don't need them
+} KLDR_DATA_TABLE_ENTRY, *PKLDR_DATA_TABLE_ENTRY;

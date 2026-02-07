@@ -1726,3 +1726,120 @@ pub fn enumerate_minifilters() -> Result<Vec<MinifilterInfo>, CallbackError> {
         Ok(filters)
     }
 }
+
+// ============== Kernel Driver Enumeration ==============
+
+const IOCTL_DIOPROCESS_ENUM_DRIVERS: u32 = 0x0022204C; // CTL_CODE(0x22, 0x813, 0, 0)
+
+/// Information about a loaded kernel driver
+#[derive(Debug, Clone)]
+pub struct KernelDriverInfo {
+    pub base_address: u64,
+    pub size: u64,
+    pub entry_point: u64,
+    pub driver_object: u64,
+    pub flags: u32,
+    pub load_count: u16,
+    pub driver_name: String,
+    pub driver_path: String,
+    pub index: u32,
+}
+
+/// Enumerate loaded kernel drivers from PsLoadedModuleList
+/// Returns information about all kernel-mode drivers currently loaded
+pub fn enumerate_kernel_drivers() -> Result<Vec<KernelDriverInfo>, CallbackError> {
+    let handle = open_device()?;
+
+    const MAX_ENTRIES: usize = 512;
+    const MAX_DRIVER_NAME: usize = 64;
+    const MAX_DRIVER_PATH: usize = 260;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RawKernelDriverInfo {
+        base_address: u64,
+        size: u64,
+        entry_point: u64,
+        driver_object: u64,
+        flags: u32,
+        load_count: u32, // Actually u16 + padding
+        driver_name: [u8; MAX_DRIVER_NAME],
+        driver_path: [u16; MAX_DRIVER_PATH], // Wide string
+        index: u32,
+    }
+
+    #[repr(C)]
+    struct RawResponse {
+        count: u32,
+        entries: [RawKernelDriverInfo; MAX_ENTRIES],
+    }
+
+    let buffer_size = std::mem::size_of::<RawResponse>();
+    let mut buffer: Vec<u8> = vec![0; buffer_size];
+
+    unsafe {
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_ENUM_DRIVERS,
+            None,
+            0,
+            Some(buffer.as_mut_ptr() as *mut _),
+            buffer_size as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+
+        let response = &*(buffer.as_ptr() as *const RawResponse);
+        let count = response.count as usize;
+
+        let mut drivers = Vec::with_capacity(count);
+        for i in 0..count.min(MAX_ENTRIES) {
+            let raw = &response.entries[i];
+
+            // Skip empty entries
+            if raw.base_address == 0 {
+                continue;
+            }
+
+            // Parse ANSI driver name
+            let name_len = raw
+                .driver_name
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(MAX_DRIVER_NAME);
+            let driver_name =
+                String::from_utf8_lossy(&raw.driver_name[..name_len]).to_string();
+
+            // Parse wide driver path
+            let path_len = raw
+                .driver_path
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(MAX_DRIVER_PATH);
+            let driver_path = String::from_utf16_lossy(&raw.driver_path[..path_len]);
+
+            drivers.push(KernelDriverInfo {
+                base_address: raw.base_address,
+                size: raw.size,
+                entry_point: raw.entry_point,
+                driver_object: raw.driver_object,
+                flags: raw.flags,
+                load_count: (raw.load_count & 0xFFFF) as u16,
+                driver_name,
+                driver_path,
+                index: raw.index,
+            });
+        }
+
+        Ok(drivers)
+    }
+}
