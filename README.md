@@ -29,6 +29,9 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 - **Security Research Features (Kernel Driver)** — Direct kernel structure manipulation for process protection and privilege escalation:
   - **Process Protection** — Apply/remove PPL (Protected Process Light) protection via `_EPROCESS` modification
   - **Token Privilege Escalation** — Enable all 40 Windows privileges via `_TOKEN` modification
+  - **Clear Debug Flags** — Remove debugger indicators (DebugPort, PEB.BeingDebugged, NtGlobalFlag)
+  - **Callback Enumeration** — List registered process/thread/image kernel callbacks (identify EDR/AV hooks)
+  - **PspCidTable Enumeration** — Enumerate all processes/threads via kernel CID table (detect hidden processes)
   - Supports Windows 10 (1507-22H2) and Windows 11 (21H2-24H2)
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
 - **Shellcode injection** — classic (from .bin file), web staging (download from URL via WinInet), and threadless (hook exported function, no new threads)
@@ -56,11 +59,12 @@ crates/
 ├── service/       # SCM: EnumServicesStatusEx, Start/Stop/Create/Delete service
 ├── callback/      # Kernel driver communication + SQLite event storage + security research IOCTLs
 │   └── src/
-│       ├── lib.rs     # Module re-exports (protect/unprotect/enable_privileges)
-│       ├── driver.rs  # ReadFile + IOCTLs (protection/privilege manipulation)
-│       ├── storage.rs # SQLite persistence (WAL mode, batched writes)
-│       ├── types.rs   # CallbackEvent, EventType, EventCategory
-│       └── error.rs   # CallbackError enum
+│       ├── lib.rs         # Module re-exports
+│       ├── driver.rs      # IOCTLs (protection, privileges, debug flags, callback enumeration)
+│       ├── pspcidtable.rs # PspCidTable enumeration via signature scanning
+│       ├── storage.rs     # SQLite persistence (WAL mode, batched writes)
+│       ├── types.rs       # CallbackEvent, EventType, EventCategory
+│       └── error.rs       # CallbackError enum
 ├── misc/          # DLL injection (7 methods), process hollowing, ghosting, token theft, hook scanning, NT syscalls
 │   └── src/
 │       ├── lib.rs              # Module declarations + pub use re-exports
@@ -120,6 +124,37 @@ Located in `crates/misc/src/kernel_inject.rs` + `kernelmode/DioProcess/DioProces
 - Returns `STATUS_NOT_SUPPORTED` for unsupported Windows versions
 
 **Access:** Right-click process → **Miscellaneous → Kernel Injection** → Shellcode Injection or DLL Injection (grayed out when driver not loaded)
+
+### Kernel Callback Enumeration
+
+Enumerate registered kernel callbacks via the **Kernel Utilities** tab → **Callback Enumeration**:
+
+- **Process callbacks** — `PsSetCreateProcessNotifyRoutineEx` registrations (AV/EDR process monitoring)
+- **Thread callbacks** — `PsSetCreateThreadNotifyRoutine` registrations
+- **Image load callbacks** — `PsSetLoadImageNotifyRoutine` registrations (DLL/EXE load monitoring)
+- Returns callback address, slot index, and owning driver module name
+- Useful for identifying EDR hooks, rootkit callbacks, security product registrations
+- Located in `crates/callback/src/driver.rs`: `enumerate_process_callbacks()`, `enumerate_thread_callbacks()`, `enumerate_image_callbacks()`
+
+### PspCidTable Enumeration
+
+Enumerate all processes and threads via the kernel's CID handle table via **Kernel Utilities** tab → **PspCidTable**:
+
+- Lists all PIDs/TIDs with their EPROCESS/ETHREAD kernel addresses
+- Uses **signature scanning** (no hardcoded offsets) to locate `PspCidTable`
+- Can detect hidden processes (DKOM) by comparing with usermode enumeration
+- Read-only operation — PatchGuard/KPP safe
+- Located in `crates/callback/src/pspcidtable.rs`: `enumerate_pspcidtable()` → `Vec<CidEntry>`
+
+### Clear Debug Flags (Anti-Anti-Debugging)
+
+Remove debugger presence indicators from a process via right-click → **Miscellaneous → Clear Debug Flags**:
+
+- Zeros `EPROCESS.DebugPort` — bypasses `NtQueryInformationProcess(ProcessDebugPort)`
+- Zeros `PEB.BeingDebugged` — bypasses `IsDebuggerPresent()`
+- Zeros `PEB.NtGlobalFlag` — bypasses heap-based debug checks (FLG_HEAP_* flags)
+- Requires kernel driver for direct structure access
+- Located in `crates/callback/src/driver.rs`: `clear_debug_flags(pid)`
 
 ### Process Creation & Stealth
 
@@ -231,7 +266,7 @@ Real-time kernel event capture via WDM driver with 17 event types:
 | Handle | ProcessHandleCreate, ProcessHandleDuplicate, ThreadHandleCreate, ThreadHandleDuplicate |
 | Registry | RegistryCreate, RegistryOpen, RegistrySetValue, RegistryDeleteKey, RegistryDeleteValue, RegistryRenameKey, RegistryQueryValue |
 
-**Storage:** SQLite database at `%LOCALAPPDATA%\DioProcess\events.db`
+**Storage:** SQLite database at `%LOCALAPPDATA%\DioProcess\events.db` (separate from app config at `config.db`)
 - WAL mode for concurrent reads/writes
 - Batched inserts (500 events or 100ms flush)
 - 24-hour auto-retention cleanup
@@ -241,8 +276,12 @@ Real-time kernel event capture via WDM driver with 17 event types:
 
 ## UI & Interaction Highlights
 
-- Borderless dark-themed window with custom title bar
-- Tabs: **Processes** · **Network** · **Services** · **Utilities** · **System Events**
+- Borderless window with custom title bar
+- **Theme System** — Two themes selectable from title bar dropdown:
+  - **Aura Glow** (default) — Dark background with purple/violet accents and glowing white text
+  - **Cyber** — Original cyan/teal accent theme
+  - Theme preference persisted in SQLite (`%LOCALAPPDATA%\DioProcess\config.db`)
+- Tabs: **Processes** · **Network** · **Services** · **Usermode Utilities** · **Kernel Utilities** · **System Events**
 - **Tree view** in Processes tab (DFS traversal, box-drawing connectors ├ │ └ ─, ancestor-inclusive search)
 - Modal inspectors: Threads · Handles · Modules · Memory · Performance graphs · String Scan
 - Real-time per-process CPU/memory graphs (60-second rolling history, SVG + fill)

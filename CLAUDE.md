@@ -24,11 +24,12 @@ crates/
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
 ├── callback/      # Kernel driver communication + SQLite event storage + security research IOCTLs
 │   └── src/
-│       ├── lib.rs     # Module declarations + pub use re-exports (protect/unprotect/enable_privileges)
-│       ├── error.rs   # CallbackError enum
-│       ├── types.rs   # CallbackEvent, EventType, EventCategory, RegistryOperation
-│       ├── driver.rs  # Driver communication (is_driver_loaded, read_events, protect_process, unprotect_process, enable_all_privileges)
-│       └── storage.rs # SQLite persistence (EventStorage, EventFilter, batched writes)
+│       ├── lib.rs         # Module declarations + pub use re-exports
+│       ├── error.rs       # CallbackError enum
+│       ├── types.rs       # CallbackEvent, EventType, EventCategory, RegistryOperation
+│       ├── driver.rs      # Driver communication (is_driver_loaded, read_events, protect/unprotect, enable_privileges, clear_debug_flags, callback enumeration)
+│       ├── pspcidtable.rs # PspCidTable enumeration (CidEntry, CidObjectType, enumerate_pspcidtable)
+│       └── storage.rs     # SQLite persistence (EventStorage, EventFilter, batched writes)
 ├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, kernel injection, process creation, process hollowing, ghostly hollowing, process herpaderping, herpaderping hollowing, token theft, module unloading, memory ops
 │   └── src/
 │       ├── lib.rs                      # Module declarations + pub use re-exports (slim)
@@ -62,10 +63,10 @@ crates/
 │       │   ├── herpaderp.rs            # herpaderp_process()
 │       │   └── herpaderp_hollow.rs     # herpaderp_hollow_process()
 │       └── token.rs                    # steal_token()
-├── ui/            # Dioxus components, routing, state, styles
+├── ui/            # Dioxus components, routing, state, styles, config
 │   └── src/
 │       ├── components/
-│       │   ├── app.rs            # Main app + router layout
+│       │   ├── app.rs            # Main app + router layout + theme selector
 │       │   ├── process_tab.rs    # Process monitoring tab
 │       │   ├── network_tab.rs    # Network connections tab
 │       │   ├── service_tab.rs    # Service management tab
@@ -83,12 +84,14 @@ crates/
 │       │   ├── shellcode_inject_window.rs # Shellcode injection (web staging) modal
 │       │   ├── threadless_inject_window.rs # Threadless shellcode injection modal
 │       │   ├── string_scan_window.rs    # Process memory string scan modal
-│       │   ├── utilities_tab.rs         # Utilities tab (file bloating, etc.)
+│       │   ├── utilities_tab.rs         # Usermode Utilities tab (file bloating, etc.)
+│       │   ├── kernel_utilities_tab.rs  # Kernel Utilities tab (callback enum, PspCidTable)
 │       │   └── callback_tab.rs          # System Events tab (Experimental)
+│       ├── config.rs             # Theme enum, AppConfig, SQLite config storage
 │       ├── routes.rs             # Tab routing definitions
 │       ├── state.rs              # Global signal state types
 │       ├── helpers.rs            # Clipboard utilities
-│       └── styles.rs             # Embedded CSS (dark theme)
+│       └── styles.rs             # CSS themes (Aura Glow, Cyber) with CSS variables
 └── dioprocess/    # Binary entry point, window config, manifest embedding
     ├── src/main.rs
     ├── build.rs        # Embeds app.manifest via embed-resource
@@ -130,6 +133,12 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `EventFilter` | callback | event_type, category, process_id, search (for DB queries) |
 | `NetworkConnection` | network | protocol, local/remote addr:port, state, pid |
 | `ServiceInfo` | service | name, display_name, status, start_type, binary_path, description, pid |
+| `Theme` | ui | AuraGlow (default), Cyber |
+| `AppConfig` | ui | theme |
+| `ConfigStorage` | ui | SQLite wrapper for app settings |
+| `CallbackInfo` | callback | index, callback_address, module_name |
+| `CidEntry` | callback | id, object_address, object_type, parent_pid, process_name |
+| `CidObjectType` | callback | Process, Thread |
 
 ## Build & run
 
@@ -139,7 +148,38 @@ cargo run                # Run debug (needs admin)
 cargo build --release    # Release build
 ```
 
-The binary opens a 1100x700 borderless window with custom title bar, dark theme, and disabled context menu.
+The binary opens a 1100x700 borderless window with custom title bar and disabled context menu.
+
+## Theme system
+
+The app supports multiple UI themes with persistent preference storage.
+
+### Available themes
+
+| Theme | Description | Accent Color |
+|-------|-------------|--------------|
+| **Aura Glow** (default) | Dark background with purple/violet accents and glowing white text | `#8b5cf6` (violet) |
+| **Cyber** | Original cyan/teal theme | `#22d3ee` (cyan) |
+
+### Implementation
+
+Located in `crates/ui/src/`:
+- **`config.rs`** — `Theme` enum, `AppConfig` struct, `ConfigStorage` for SQLite persistence
+- **`styles.rs`** — CSS variables per theme (`AURA_GLOW_VARS`, `CYBER_VARS`) + shared `BASE_STYLES`
+
+**Theme enum:**
+```rust
+pub enum Theme {
+    AuraGlow,  // Default - dark with violet glow
+    Cyber,     // Original cyan theme
+}
+```
+
+**CSS variable approach:** Each theme defines `:root` CSS variables (colors, gradients, shadows). The `BASE_STYLES` const uses these variables, allowing runtime theme switching without duplicating CSS.
+
+**Storage:** Theme preference saved to `%LOCALAPPDATA%\DioProcess\config.db` (separate from `events.db`)
+
+**UI:** Theme selector dropdown in the title bar, immediately saves preference on change.
 
 ## Conventions
 
@@ -384,6 +424,36 @@ DioProcess: Process PID 1234 protected successfully
 ```
 
 Use **DbgView** (SysInternals) to capture debug output for verification.
+
+### 4. Clear Debug Flags (Anti-Anti-Debugging)
+
+**Function:**
+- `callback::clear_debug_flags(pid: u32) -> Result<(), CallbackError>` — Clear debugging indicators
+
+**Implementation:**
+Located in `kernelmode/DioProcess/DioProcessDriver/DioProcessDriver.cpp` (IOCTL handler) and `crates/callback/src/driver.rs` (Rust binding).
+
+**Algorithm:**
+1. `PsLookupProcessByProcessId()` to get `EPROCESS` pointer from PID
+2. Zero out `_EPROCESS.DebugPort` (removes kernel debugger detection)
+3. Get PEB address via `PROCESS_PEB_OFFSET[GetWindowsVersion()]`
+4. Zero out `PEB.BeingDebugged` (single byte flag)
+5. Zero out `PEB.NtGlobalFlag` (removes heap debug flags like FLG_HEAP_ENABLE_TAIL_CHECK)
+6. `ObDereferenceObject(eProcess)`
+
+**IOCTL:**
+```cpp
+IOCTL_DIOPROCESS_CLEAR_DEBUG_FLAGS  // 0x00222020
+```
+
+**Use Cases:**
+- Hide debugger presence from anti-debug checks
+- Bypass `IsDebuggerPresent()`, `NtQueryInformationProcess(ProcessDebugPort)`, heap-based checks
+- Security research and malware analysis
+
+**UI Access:**
+Right-click process → Miscellaneous → **🔍 Clear Debug Flags**
+(Button disabled/grayed when driver not loaded)
 
 ### Security Notes
 
@@ -630,6 +700,94 @@ Located in `crates/misc/src/process/herpaderp_hollow.rs`:
 
 Access via Utilities tab in the main navigation. UI provides PE Payload picker and Legitimate Image picker (serves as both host process and disk overwrite content). Note: the legitimate image should be larger than the payload PE.
 
+## Kernel Utilities tab
+
+Access via "Kernel Utilities" tab in the main navigation. Hosts kernel-mode security research features requiring the DioProcess driver.
+
+### Callback Enumeration sub-tab
+
+Enumerate registered kernel callbacks (process, thread, image load notifications):
+
+**Functions (callback crate):**
+- `callback::enumerate_process_callbacks() -> Result<Vec<CallbackInfo>, CallbackError>` — List `PsSetCreateProcessNotifyRoutineEx` callbacks
+- `callback::enumerate_thread_callbacks() -> Result<Vec<CallbackInfo>, CallbackError>` — List `PsSetCreateThreadNotifyRoutine` callbacks
+- `callback::enumerate_image_callbacks() -> Result<Vec<CallbackInfo>, CallbackError>` — List `PsSetLoadImageNotifyRoutine` callbacks
+
+**CallbackInfo struct:**
+```rust
+pub struct CallbackInfo {
+    pub index: u32,            // Callback slot index (0-63)
+    pub callback_address: u64, // Kernel address of callback function
+    pub module_name: String,   // Driver module name (e.g., "ntoskrnl.exe", "WdFilter.sys")
+}
+```
+
+**IOCTLs:**
+```cpp
+IOCTL_DIOPROCESS_ENUM_PROCESS_CALLBACKS  // 0x00222024
+IOCTL_DIOPROCESS_ENUM_THREAD_CALLBACKS   // 0x00222028
+IOCTL_DIOPROCESS_ENUM_IMAGE_CALLBACKS    // 0x0022202C
+```
+
+**UI Features:**
+- **Callback type selector** — Process, Thread, or Image Load buttons
+- **Callback table** — Index, Callback Address (hex), Driver Module columns
+- **Sorting** — Click column headers to sort ascending/descending
+- **Search filter** — Filter by module name, address, or index
+- **CSV export** — Export enumerated callbacks to CSV file
+- **Context menu** — Copy Index, Copy Address, Copy Module
+- **Keyboard shortcuts** — F5 (refresh), Escape (close menu)
+- **Driver status** — Green/red indicator showing driver availability
+
+**Use Cases:**
+- Identify EDR/AV callbacks for security research
+- Understand which drivers are monitoring process/thread/image events
+- Detect rootkits that register malicious callbacks
+
+### PspCidTable sub-tab
+
+Enumerate all processes and threads via the kernel's PspCidTable (CID handle table):
+
+**Function (callback crate):**
+- `callback::enumerate_pspcidtable() -> Result<Vec<CidEntry>, CallbackError>` — List all CID entries
+
+**CidEntry struct:**
+```rust
+pub struct CidEntry {
+    pub id: u32,                    // PID (for processes) or TID (for threads)
+    pub object_address: u64,        // EPROCESS or ETHREAD kernel address
+    pub object_type: CidObjectType, // Process or Thread
+    pub parent_pid: u32,            // Parent PID or owning process PID
+    pub process_name: [u8; 16],     // ImageFileName from EPROCESS
+}
+```
+
+**IOCTL:**
+```cpp
+IOCTL_DIOPROCESS_ENUM_PSPCIDTABLE  // 0x0022203C
+```
+
+**Implementation:**
+- Uses **signature scanning** to dynamically locate `PspCidTable` (no hardcoded offsets)
+- Walks the CID handle table to enumerate all entries
+- Returns EPROCESS/ETHREAD addresses directly from kernel structures
+- Read-only operation — **PatchGuard/KPP safe**
+
+**UI Features:**
+- **Type filter** — All, Processes, or Threads buttons
+- **CID table** — Type, ID, Process Name, Object Address (hex), Parent/Owner PID columns
+- **Sorting** — Click column headers to sort
+- **Search filter** — Filter by name, ID, address, or parent PID
+- **CSV export** — Export to pspcidtable.csv
+- **Context menu** — Copy ID, Copy Process Name, Copy Object Address, Copy Parent/Owner PID
+- **Color coding** — Green "Process" label, blue "Thread" label
+
+**Use Cases:**
+- Enumerate hidden processes (DKOM detection)
+- View raw EPROCESS/ETHREAD kernel addresses
+- Compare with ToolHelp32 to detect process hiding techniques
+- Security research and rootkit analysis
+
 ## System Events - Experimental (callback crate)
 
 Real-time monitoring of kernel callbacks via the DioProcess kernel driver. Captures process, thread, image load, handle operations, and registry events.
@@ -782,10 +940,20 @@ There is no test infrastructure. Development relies on manual testing through th
 
 ## Local storage
 
-The app uses SQLite for kernel callback event persistence:
+The app uses SQLite for persistent storage (two separate databases):
+
+### Event storage (`events.db`)
 - **Location:** `%LOCALAPPDATA%\DioProcess\events.db`
+- **Purpose:** Kernel callback event persistence
 - **Engine:** rusqlite 0.31 with bundled SQLite
 - **Mode:** WAL (Write-Ahead Logging) for concurrent access
 - **Retention:** Events older than 24 hours auto-deleted
+
+### Config storage (`config.db`)
+- **Location:** `%LOCALAPPDATA%\DioProcess\config.db`
+- **Purpose:** Application settings (theme preference, etc.)
+- **Engine:** rusqlite 0.31 with bundled SQLite
+- **Mode:** WAL mode
+- **Schema:** Simple key-value table (`config(key TEXT PRIMARY KEY, value INTEGER)`)
 
 No external services, network connections, or cloud storage — fully self-contained.
