@@ -241,6 +241,72 @@ const BASE_STYLES: &str = r#"
         color: white;
     }
 
+    /* Driver Install Button */
+    .driver-install-btn {
+        padding: 4px 12px;
+        margin: 0 8px;
+        border: none;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    .driver-install-btn.flashing {
+        animation: flash-red-green 1s infinite;
+    }
+    .driver-install-btn.installing {
+        background: #f59e0b;
+        color: #1f2937;
+        cursor: wait;
+    }
+    .driver-install-btn:hover:not(:disabled) {
+        transform: scale(1.05);
+    }
+    @keyframes flash-red-green {
+        0%, 49% {
+            background: linear-gradient(to right, #ef4444, #dc2626);
+            color: white;
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+        }
+        50%, 100% {
+            background: linear-gradient(to right, #22c55e, #16a34a);
+            color: white;
+            box-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
+        }
+    }
+    .driver-uninstall-btn {
+        padding: 4px 12px;
+        margin: 0 8px;
+        border: none;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background: linear-gradient(to right, #22c55e, #16a34a);
+        color: white;
+    }
+    .driver-uninstall-btn:hover:not(:disabled) {
+        transform: scale(1.05);
+        box-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
+    }
+    .driver-uninstall-btn.installing {
+        background: #f59e0b;
+        color: #1f2937;
+        cursor: wait;
+    }
+    .install-status {
+        padding: 4px 8px;
+        margin: 0 4px;
+        color: #fbbf24;
+        font-size: 11px;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
     /* Stats Bar */
     .stats-bar {
         background: var(--bg-secondary);
