@@ -283,3 +283,63 @@ typedef struct _CALLBACK_ENTRY {
 	WCHAR* AltitudeString;
 	CALLBACK_ENTRY_ITEM Items;
 } CALLBACK_ENTRY, *PCALLBACK_ENTRY;
+
+// ============== Minifilter Internal Structures ==============
+// These are undocumented structures from fltmgr.sys
+
+// Forward declarations
+typedef struct _FLT_FILTER* PFLT_FILTER;
+typedef struct _FLT_INSTANCE* PFLT_INSTANCE;
+typedef struct _FLT_VOLUME* PFLT_VOLUME;
+typedef struct _FLTP_FRAME* PFLTP_FRAME;
+
+// FLT_OPERATION_REGISTRATION - describes callbacks for a single IRP type
+typedef struct _FLT_OPERATION_REGISTRATION_INTERNAL {
+	UCHAR MajorFunction;
+	UCHAR Padding[3];
+	ULONG Flags;
+	PVOID PreOperation;   // PFLT_PRE_OPERATION_CALLBACK
+	PVOID PostOperation;  // PFLT_POST_OPERATION_CALLBACK
+	PVOID Reserved;
+} FLT_OPERATION_REGISTRATION_INTERNAL, *PFLT_OPERATION_REGISTRATION_INTERNAL;
+
+// FLT_OBJECT base structure (0x30 bytes)
+typedef struct _FLT_OBJECT {
+	ULONG Flags;                               // +0x000
+	ULONG PointerCount;                        // +0x004
+	EX_RUNDOWN_REF RundownRef;                 // +0x008
+	LIST_ENTRY PrimaryLink;                    // +0x010 (used in frame's filter list)
+	GUID UniqueIdentifier;                     // +0x020
+} FLT_OBJECT, *PFLT_OBJECT;
+
+// Simplified FLT_FILTER structure (partial, key fields only)
+// FLT_FILTER inherits from FLT_OBJECT (first 0x30 bytes)
+typedef struct _FLT_FILTER_PARTIAL {
+	FLT_OBJECT Base;                           // +0x000 (0x30 bytes)
+	PVOID Frame;                               // +0x030 (PFLTP_FRAME)
+	UNICODE_STRING Name;                       // +0x038 (0x10 bytes)
+	UNICODE_STRING DefaultAltitude;            // +0x048 (0x10 bytes)
+	// ... many more fields follow
+} FLT_FILTER_PARTIAL, *PFLT_FILTER_PARTIAL;
+
+// FLT_FILTER offsets (Windows 10/11 x64)
+// FLT_FILTER starts with FLT_OBJECT base (0x30 bytes):
+//   FLT_OBJECT: Flags(4) | PointerCount(4) | RundownRef(8) | PrimaryLink(16) | UniqueIdentifier(16)
+// Then FLT_FILTER specific fields follow at +0x30
+#define FLT_FILTER_FLAGS_OFFSET           0x000   // FLT_OBJECT.Flags
+#define FLT_FILTER_PRIMARYLINK_OFFSET     0x010   // FLT_OBJECT.PrimaryLink (LIST_ENTRY, used in frame's list)
+#define FLT_FILTER_FRAME_OFFSET           0x030   // Ptr64 _FLTP_FRAME
+#define FLT_FILTER_NAME_OFFSET            0x038   // UNICODE_STRING FilterName
+#define FLT_FILTER_ALTITUDE_OFFSET        0x048   // UNICODE_STRING DefaultAltitude
+#define FLT_FILTER_INSTANCE_LIST_OFFSET   0x098   // LIST_ENTRY InstanceList
+#define FLT_FILTER_OPERATIONS_OFFSET      0x0D8   // Pointer to FLT_OPERATION_REGISTRATION array
+#define FLT_FILTER_NUMINSTANCES_OFFSET    0x090   // ULONG NumberOfInstances
+
+// FLTP_FRAME offsets
+#define FLTP_FRAME_FRAMEID_OFFSET          0x000
+#define FLTP_FRAME_FILTERLIST_OFFSET       0x048   // LIST_ENTRY RegisteredFilters
+#define FLTP_FRAME_LINKS_OFFSET            0x038   // LIST_ENTRY Links (link in global frame list)
+
+// FltGlobals offsets in fltmgr.sys
+// We'll pattern scan to find FltGlobals, then access FrameList at offset
+#define FLTGLOBALS_FRAMELIST_OFFSET        0x058   // LIST_ENTRY FrameList

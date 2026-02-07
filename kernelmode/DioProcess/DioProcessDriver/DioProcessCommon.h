@@ -176,6 +176,10 @@ struct EventData
 #define IOCTL_DIOPROCESS_ENUM_OBJECT_CALLBACKS \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x810, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// Minifilter enumeration IOCTL
+#define IOCTL_DIOPROCESS_ENUM_MINIFILTERS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x811, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct CollectionStateResponse
 {
 	BOOLEAN IsCollecting;
@@ -291,4 +295,49 @@ struct EnumObjectCallbacksResponse
 {
 	ULONG Count;                                  // Number of entries returned
 	ObjectCallbackInfo Entries[1];                // Variable length array
+};
+
+// ============== Minifilter Enumeration Structures ==============
+
+#define MAX_MINIFILTER_ENTRIES 64
+#define MAX_FILTER_NAME_LENGTH 64
+
+// IRP major function codes we care about for minifilter callbacks
+#define IRP_MJ_CREATE_INDEX          0   // IRP_MJ_CREATE
+#define IRP_MJ_READ_INDEX            3   // IRP_MJ_READ
+#define IRP_MJ_WRITE_INDEX           4   // IRP_MJ_WRITE
+#define IRP_MJ_SET_INFORMATION_INDEX 6   // IRP_MJ_SET_INFORMATION (delete, rename)
+#define IRP_MJ_CLEANUP_INDEX         18  // IRP_MJ_CLEANUP
+
+struct MinifilterCallbacks
+{
+	ULONG64 PreCreate;
+	ULONG64 PostCreate;
+	ULONG64 PreRead;
+	ULONG64 PostRead;
+	ULONG64 PreWrite;
+	ULONG64 PostWrite;
+	ULONG64 PreSetInfo;
+	ULONG64 PostSetInfo;
+	ULONG64 PreCleanup;
+	ULONG64 PostCleanup;
+};
+
+struct MinifilterInfo
+{
+	CHAR FilterName[MAX_FILTER_NAME_LENGTH];      // Filter driver name
+	CHAR Altitude[MAX_ALTITUDE_LENGTH];           // Filter altitude (load order priority)
+	ULONG64 FilterAddress;                        // Address of FLT_FILTER structure
+	ULONG64 FrameId;                              // Filter frame ID
+	ULONG NumberOfInstances;                      // Number of active instances
+	ULONG Flags;                                  // Filter flags
+	MinifilterCallbacks Callbacks;                // Pre/Post callbacks for key operations
+	CHAR OwnerModuleName[MAX_MODULE_NAME_LENGTH]; // Module that owns this filter
+	ULONG Index;                                  // Entry index
+};
+
+struct EnumMinifiltersResponse
+{
+	ULONG Count;                                  // Number of entries returned
+	MinifilterInfo Entries[1];                    // Variable length array
 };

@@ -1561,3 +1561,168 @@ pub fn enumerate_object_callbacks() -> Result<Vec<ObjectCallbackInfo>, CallbackE
         Ok(callbacks)
     }
 }
+
+// ============== Minifilter Enumeration ==============
+
+const IOCTL_DIOPROCESS_ENUM_MINIFILTERS: u32 = 0x00222044; // CTL_CODE(0x22, 0x811, 0, 0)
+
+/// Callbacks registered by a minifilter for file operations
+#[derive(Debug, Clone, Default)]
+pub struct MinifilterCallbacks {
+    pub pre_create: u64,
+    pub post_create: u64,
+    pub pre_read: u64,
+    pub post_read: u64,
+    pub pre_write: u64,
+    pub post_write: u64,
+    pub pre_set_info: u64,
+    pub post_set_info: u64,
+    pub pre_cleanup: u64,
+    pub post_cleanup: u64,
+}
+
+/// Information about a registered minifilter driver
+#[derive(Debug, Clone)]
+pub struct MinifilterInfo {
+    pub filter_name: String,
+    pub altitude: String,
+    pub filter_address: u64,
+    pub frame_id: u64,
+    pub num_instances: u32,
+    pub flags: u32,
+    pub callbacks: MinifilterCallbacks,
+    pub owner_module: String,
+    pub index: u32,
+}
+
+/// Enumerate registered filesystem minifilter drivers
+/// Returns information about all minifilters registered with the Filter Manager
+pub fn enumerate_minifilters() -> Result<Vec<MinifilterInfo>, CallbackError> {
+    let handle = open_device()?;
+
+    const MAX_ENTRIES: usize = 64;
+    const MAX_FILTER_NAME: usize = 64;
+    const MAX_ALTITUDE: usize = 64;
+    const MAX_MODULE_NAME: usize = 256;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RawMinifilterCallbacks {
+        pre_create: u64,
+        post_create: u64,
+        pre_read: u64,
+        post_read: u64,
+        pre_write: u64,
+        post_write: u64,
+        pre_set_info: u64,
+        post_set_info: u64,
+        pre_cleanup: u64,
+        post_cleanup: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RawMinifilterInfo {
+        filter_name: [u8; MAX_FILTER_NAME],
+        altitude: [u8; MAX_ALTITUDE],
+        filter_address: u64,
+        frame_id: u64,
+        num_instances: u32,
+        flags: u32,
+        callbacks: RawMinifilterCallbacks,
+        owner_module: [u8; MAX_MODULE_NAME],
+        index: u32,
+    }
+
+    #[repr(C)]
+    struct RawResponse {
+        count: u32,
+        entries: [RawMinifilterInfo; MAX_ENTRIES],
+    }
+
+    let buffer_size = std::mem::size_of::<RawResponse>();
+    let mut buffer: Vec<u8> = vec![0; buffer_size];
+
+    unsafe {
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_ENUM_MINIFILTERS,
+            None,
+            0,
+            Some(buffer.as_mut_ptr() as *mut _),
+            buffer_size as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+
+        let response = &*(buffer.as_ptr() as *const RawResponse);
+        let count = response.count as usize;
+
+        let mut filters = Vec::with_capacity(count);
+        for i in 0..count.min(MAX_ENTRIES) {
+            let raw = &response.entries[i];
+
+            // Skip empty entries
+            if raw.filter_address == 0 {
+                continue;
+            }
+
+            let filter_name_len = raw
+                .filter_name
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(MAX_FILTER_NAME);
+            let filter_name =
+                String::from_utf8_lossy(&raw.filter_name[..filter_name_len]).to_string();
+
+            let altitude_len = raw
+                .altitude
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(MAX_ALTITUDE);
+            let altitude = String::from_utf8_lossy(&raw.altitude[..altitude_len]).to_string();
+
+            let owner_len = raw
+                .owner_module
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(MAX_MODULE_NAME);
+            let owner_module =
+                String::from_utf8_lossy(&raw.owner_module[..owner_len]).to_string();
+
+            filters.push(MinifilterInfo {
+                filter_name,
+                altitude,
+                filter_address: raw.filter_address,
+                frame_id: raw.frame_id,
+                num_instances: raw.num_instances,
+                flags: raw.flags,
+                callbacks: MinifilterCallbacks {
+                    pre_create: raw.callbacks.pre_create,
+                    post_create: raw.callbacks.post_create,
+                    pre_read: raw.callbacks.pre_read,
+                    post_read: raw.callbacks.post_read,
+                    pre_write: raw.callbacks.pre_write,
+                    post_write: raw.callbacks.post_write,
+                    pre_set_info: raw.callbacks.pre_set_info,
+                    post_set_info: raw.callbacks.post_set_info,
+                    pre_cleanup: raw.callbacks.pre_cleanup,
+                    post_cleanup: raw.callbacks.post_cleanup,
+                },
+                owner_module,
+                index: raw.index,
+            });
+        }
+
+        Ok(filters)
+    }
+}
