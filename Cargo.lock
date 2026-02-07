@@ -4897,8 +4897,10 @@ dependencies = [
  "dioxus",
  "misc",
  "network",
+ "parking_lot",
  "process",
  "rfd 0.15.4",
+ "rusqlite",
  "service",
  "tokio",
 ]

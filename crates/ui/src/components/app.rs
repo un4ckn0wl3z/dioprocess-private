@@ -3,8 +3,9 @@
 use dioxus::prelude::*;
 use process::{format_uptime, get_system_stats};
 
+use crate::config::{load_theme, save_theme, Theme};
 use crate::routes::Route;
-use crate::styles::CUSTOM_STYLES;
+use crate::styles::get_theme_css;
 
 /// Main application component
 #[component]
@@ -19,6 +20,7 @@ pub fn App() -> Element {
 pub fn Layout() -> Element {
     let mut system_stats = use_signal(|| get_system_stats());
     let mut about_popup = use_signal(|| false);
+    let mut current_theme = use_signal(|| load_theme());
     let route: Route = use_route();
 
     // Auto-refresh system stats every 3 seconds
@@ -31,6 +33,7 @@ pub fn Layout() -> Element {
 
     let stats = system_stats.read().clone();
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
+    let theme_css = get_theme_css(*current_theme.read());
 
     // Determine active tab
     let is_process_tab = matches!(route, Route::ProcessTab {});
@@ -56,7 +59,7 @@ pub fn Layout() -> Element {
         version
     );
     rsx! {
-            style { {CUSTOM_STYLES} }
+            style { {theme_css} }
 
             div {
                 class: "main-container",
@@ -65,7 +68,31 @@ pub fn Layout() -> Element {
                 div { class: "title-bar",
                     div {
                         class: "title-bar-drag",
-                        span { class: "title-text", "🖥️ DioProcess | Windows System Monitor Tool v{version}" }
+                        span { class: "title-text", "DioProcess | Windows System Monitor Tool v{version}" }
+                    }
+                    // Theme selector
+                    div { class: "theme-selector",
+                        select {
+                            class: "theme-select",
+                            value: "{current_theme.read().display_name()}",
+                            onchange: move |evt| {
+                                let value = evt.value();
+                                let new_theme = match value.as_str() {
+                                    "Aura Glow" => Theme::AuraGlow,
+                                    "Cyber" => Theme::Cyber,
+                                    _ => Theme::AuraGlow,
+                                };
+                                current_theme.set(new_theme);
+                                save_theme(new_theme);
+                            },
+                            for theme in Theme::all() {
+                                option {
+                                    value: "{theme.display_name()}",
+                                    selected: *current_theme.read() == *theme,
+                                    "{theme.display_name()}"
+                                }
+                            }
+                        }
                     }
                     div { class: "title-bar-buttons",
                         button {
