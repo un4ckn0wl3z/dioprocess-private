@@ -171,6 +171,13 @@ impl ConfigStorage {
         )
         .is_ok()
     }
+
+    /// Delete PAT token
+    pub fn delete_pat(&self) -> SqlResult<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM secrets WHERE key = 'pat'", [])?;
+        Ok(())
+    }
 }
 
 /// Get the config database path (separate from events.db)
@@ -214,6 +221,11 @@ pub fn load_pat() -> Option<String> {
 /// Check if PAT is configured (convenience function)
 pub fn has_pat() -> bool {
     get_config_storage().has_pat()
+}
+
+/// Delete PAT from config (convenience function)
+pub fn delete_pat() {
+    let _ = get_config_storage().delete_pat();
 }
 
 /// Simple base64 encode function

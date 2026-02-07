@@ -307,6 +307,23 @@ const BASE_STYLES: &str = r#"
         white-space: nowrap;
     }
 
+    /* License Button */
+    .license-btn {
+        padding: 4px 8px;
+        margin: 0 4px;
+        border: none;
+        border-radius: 4px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        background: rgba(139, 92, 246, 0.2);
+        color: #c4b5fd;
+    }
+    .license-btn:hover {
+        background: rgba(139, 92, 246, 0.4);
+        transform: scale(1.05);
+    }
+
     /* Stats Bar */
     .stats-bar {
         background: var(--bg-secondary);

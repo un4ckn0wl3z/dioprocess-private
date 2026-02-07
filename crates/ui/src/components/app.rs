@@ -5,7 +5,7 @@ use process::{format_uptime, get_system_stats};
 use callback::is_driver_loaded;
 use std::process::Command;
 
-use crate::config::{has_pat, load_pat, load_theme, save_pat, save_theme, Theme};
+use crate::config::{delete_pat, has_pat, load_pat, load_theme, save_pat, save_theme, Theme};
 use crate::routes::Route;
 use crate::styles::get_theme_css;
 
@@ -26,9 +26,10 @@ pub fn Layout() -> Element {
     let mut driver_loaded = use_signal(|| is_driver_loaded());
     let mut install_status = use_signal(|| String::new());
     let mut installing = use_signal(|| false);
-    let mut show_pat_modal = use_signal(|| false);
-    let mut pat_input = use_signal(|| String::new());
-    let mut pat_error = use_signal(|| String::new());
+    let mut show_license_modal = use_signal(|| false);
+    let mut license_input = use_signal(|| String::new());
+    let mut license_error = use_signal(|| String::new());
+    let mut show_install_warning = use_signal(|| false);
     let route: Route = use_route();
 
     // Auto-refresh system stats and driver status every 3 seconds
@@ -110,209 +111,8 @@ pub fn Layout() -> Element {
                             class: if *installing.read() { "driver-install-btn installing" } else { "driver-install-btn flashing" },
                             disabled: *installing.read(),
                             onclick: move |_| {
-                                // Check if PAT is configured
-                                if !has_pat() {
-                                    show_pat_modal.set(true);
-                                    return;
-                                }
-
-                                installing.set(true);
-                                install_status.set(String::new());
-                                spawn(async move {
-                                    let result = tokio::task::spawn_blocking(move || {
-                                        let pat = match load_pat() {
-                                            Some(p) => p,
-                                            None => return Err("PAT not configured".to_string()),
-                                        };
-
-                                        let appdata = match std::env::var("LOCALAPPDATA") {
-                                            Ok(p) => std::path::PathBuf::from(p),
-                                            Err(_) => return Err("Installation failed".to_string()),
-                                        };
-                                        let dioprocess_dir = appdata.join("DioProcess");
-                                        let zip_path = dioprocess_dir.join("dpdrv.zip");
-
-                                        // Create directory
-                                        let _ = std::fs::create_dir_all(&dioprocess_dir);
-
-                                        // Clean up old zip and any dpdrv directories
-                                        let _ = std::fs::remove_file(&zip_path);
-                                        if let Ok(entries) = std::fs::read_dir(&dioprocess_dir) {
-                                            for entry in entries.flatten() {
-                                                let name = entry.file_name();
-                                                let name_str = name.to_string_lossy();
-                                                if name_str.starts_with("un4ckn0wl3z-dpdrv-") {
-                                                    let _ = std::fs::remove_dir_all(entry.path());
-                                                }
-                                            }
-                                        }
-
-                                        // Download zip using ureq with GitHub API
-                                        let zip_url = "https://api.github.com/repos/un4ckn0wl3z/dpdrv/zipball/main";
-
-                                        let response = match ureq::get(zip_url)
-                                            .set("Authorization", &format!("Bearer {}", pat))
-                                            .set("User-Agent", "DioProcess")
-                                            .set("Accept", "application/vnd.github+json")
-                                            .call()
-                                        {
-                                            Ok(r) => r,
-                                            Err(e) => return Err(format!("Download failed: {}", e)),
-                                        };
-
-                                        // Read response body to file
-                                        let mut file = match std::fs::File::create(&zip_path) {
-                                            Ok(f) => f,
-                                            Err(_) => return Err("Failed to create zip file".to_string()),
-                                        };
-
-                                        if let Err(_) = std::io::copy(&mut response.into_reader(), &mut file) {
-                                            return Err("Failed to write zip file".to_string());
-                                        }
-
-                                        if !zip_path.exists() {
-                                            return Err("Download failed".to_string());
-                                        }
-
-                                        // Extract zip using zip crate
-                                        let zip_file = match std::fs::File::open(&zip_path) {
-                                            Ok(f) => f,
-                                            Err(_) => return Err("Failed to open zip file".to_string()),
-                                        };
-
-                                        let mut archive = match zip::ZipArchive::new(zip_file) {
-                                            Ok(a) => a,
-                                            Err(_) => return Err("Failed to read zip archive".to_string()),
-                                        };
-
-                                        for i in 0..archive.len() {
-                                            let mut file = match archive.by_index(i) {
-                                                Ok(f) => f,
-                                                Err(_) => continue,
-                                            };
-
-                                            let outpath = match file.enclosed_name() {
-                                                Some(p) => dioprocess_dir.join(p),
-                                                None => continue,
-                                            };
-
-                                            if file.name().ends_with('/') {
-                                                let _ = std::fs::create_dir_all(&outpath);
-                                            } else {
-                                                if let Some(parent) = outpath.parent() {
-                                                    let _ = std::fs::create_dir_all(parent);
-                                                }
-                                                if let Ok(mut outfile) = std::fs::File::create(&outpath) {
-                                                    let _ = std::io::copy(&mut file, &mut outfile);
-                                                }
-                                            }
-                                        }
-
-                                        // Delete zip
-                                        let _ = std::fs::remove_file(&zip_path);
-
-                                        // Find the extracted directory (GitHub API creates un4ckn0wl3z-dpdrv-{sha})
-                                        let extract_dir = match std::fs::read_dir(&dioprocess_dir) {
-                                            Ok(entries) => {
-                                                let mut found = None;
-                                                for entry in entries.flatten() {
-                                                    let name = entry.file_name();
-                                                    let name_str = name.to_string_lossy();
-                                                    if name_str.starts_with("un4ckn0wl3z-dpdrv-") && entry.path().is_dir() {
-                                                        found = Some(entry.path());
-                                                        break;
-                                                    }
-                                                }
-                                                match found {
-                                                    Some(p) => p,
-                                                    None => return Err("Extraction failed".to_string()),
-                                                }
-                                            }
-                                            Err(_) => return Err("Extraction failed".to_string()),
-                                        };
-
-                                        // Run install script (cmd version)
-                                        let install_script = extract_dir.join("install.cmd");
-                                        if !install_script.exists() {
-                                            // List files in extract_dir for debugging
-                                            let files: Vec<String> = std::fs::read_dir(&extract_dir)
-                                                .map(|entries| {
-                                                    entries.flatten()
-                                                        .map(|e| e.file_name().to_string_lossy().to_string())
-                                                        .collect()
-                                                })
-                                                .unwrap_or_default();
-                                            let _ = std::fs::remove_dir_all(&extract_dir);
-                                            return Err(format!("install.cmd not found. Files: {:?}", files));
-                                        }
-
-                                        let install_result = Command::new("cmd")
-                                            .args(["/C", install_script.to_str().unwrap_or("")])
-                                            .current_dir(&extract_dir)
-                                            .output();
-
-                                        // Log output to file
-                                        let log_path = dioprocess_dir.join("install.log");
-                                        let write_log = |output: &std::process::Output| {
-                                            use std::io::Write;
-                                            if let Ok(mut file) = std::fs::OpenOptions::new()
-                                                .create(true)
-                                                .append(true)
-                                                .open(&log_path)
-                                            {
-                                                let timestamp = std::time::SystemTime::now()
-                                                    .duration_since(std::time::UNIX_EPOCH)
-                                                    .map(|d| d.as_secs())
-                                                    .unwrap_or(0);
-                                                let _ = writeln!(file, "\n=== Install attempt at {} ===", timestamp);
-                                                let _ = writeln!(file, "Exit code: {:?}", output.status.code());
-                                                let _ = writeln!(file, "--- STDOUT ---");
-                                                let _ = file.write_all(&output.stdout);
-                                                let _ = writeln!(file, "\n--- STDERR ---");
-                                                let _ = file.write_all(&output.stderr);
-                                                let _ = writeln!(file, "=== End ===\n");
-                                            }
-                                        };
-
-                                        match install_result {
-                                            Ok(output) if output.status.success() => {
-                                                write_log(&output);
-                                                let _ = std::fs::remove_dir_all(&extract_dir);
-                                                Ok("Driver installed!".to_string())
-                                            }
-                                            Ok(output) => {
-                                                write_log(&output);
-                                                let stderr = String::from_utf8_lossy(&output.stderr);
-                                                let stdout = String::from_utf8_lossy(&output.stdout);
-                                                let code = output.status.code().unwrap_or(-1);
-                                                let _ = std::fs::remove_dir_all(&extract_dir);
-                                                Err(format!("Install failed (exit {}): {} {}", code, stdout, stderr))
-                                            }
-                                            Err(e) => {
-                                                let _ = std::fs::remove_dir_all(&extract_dir);
-                                                Err(format!("Failed to run install.cmd: {}", e))
-                                            }
-                                        }
-                                    }).await;
-
-                                    match result {
-                                        Ok(Ok(msg)) => {
-                                            install_status.set(msg);
-                                            driver_loaded.set(is_driver_loaded());
-                                        }
-                                        Ok(Err(e)) => {
-                                            install_status.set(e);
-                                        }
-                                        Err(_) => {
-                                            install_status.set("Installation failed".to_string());
-                                        }
-                                    }
-                                    installing.set(false);
-
-                                    // Clear status after 5 seconds
-                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                    install_status.set(String::new());
-                                });
+                                // Show warning modal first
+                                show_install_warning.set(true);
                             },
                             if *installing.read() {
                                 "Installing..."
@@ -366,6 +166,17 @@ pub fn Layout() -> Element {
                         }
                     }
 
+                    // Manage License button (always visible if license exists)
+                    if has_pat() {
+                        button {
+                            class: "license-btn",
+                            onclick: move |_| {
+                                show_license_modal.set(true);
+                            },
+                            "🔑"
+                        }
+                    }
+
                     // Show install status message
                     if !install_status.read().is_empty() {
                         span { class: "install-status", "{install_status}" }
@@ -402,6 +213,282 @@ pub fn Layout() -> Element {
                                 window.close();
                             },
                             "✕"
+                        }
+                    }
+                }
+
+                // Install Warning Modal
+                if *show_install_warning.read() {
+                    div {
+                        class: "about-modal-overlay",
+                        onclick: move |_| show_install_warning.set(false),
+
+                        div {
+                            class: "about-modal",
+                            style: "max-width: 500px;",
+                            onclick: |e| e.stop_propagation(),
+
+                            div {
+                                class: "about-modal-header",
+
+                                h2 {
+                                    class: "about-modal-title",
+                                    style: "color: #fbbf24;",
+                                    "⚠️ WARNING"
+                                }
+
+                                button {
+                                    class: "about-modal-close",
+                                    onclick: move |_| show_install_warning.set(false),
+                                    "✕"
+                                }
+                            }
+
+                            div {
+                                style: "padding: 20px; display: flex; flex-direction: column; gap: 15px;",
+
+                                div {
+                                    style: "color: #fbbf24; font-weight: bold; font-size: 14px;",
+                                    "Before installing the driver, you MUST:"
+                                }
+
+                                ul {
+                                    style: "color: #e5e7eb; margin: 0; padding-left: 20px; line-height: 1.8;",
+                                    li { "Disable Hyper-V: " code { style: "background: #374151; padding: 2px 6px; border-radius: 3px;", "bcdedit /set hypervisorlaunchtype off" } }
+                                    li { "Disable Secure Boot in BIOS/UEFI" }
+                                    li { "Disable Windows driver protections (Integrity Checks / Vulnerable Driver Blocklist)" }
+                                }
+
+                                div {
+                                    style: "background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; border-radius: 5px; padding: 12px; margin-top: 10px;",
+                                    span {
+                                        style: "color: #fca5a5; font-size: 13px;",
+                                        "⚠️ Use ONLY on test systems. You are responsible for any damage."
+                                    }
+                                }
+
+                                div {
+                                    style: "display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px;",
+
+                                    button {
+                                        class: "btn btn-secondary",
+                                        onclick: move |_| show_install_warning.set(false),
+                                        "Cancel"
+                                    }
+
+                                    button {
+                                        class: "btn btn-danger",
+                                        onclick: move |_| {
+                                            show_install_warning.set(false);
+
+                                            // Check if license key is configured
+                                            if !has_pat() {
+                                                show_license_modal.set(true);
+                                                return;
+                                            }
+
+                                            installing.set(true);
+                                            install_status.set(String::new());
+                                            spawn(async move {
+                                                let result = tokio::task::spawn_blocking(move || {
+                                                    let pat = match load_pat() {
+                                                        Some(p) => p,
+                                                        None => return Err("License key not configured".to_string()),
+                                                    };
+
+                                                    let appdata = match std::env::var("LOCALAPPDATA") {
+                                                        Ok(p) => std::path::PathBuf::from(p),
+                                                        Err(_) => return Err("Installation failed".to_string()),
+                                                    };
+                                                    let dioprocess_dir = appdata.join("DioProcess");
+                                                    let zip_path = dioprocess_dir.join("dpdrv.zip");
+
+                                                    // Create directory
+                                                    let _ = std::fs::create_dir_all(&dioprocess_dir);
+
+                                                    // Clean up old zip and any dpdrv directories
+                                                    let _ = std::fs::remove_file(&zip_path);
+                                                    if let Ok(entries) = std::fs::read_dir(&dioprocess_dir) {
+                                                        for entry in entries.flatten() {
+                                                            let name = entry.file_name();
+                                                            let name_str = name.to_string_lossy();
+                                                            if name_str.starts_with("un4ckn0wl3z-dpdrv-") {
+                                                                let _ = std::fs::remove_dir_all(entry.path());
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Download zip using ureq with GitHub API
+                                                    let zip_url = "https://api.github.com/repos/un4ckn0wl3z/dpdrv/zipball/main";
+
+                                                    let response = match ureq::get(zip_url)
+                                                        .set("Authorization", &format!("Bearer {}", pat))
+                                                        .set("User-Agent", "DioProcess")
+                                                        .set("Accept", "application/vnd.github+json")
+                                                        .call()
+                                                    {
+                                                        Ok(r) => r,
+                                                        Err(e) => return Err(format!("Download failed: {}", e)),
+                                                    };
+
+                                                    // Read response body to file
+                                                    let mut file = match std::fs::File::create(&zip_path) {
+                                                        Ok(f) => f,
+                                                        Err(_) => return Err("Failed to create zip file".to_string()),
+                                                    };
+
+                                                    if let Err(_) = std::io::copy(&mut response.into_reader(), &mut file) {
+                                                        return Err("Failed to write zip file".to_string());
+                                                    }
+
+                                                    if !zip_path.exists() {
+                                                        return Err("Download failed".to_string());
+                                                    }
+
+                                                    // Extract zip using zip crate
+                                                    let zip_file = match std::fs::File::open(&zip_path) {
+                                                        Ok(f) => f,
+                                                        Err(_) => return Err("Failed to open zip file".to_string()),
+                                                    };
+
+                                                    let mut archive = match zip::ZipArchive::new(zip_file) {
+                                                        Ok(a) => a,
+                                                        Err(_) => return Err("Failed to read zip archive".to_string()),
+                                                    };
+
+                                                    for i in 0..archive.len() {
+                                                        let mut file = match archive.by_index(i) {
+                                                            Ok(f) => f,
+                                                            Err(_) => continue,
+                                                        };
+
+                                                        let outpath = match file.enclosed_name() {
+                                                            Some(p) => dioprocess_dir.join(p),
+                                                            None => continue,
+                                                        };
+
+                                                        if file.name().ends_with('/') {
+                                                            let _ = std::fs::create_dir_all(&outpath);
+                                                        } else {
+                                                            if let Some(parent) = outpath.parent() {
+                                                                let _ = std::fs::create_dir_all(parent);
+                                                            }
+                                                            if let Ok(mut outfile) = std::fs::File::create(&outpath) {
+                                                                let _ = std::io::copy(&mut file, &mut outfile);
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Delete zip
+                                                    let _ = std::fs::remove_file(&zip_path);
+
+                                                    // Find the extracted directory (GitHub API creates un4ckn0wl3z-dpdrv-{sha})
+                                                    let extract_dir = match std::fs::read_dir(&dioprocess_dir) {
+                                                        Ok(entries) => {
+                                                            let mut found = None;
+                                                            for entry in entries.flatten() {
+                                                                let name = entry.file_name();
+                                                                let name_str = name.to_string_lossy();
+                                                                if name_str.starts_with("un4ckn0wl3z-dpdrv-") && entry.path().is_dir() {
+                                                                    found = Some(entry.path());
+                                                                    break;
+                                                                }
+                                                            }
+                                                            match found {
+                                                                Some(p) => p,
+                                                                None => return Err("Extraction failed".to_string()),
+                                                            }
+                                                        }
+                                                        Err(_) => return Err("Extraction failed".to_string()),
+                                                    };
+
+                                                    // Run install script (cmd version)
+                                                    let install_script = extract_dir.join("install.cmd");
+                                                    if !install_script.exists() {
+                                                        // List files in extract_dir for debugging
+                                                        let files: Vec<String> = std::fs::read_dir(&extract_dir)
+                                                            .map(|entries| {
+                                                                entries.flatten()
+                                                                    .map(|e| e.file_name().to_string_lossy().to_string())
+                                                                    .collect()
+                                                            })
+                                                            .unwrap_or_default();
+                                                        let _ = std::fs::remove_dir_all(&extract_dir);
+                                                        return Err(format!("install.cmd not found. Files: {:?}", files));
+                                                    }
+
+                                                    let install_result = Command::new("cmd")
+                                                        .args(["/C", install_script.to_str().unwrap_or("")])
+                                                        .current_dir(&extract_dir)
+                                                        .output();
+
+                                                    // Log output to file
+                                                    let log_path = dioprocess_dir.join("install.log");
+                                                    let write_log = |output: &std::process::Output| {
+                                                        use std::io::Write;
+                                                        if let Ok(mut file) = std::fs::OpenOptions::new()
+                                                            .create(true)
+                                                            .append(true)
+                                                            .open(&log_path)
+                                                        {
+                                                            let timestamp = std::time::SystemTime::now()
+                                                                .duration_since(std::time::UNIX_EPOCH)
+                                                                .map(|d| d.as_secs())
+                                                                .unwrap_or(0);
+                                                            let _ = writeln!(file, "\n=== Install attempt at {} ===", timestamp);
+                                                            let _ = writeln!(file, "Exit code: {:?}", output.status.code());
+                                                            let _ = writeln!(file, "--- STDOUT ---");
+                                                            let _ = file.write_all(&output.stdout);
+                                                            let _ = writeln!(file, "\n--- STDERR ---");
+                                                            let _ = file.write_all(&output.stderr);
+                                                            let _ = writeln!(file, "=== End ===\n");
+                                                        }
+                                                    };
+
+                                                    match install_result {
+                                                        Ok(output) if output.status.success() => {
+                                                            write_log(&output);
+                                                            let _ = std::fs::remove_dir_all(&extract_dir);
+                                                            Ok("Driver installed!".to_string())
+                                                        }
+                                                        Ok(output) => {
+                                                            write_log(&output);
+                                                            let stderr = String::from_utf8_lossy(&output.stderr);
+                                                            let stdout = String::from_utf8_lossy(&output.stdout);
+                                                            let code = output.status.code().unwrap_or(-1);
+                                                            let _ = std::fs::remove_dir_all(&extract_dir);
+                                                            Err(format!("Install failed (exit {}): {} {}", code, stdout, stderr))
+                                                        }
+                                                        Err(e) => {
+                                                            let _ = std::fs::remove_dir_all(&extract_dir);
+                                                            Err(format!("Failed to run install.cmd: {}", e))
+                                                        }
+                                                    }
+                                                }).await;
+
+                                                match result {
+                                                    Ok(Ok(msg)) => {
+                                                        install_status.set(msg);
+                                                        driver_loaded.set(is_driver_loaded());
+                                                    }
+                                                    Ok(Err(e)) => {
+                                                        install_status.set(e);
+                                                    }
+                                                    Err(_) => {
+                                                        install_status.set("Installation failed".to_string());
+                                                    }
+                                                }
+                                                installing.set(false);
+
+                                                // Clear status after 5 seconds
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                install_status.set(String::new());
+                                            });
+                                        },
+                                        "I Understand, Proceed"
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -550,11 +637,11 @@ pub fn Layout() -> Element {
 
                 }
 
-                // PAT Input Modal
-                if *show_pat_modal.read() {
+                // License Key Input Modal
+                if *show_license_modal.read() {
                     div {
                         class: "about-modal-overlay",
-                        onclick: move |_| show_pat_modal.set(false),
+                        onclick: move |_| show_license_modal.set(false),
 
                         div {
                             class: "about-modal",
@@ -565,14 +652,14 @@ pub fn Layout() -> Element {
 
                                 h2 {
                                     class: "about-modal-title",
-                                    "Configure GitHub PAT"
+                                    "License Key"
                                 }
 
                                 button {
                                     class: "about-modal-close",
                                     onclick: move |_| {
-                                        show_pat_modal.set(false);
-                                        pat_error.set(String::new());
+                                        show_license_modal.set(false);
+                                        license_error.set(String::new());
                                     },
                                     "✕"
                                 }
@@ -583,54 +670,82 @@ pub fn Layout() -> Element {
 
                                 span {
                                     style: "color: #e5e7eb;",
-                                    "Enter your GitHub Personal Access Token to download the driver:"
+                                    "Enter your license key to download the driver:"
                                 }
 
                                 input {
                                     r#type: "password",
-                                    placeholder: "github_pat_...",
-                                    value: "{pat_input}",
-                                    oninput: move |evt| pat_input.set(evt.value()),
+                                    placeholder: "Enter license key...",
+                                    value: "{license_input}",
+                                    oninput: move |evt| license_input.set(evt.value()),
                                     style: "padding: 10px; border-radius: 5px; border: 1px solid #4b5563; background: #1f2937; color: #e5e7eb; font-family: monospace;",
                                 }
 
-                                if !pat_error.read().is_empty() {
+                                if !license_error.read().is_empty() {
                                     span {
                                         style: "color: #ef4444;",
-                                        "{pat_error}"
+                                        "{license_error}"
                                     }
                                 }
 
                                 div {
                                     style: "display: flex; gap: 10px; justify-content: flex-end;",
 
+                                    if has_pat() {
+                                        button {
+                                            class: "btn btn-danger",
+                                            onclick: move |_| {
+                                                delete_pat();
+                                                license_input.set(String::new());
+                                                license_error.set(String::new());
+                                                install_status.set("License key revoked".to_string());
+                                                show_license_modal.set(false);
+                                            },
+                                            "Revoke License"
+                                        }
+                                    }
+
                                     button {
-                                        class: "modal-btn",
+                                        class: "btn btn-secondary",
                                         onclick: move |_| {
-                                            show_pat_modal.set(false);
-                                            pat_error.set(String::new());
+                                            show_license_modal.set(false);
+                                            license_error.set(String::new());
                                         },
                                         "Cancel"
                                     }
 
                                     button {
-                                        class: "modal-btn modal-btn-primary",
+                                        class: "btn btn-primary",
                                         onclick: move |_| {
-                                            let pat_value = pat_input.read().clone();
-                                            if pat_value.is_empty() {
-                                                pat_error.set("PAT cannot be empty".to_string());
+                                            let license_value = license_input.read().clone();
+                                            if license_value.is_empty() {
+                                                license_error.set("License key cannot be empty".to_string());
                                                 return;
                                             }
-                                            if !pat_value.starts_with("github_pat_") && !pat_value.starts_with("ghp_") {
-                                                pat_error.set("Invalid PAT format".to_string());
+                                            if !license_value.starts_with("github_pat_") && !license_value.starts_with("ghp_") {
+                                                license_error.set("Invalid license key format".to_string());
                                                 return;
                                             }
-                                            save_pat(&pat_value);
-                                            pat_input.set(String::new());
-                                            pat_error.set(String::new());
-                                            show_pat_modal.set(false);
+                                            save_pat(&license_value);
+                                            license_input.set(String::new());
+                                            license_error.set(String::new());
+                                            show_license_modal.set(false);
                                         },
-                                        "Save"
+                                        "Activate"
+                                    }
+                                }
+
+                                div {
+                                    style: "margin-top: 10px; padding-top: 15px; border-top: 1px solid #4b5563;",
+                                    span {
+                                        style: "color: #9ca3af; font-size: 12px;",
+                                        "Need a license key? Contact developer at "
+                                        a {
+                                            href: "https://discord.gg/zsqrEfCReh",
+                                            target: "_blank",
+                                            style: "color: #8b5cf6;",
+                                            "Damned Software Discord"
+                                        }
                                     }
                                 }
                             }
