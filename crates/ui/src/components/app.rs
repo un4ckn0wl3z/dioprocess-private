@@ -103,16 +103,16 @@ pub fn Layout() -> Element {
 
     let about_message = format!(
         r#"
-    DioProcess
+    DIOPROCESS [PRIVATE BUILD]
     Advanced Windows System Monitor & Process Analysis Tool
-    
-    Advanced process & system control features
-    (for research, security testing & OS internals exploration)
+
+    This is a private build version.
+    Not for public distribution.
 
     Built with Rust • Dioxus 0.6 • Native Windows APIs
     Requires administrator privileges
 
-    Version: {}
+    Version: {} (Private)
     "#,
         version
     );
@@ -126,7 +126,7 @@ pub fn Layout() -> Element {
                 div { class: "title-bar",
                     div {
                         class: "title-bar-drag",
-                        span { class: "title-text", "DioProcess | Windows System Monitor Tool v{version}" }
+                        span { class: "title-text", "DIOPROCESS | WINDOWS SYSTEM MONITOR v{version} [PRIVATE BUILD]" }
                     }
                     // Theme selector
                     div { class: "theme-selector",
@@ -618,7 +618,7 @@ pub fn Layout() -> Element {
 
                         h2 {
                             class: "about-modal-title",
-                            "🖥️ About: DioProcess - Windows System Monitor"
+                            "🖥️ About: DIOPROCESS [PRIVATE BUILD]"
                         }
 
                         button {
