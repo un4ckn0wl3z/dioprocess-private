@@ -1,4 +1,4 @@
-//! Hypervisor control sub-tab
+//! Hypervisor control tab
 //!
 //! Provides UI controls for managing the hypervisor and process protection.
 
@@ -111,7 +111,8 @@ pub fn HypervisorTab() -> Element {
     let current_status = status.read();
     let procs = protected_processes.read().clone();
     let ctx_menu = context_menu.read().clone();
-    let msg = status_message.read().clone();
+    let hidden_count = hidden_drivers.read().len();
+    let protected_count = procs.len();
 
     rsx! {
         div {
@@ -122,7 +123,7 @@ pub fn HypervisorTab() -> Element {
 
             // Header
             div { class: "header-box",
-                h1 { class: "header-title", "Hypervisor Control (Ring -1)" }
+                h1 { class: "header-title", "Hypervisor Control" }
                 div { class: "header-stats",
                     span {
                         class: if driver_loaded { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
@@ -132,22 +133,20 @@ pub fn HypervisorTab() -> Element {
                         class: if current_status.is_running { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
                         if current_status.is_running { "HV: Running" } else { "HV: Stopped" }
                     }
+                    span {
+                        class: if current_status.hooks_installed { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
+                        if current_status.hooks_installed { "Hooks: Active" } else { "Hooks: Inactive" }
+                    }
+                    span { "Hidden: {protected_count} processes, {hidden_count} drivers" }
                     span { class: "header-shortcuts", "F5: Refresh | Esc: Close menu" }
+                }
+                if !status_message.read().is_empty() {
+                    div { class: "status-message", "{status_message}" }
                 }
             }
 
-            // Controls bar - Hypervisor control buttons
+            // Main Controls
             div { class: "controls",
-                // Hooks status indicator
-                span {
-                    class: if current_status.hooks_installed { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
-                    if current_status.hooks_installed { "Hooks: Installed" } else { "Hooks: Not Installed" }
-                }
-
-                // Separator
-                div { style: "flex: 1;" }
-
-                // Control buttons
                 button {
                     class: "btn btn-primary",
                     disabled: !driver_loaded || current_status.is_running,
@@ -245,31 +244,20 @@ pub fn HypervisorTab() -> Element {
                     onclick: move |_| refresh_status(),
                     "Refresh"
                 }
-
-                if !msg.is_empty() {
-                    span { class: "status-message", "{msg}" }
-                }
             }
 
             // Driver Hiding Section
-            div {
-                class: "controls",
-                style: "border-top: 1px solid var(--border-color); padding-top: 10px;",
-
-                span { style: "font-weight: 600; margin-right: 15px;", "Driver Hiding:" }
-
-                span {
-                    class: if !hidden_drivers.read().is_empty() { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
-                    "{hidden_drivers.read().len()} hidden"
-                }
+            div { class: "controls",
+                span { class: "control-label", "Driver Hiding:" }
 
                 input {
+                    class: "search-input",
                     r#type: "text",
                     placeholder: "Driver name (e.g., dpdrv.sys)",
                     value: "{driver_name_input}",
                     disabled: !driver_loaded || !current_status.hooks_installed,
                     oninput: move |e| driver_name_input.set(e.value()),
-                    style: "padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); width: 180px; font-family: monospace;",
+                    style: "width: 180px;",
                 }
 
                 button {
@@ -280,12 +268,12 @@ pub fn HypervisorTab() -> Element {
                         spawn(async move {
                             match hv_hide_driver(&name) {
                                 Ok(()) => {
-                                    status_message.set(format!("Driver '{}' added to hide list", name));
+                                    status_message.set(format!("Driver '{}' hidden", name));
                                     driver_name_input.set(String::new());
                                     refresh_status();
                                 }
                                 Err(e) => {
-                                    status_message.set(format!("Failed to hide driver: {}", e));
+                                    status_message.set(format!("Failed: {}", e));
                                 }
                             }
                             spawn(async move {
@@ -294,7 +282,7 @@ pub fn HypervisorTab() -> Element {
                             });
                         });
                     },
-                    "Add"
+                    "Hide Driver"
                 }
 
                 button {
@@ -327,18 +315,17 @@ pub fn HypervisorTab() -> Element {
                         let driver_display = driver.clone();
                         rsx! {
                             span {
-                                class: "driver-status driver-status-loaded",
-                                style: "display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px;",
+                                class: "filter-tag",
                                 "{driver_display}"
                                 button {
-                                    style: "background: none; border: none; color: var(--text-primary); cursor: pointer; padding: 0; font-size: 12px; opacity: 0.7;",
+                                    class: "filter-tag-remove",
                                     onclick: move |e| {
                                         e.stop_propagation();
                                         let name = driver_name.clone();
                                         spawn(async move {
                                             match hv_remove_hidden_driver(&name) {
                                                 Ok(()) => {
-                                                    status_message.set(format!("Driver '{}' removed from hide list", name));
+                                                    status_message.set(format!("Driver '{}' unhidden", name));
                                                     refresh_status();
                                                 }
                                                 Err(e) => {
@@ -357,37 +344,29 @@ pub fn HypervisorTab() -> Element {
                         }
                     }
                 }
-
-                div { style: "flex: 1;" }
-
-                span {
-                    style: "font-size: 11px; color: var(--text-secondary);",
-                    "Max 16 drivers"
-                }
             }
 
             // Ring -1 Injection Section
-            div {
-                class: "controls",
-                style: "border-top: 1px solid var(--border-color); padding-top: 10px;",
-
-                span { style: "font-weight: 600; margin-right: 15px; color: var(--danger);", "Ring -1 Injection:" }
+            div { class: "controls",
+                span { class: "control-label", style: "color: var(--danger);", "Ring -1 Injection:" }
 
                 input {
+                    class: "search-input",
                     r#type: "text",
                     placeholder: "Target PID",
                     value: "{inject_pid}",
                     disabled: !driver_loaded || !current_status.is_running,
                     oninput: move |e| inject_pid.set(e.value()),
-                    style: "padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); width: 80px; font-family: monospace;",
+                    style: "width: 100px;",
                 }
 
                 input {
+                    class: "search-input",
                     r#type: "text",
                     placeholder: "Shellcode or DLL path...",
                     value: "{inject_shellcode_path}",
                     readonly: true,
-                    style: "padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); width: 200px; font-family: monospace; font-size: 11px;",
+                    style: "width: 250px; font-size: 11px;",
                 }
 
                 button {
@@ -413,8 +392,7 @@ pub fn HypervisorTab() -> Element {
                 }
 
                 button {
-                    class: "btn btn-primary",
-                    style: "background: var(--danger);",
+                    class: "btn btn-danger",
                     disabled: !driver_loaded || !current_status.is_running || inject_pid.read().is_empty() || inject_shellcode_path.read().is_empty(),
                     onclick: move |_| {
                         let pid_str = inject_pid.read().clone();
@@ -439,7 +417,7 @@ pub fn HypervisorTab() -> Element {
                                     Ok(result) => {
                                         if result.success {
                                             inject_result.set(Some(format!(
-                                                "DLL injected! Path @ 0x{:X}",
+                                                "DLL injected @ 0x{:X}",
                                                 result.path_address
                                             )));
                                             inject_pid.set(String::new());
@@ -457,13 +435,13 @@ pub fn HypervisorTab() -> Element {
                                 let shellcode = match tokio::fs::read(&file_path).await {
                                     Ok(data) => data,
                                     Err(e) => {
-                                        inject_result.set(Some(format!("Failed to read file: {}", e)));
+                                        inject_result.set(Some(format!("Read error: {}", e)));
                                         return;
                                     }
                                 };
 
                                 if shellcode.is_empty() {
-                                    inject_result.set(Some("Shellcode file is empty".to_string()));
+                                    inject_result.set(Some("File is empty".to_string()));
                                     return;
                                 }
 
@@ -471,7 +449,7 @@ pub fn HypervisorTab() -> Element {
                                     Ok(result) => {
                                         if result.success {
                                             inject_result.set(Some(format!(
-                                                "Success! 0x{:X} ({} bytes)",
+                                                "Injected @ 0x{:X} ({} bytes)",
                                                 result.allocated_address, result.bytes_written
                                             )));
                                             inject_pid.set(String::new());
@@ -496,53 +474,47 @@ pub fn HypervisorTab() -> Element {
 
                 if let Some(ref result) = *inject_result.read() {
                     span {
-                        class: if result.starts_with("Success") || result.starts_with("DLL") { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
-                        style: "font-family: monospace;",
+                        class: if result.starts_with("Injected") || result.starts_with("DLL") { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
                         "{result}"
                     }
                 }
-
-                div { style: "flex: 1;" }
-
-                span {
-                    style: "font-size: 11px; color: var(--text-secondary);",
-                    ".dll = LoadLibraryW | .bin/.raw/.sc = shellcode"
-                }
             }
 
-            // Table - Protected Processes
+            // Table - Hidden Processes
             div { class: "table-container",
                 table { class: "process-table",
                     thead { class: "table-header",
                         tr {
                             th { class: "th", "PID" }
-                            th { class: "th", "Name" }
+                            th { class: "th", "Process Name" }
                             th { class: "th", "Status" }
                             th { class: "th", "Actions" }
                         }
                     }
 
                     tbody {
-                        if !current_status.is_running {
+                        if !driver_loaded {
                             tr {
                                 td { colspan: "4", class: "no-results",
-                                    if driver_loaded {
-                                        "Hypervisor not running. Click 'Start HV' to virtualize the system."
-                                    } else {
-                                        "Driver not loaded - Load DioProcess.sys to use hypervisor features"
-                                    }
+                                    "Driver not loaded. Install the DioProcess driver to use hypervisor features."
+                                }
+                            }
+                        } else if !current_status.is_running {
+                            tr {
+                                td { colspan: "4", class: "no-results",
+                                    "Hypervisor not running. Click 'Start HV' to virtualize the system."
                                 }
                             }
                         } else if !current_status.hooks_installed {
                             tr {
                                 td { colspan: "4", class: "no-results",
-                                    "Hooks not installed. Click 'Install Hooks' to enable process protection."
+                                    "Hooks not installed. Click 'Install Hooks' to enable process/driver hiding."
                                 }
                             }
                         } else if procs.is_empty() {
                             tr {
                                 td { colspan: "4", class: "no-results",
-                                    "No processes are hidden. Right-click a process in the Process tab and select 'HV Hide Process'."
+                                    "No hidden processes. Right-click a process in the Process tab and select 'HV Hide Process'."
                                 }
                             }
                         } else {
@@ -581,7 +553,7 @@ pub fn HypervisorTab() -> Element {
                                             td { class: "cell mono", "{pid_val}" }
                                             td { class: "cell", "{proc_name}" }
                                             td { class: "cell",
-                                                span { class: "cpu-low", style: "font-weight: 600;", "Hidden" }
+                                                span { class: "status-badge status-running", "Hidden" }
                                             }
                                             td { class: "cell",
                                                 button {
@@ -613,19 +585,6 @@ pub fn HypervisorTab() -> Element {
                             }
                         }
                     }
-                }
-            }
-
-            // Info section at bottom
-            div {
-                class: "controls",
-                style: "margin-top: auto; flex-direction: column; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-secondary);",
-                p { "The hypervisor runs at ring -1 (below the OS kernel) using Intel VT-x EPT hooks." }
-                p { "Hidden processes are invisible to NtQuerySystemInformation (Task Manager, Process Explorer, Process Hacker)" }
-                p { "Hidden drivers are invisible to SystemModuleInformation (driver enumeration tools, WinObjEx64)" }
-                p {
-                    style: "color: var(--danger);",
-                    "Warning: Experimental feature. PatchGuard safe but use only on test systems."
                 }
             }
 
