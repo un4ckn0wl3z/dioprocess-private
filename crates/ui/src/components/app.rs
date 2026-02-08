@@ -99,6 +99,7 @@ pub fn Layout() -> Element {
     let is_service_tab = matches!(route, Route::ServiceTab {});
     let is_utilities_tab = matches!(route, Route::UtilitiesTab {});
     let is_kernel_utilities_tab = matches!(route, Route::KernelUtilitiesTab {});
+    let is_hypervisor_tab = matches!(route, Route::HypervisorTab {});
     let is_callback_tab = matches!(route, Route::CallbackTab {});
 
     let about_message = format!(
@@ -589,6 +590,12 @@ pub fn Layout() -> Element {
                         to: Route::KernelUtilitiesTab {},
                         class: if is_kernel_utilities_tab { "tab-item tab-active" } else { "tab-item" },
                         "Kernel Enumeration"
+                    }
+                    Link {
+                        to: Route::HypervisorTab {},
+                        class: if is_hypervisor_tab { "tab-item tab-active" } else { "tab-item" },
+                        "Hypervisor"
+                        span { class: "experimental-badge", style: "background: #dc2626;", "Ring -1" }
                     }
                     Link {
                         to: Route::CallbackTab {},

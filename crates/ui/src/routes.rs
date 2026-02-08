@@ -3,7 +3,8 @@
 use dioxus::prelude::*;
 
 use crate::components::{
-    CallbackTab, KernelUtilitiesTab, Layout, NetworkTab, ProcessTab, ServiceTab, UtilitiesTab,
+    CallbackTab, HypervisorTab, KernelUtilitiesTab, Layout, NetworkTab, ProcessTab, ServiceTab,
+    UtilitiesTab,
 };
 
 /// Application routes
@@ -20,6 +21,8 @@ pub enum Route {
     UtilitiesTab {},
     #[route("/kernel-utilities")]
     KernelUtilitiesTab {},
+    #[route("/hypervisor")]
+    HypervisorTab {},
     #[route("/callback")]
     CallbackTab {},
 }
