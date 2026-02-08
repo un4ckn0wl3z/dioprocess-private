@@ -17,6 +17,8 @@ pub enum CallbackError {
     InvalidData,
     /// IOCTL operation failed
     IoctlFailed(u32),
+    /// Invalid parameter passed to function
+    InvalidParameter,
 }
 
 impl fmt::Display for CallbackError {
@@ -36,6 +38,7 @@ impl fmt::Display for CallbackError {
             CallbackError::IoctlFailed(code) => {
                 write!(f, "IOCTL operation failed: error code {}", code)
             }
+            CallbackError::InvalidParameter => write!(f, "Invalid parameter"),
         }
     }
 }

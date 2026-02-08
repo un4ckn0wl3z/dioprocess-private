@@ -3,9 +3,9 @@
 //! Provides UI controls for managing the hypervisor and process protection.
 
 use callback::{
-    hv_clear_hidden_drivers, hv_hide_driver, hv_install_hooks, hv_list_hidden_drivers,
-    hv_list_protected, hv_ping, hv_remove_hidden_driver, hv_remove_hooks, hv_start, hv_stop,
-    hv_unprotect_process, is_driver_loaded, HvStatus,
+    hv_clear_hidden_drivers, hv_hide_driver, hv_inject_shellcode, hv_install_hooks,
+    hv_list_hidden_drivers, hv_list_protected, hv_ping, hv_remove_hidden_driver, hv_remove_hooks,
+    hv_start, hv_stop, hv_unprotect_process, is_driver_loaded, HvStatus,
 };
 use dioxus::prelude::*;
 use std::collections::HashMap;
@@ -39,6 +39,10 @@ pub fn HypervisorTab() -> Element {
     let mut selected_pid = use_signal(|| None::<u32>);
     let mut hidden_drivers = use_signal(Vec::<String>::new);
     let mut driver_name_input = use_signal(|| "dpdrv.sys".to_string());
+    // Ring -1 injection state
+    let mut inject_pid = use_signal(String::new);
+    let mut inject_shellcode_path = use_signal(String::new);
+    let mut inject_result = use_signal(|| None::<String>);
     let driver_loaded = is_driver_loaded();
 
     // Refresh status
@@ -351,6 +355,124 @@ pub fn HypervisorTab() -> Element {
                 span {
                     style: "font-size: 11px; color: var(--text-secondary);",
                     "Max 16 drivers"
+                }
+            }
+
+            // Ring -1 Injection Section
+            div {
+                class: "controls",
+                style: "border-top: 1px solid var(--border-color); padding-top: 10px;",
+
+                span { style: "font-weight: 600; margin-right: 15px; color: var(--danger);", "Ring -1 Injection:" }
+
+                input {
+                    r#type: "text",
+                    placeholder: "Target PID",
+                    value: "{inject_pid}",
+                    disabled: !driver_loaded || !current_status.is_running,
+                    oninput: move |e| inject_pid.set(e.value()),
+                    style: "padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); width: 80px; font-family: monospace;",
+                }
+
+                input {
+                    r#type: "text",
+                    placeholder: "Shellcode file path...",
+                    value: "{inject_shellcode_path}",
+                    readonly: true,
+                    style: "padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); width: 200px; font-family: monospace; font-size: 11px;",
+                }
+
+                button {
+                    class: "btn btn-secondary",
+                    disabled: !driver_loaded || !current_status.is_running,
+                    onclick: move |_| {
+                        spawn(async move {
+                            let file = rfd::AsyncFileDialog::new()
+                                .add_filter("Shellcode", &["bin", "raw", "sc"])
+                                .add_filter("All files", &["*"])
+                                .set_title("Select Shellcode File")
+                                .pick_file()
+                                .await;
+
+                            if let Some(f) = file {
+                                inject_shellcode_path.set(f.path().to_string_lossy().to_string());
+                            }
+                        });
+                    },
+                    "Browse"
+                }
+
+                button {
+                    class: "btn btn-primary",
+                    style: "background: var(--danger);",
+                    disabled: !driver_loaded || !current_status.is_running || inject_pid.read().is_empty() || inject_shellcode_path.read().is_empty(),
+                    onclick: move |_| {
+                        let pid_str = inject_pid.read().clone();
+                        let shellcode_path = inject_shellcode_path.read().clone();
+
+                        // Parse PID
+                        let pid = match pid_str.parse::<u32>() {
+                            Ok(p) => p,
+                            Err(_) => {
+                                inject_result.set(Some("Invalid PID".to_string()));
+                                return;
+                            }
+                        };
+
+                        spawn(async move {
+                            // Read shellcode from file
+                            let shellcode = match tokio::fs::read(&shellcode_path).await {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    inject_result.set(Some(format!("Failed to read file: {}", e)));
+                                    return;
+                                }
+                            };
+
+                            if shellcode.is_empty() {
+                                inject_result.set(Some("Shellcode file is empty".to_string()));
+                                return;
+                            }
+
+                            match hv_inject_shellcode(pid, &shellcode) {
+                                Ok(result) => {
+                                    if result.success {
+                                        inject_result.set(Some(format!(
+                                            "Success! 0x{:X} ({} bytes via ring -1)",
+                                            result.allocated_address, result.bytes_written
+                                        )));
+                                        inject_pid.set(String::new());
+                                        inject_shellcode_path.set(String::new());
+                                    } else {
+                                        inject_result.set(Some("Injection failed".to_string()));
+                                    }
+                                }
+                                Err(e) => {
+                                    inject_result.set(Some(format!("Error: {}", e)));
+                                }
+                            }
+                            spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                                inject_result.set(None);
+                            });
+                        });
+                    },
+                    "Inject"
+                }
+
+                if let Some(ref result) = *inject_result.read() {
+                    span {
+                        class: if result.starts_with("Success") { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
+                        style: "font-family: monospace;",
+                        "{result}"
+                    }
+                }
+
+                div { style: "flex: 1;" }
+
+                span {
+                    style: "font-size: 11px; color: var(--text-secondary);",
+                    "Bypasses ring 0 protections"
                 }
             }
 

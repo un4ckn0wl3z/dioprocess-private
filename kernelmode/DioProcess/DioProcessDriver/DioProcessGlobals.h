@@ -134,3 +134,6 @@ NTSTATUS HandleHvIsDriverHidden(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR i
 NTSTATUS HandleHvRemoveHiddenDriver(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleHvClearHiddenDrivers(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleHvListHiddenDrivers(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// Ring -1 Injection Handlers
+NTSTATUS HandleHvInjectShellcode(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
