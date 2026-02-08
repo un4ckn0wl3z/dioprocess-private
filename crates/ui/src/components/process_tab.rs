@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use callback::{
-    clear_debug_flags, enable_all_privileges, is_driver_loaded, protect_process,
-    unprotect_process,
+    clear_debug_flags, enable_all_privileges, hv_is_running, hv_protect_process,
+    hv_unprotect_process, is_driver_loaded, protect_process, unprotect_process,
 };
 use dioxus::prelude::*;
 use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, inject_shellcode_classic, unhook_dll_remote_by_path, enumerate_process_modules};
@@ -1640,6 +1640,78 @@ pub fn ProcessTab() -> Element {
                                 },
                                 span { "🐛" }
                                 span { "Clear Debug Flags" }
+                            }
+
+                            div { class: "context-menu-separator" }
+
+                            // HV Hide Process button (only enabled when hypervisor is running)
+                            button {
+                                class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
+                                disabled: !hv_is_running(),
+                                onclick: move |_| {
+                                    let target_pid = ctx_menu.pid;
+                                    context_menu.set(ContextMenuState::default());
+
+                                    if let Some(pid) = target_pid {
+                                        spawn(async move {
+                                            match hv_protect_process(pid) {
+                                                Ok(()) => {
+                                                    status_message.set(format!(
+                                                        "✓ Process {} hidden via hypervisor",
+                                                        pid
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ HV hide failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        });
+                                    }
+                                },
+                                span { "👻" }
+                                span { "HV Hide Process" }
+                            }
+
+                            // HV Unhide Process button
+                            button {
+                                class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
+                                disabled: !hv_is_running(),
+                                onclick: move |_| {
+                                    let target_pid = ctx_menu.pid;
+                                    context_menu.set(ContextMenuState::default());
+
+                                    if let Some(pid) = target_pid {
+                                        spawn(async move {
+                                            match hv_unprotect_process(pid) {
+                                                Ok(()) => {
+                                                    status_message.set(format!(
+                                                        "✓ Process {} unhidden from hypervisor",
+                                                        pid
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!(
+                                                        "✗ HV unhide failed: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        });
+                                    }
+                                },
+                                span { "👁️" }
+                                span { "HV Unhide Process" }
                             }
                         }
                     }
