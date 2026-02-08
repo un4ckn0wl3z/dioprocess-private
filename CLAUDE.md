@@ -28,7 +28,7 @@ crates/
 │       ├── error.rs       # CallbackError enum
 │       ├── types.rs       # CallbackEvent, EventType, EventCategory, RegistryOperation
 │       ├── driver.rs      # Driver communication (is_driver_loaded, read_events, protect/unprotect, enable_privileges, clear_debug_flags, callback enumeration)
-│       ├── hypervisor.rs  # Hypervisor (Ring -1) bindings (hv_is_running, hv_inject_shellcode, hv_inject_dll, HvInjectResult, HvInjectDllResult)
+│       ├── hypervisor.rs  # Bundled hypervisor (Ring -1) bindings (hv_is_running, hv_inject_shellcode, hv_inject_dll, HvInjectResult, HvInjectDllResult)
 │       ├── pspcidtable.rs # PspCidTable enumeration (CidEntry, CidObjectType, enumerate_pspcidtable)
 │       └── storage.rs     # SQLite persistence (EventStorage, EventFilter, batched writes)
 ├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, kernel injection, process creation, process hollowing, ghostly hollowing, process herpaderping, herpaderping hollowing, token theft, module unloading, memory ops
@@ -363,12 +363,12 @@ IOCTL_DIOPROCESS_HV_INJECT_DLL        // 0x841
 
 **Key difference from Ring 0 injection:**
 - Writes to physical memory via EPT — bypasses ring 0 memory protections
-- Requires hypervisor (hv.sys) to be running
+- Requires DioProcess.sys with bundled hypervisor to be running
 - Memory must be touched/paged in before hypervisor can write
 
 **UI Access:**
 Right-click process → Miscellaneous → **HV Inject Shellcode (Ring -1)** / **HV Inject DLL (Ring -1)**
-(Items disabled when hypervisor or driver not loaded)
+(Items disabled when driver/hypervisor not loaded)
 
 ### 3. Token Privilege Escalation
 
@@ -857,8 +857,7 @@ IOCTL_DIOPROCESS_ENUM_PSPCIDTABLE  // 0x0022203C
 Access via the **Hypervisor** tab in main navigation (marked with red "Ring -1" badge). Operates at hypervisor level (Ring -1) via Intel VT-x for advanced security research.
 
 **Requirements:**
-- DioProcess.sys kernel driver loaded
-- hv.sys hypervisor loaded and running (virtualizing the OS)
+- DioProcess.sys kernel driver loaded (hypervisor is bundled — single driver)
 
 ### Architecture
 
@@ -874,13 +873,14 @@ Access via the **Hypervisor** tab in main navigation (marked with red "Ring -1" 
 └──────────────────────────┬──────────────────────────────────┘
                            │ IOCTL
 ┌──────────────────────────▼──────────────────────────────────┐
-│            DioProcess.sys (Kernel Driver)                    │
-│   Hypervisor IOCTL handlers, VMCALL wrappers                 │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ VMCALL (Intel VT-x)
-┌──────────────────────────▼──────────────────────────────────┐
-│                    hv.sys (Hypervisor)                       │
-│   Intel VT-x, EPT, physical memory access                    │
+│                  DioProcess.sys                              │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │  Ring 0: Kernel Driver (IOCTL handlers, memory ops) │   │
+│   └──────────────────────────┬──────────────────────────┘   │
+│                              │ VMCALL                        │
+│   ┌──────────────────────────▼──────────────────────────┐   │
+│   │  Ring -1: Bundled Hypervisor (Intel VT-x, EPT)      │   │
+│   └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -949,23 +949,25 @@ IOCTL_DIOPROCESS_HV_INJECT_DLL        // 0x841
 
 ### Other Hypervisor Features
 
-- **Status Display** — Shows hypervisor running state (hv.sys) and driver status (DioProcess.sys)
+- **Status Display** — Shows hypervisor running state and driver status
 - **Process Hiding** — Hide processes from ring 0 enumeration via EPT hooks
 - **Driver Hiding** — Hide kernel drivers from ring 0 enumeration
 - **Memory Operations** — Read/write physical and virtual memory via hypervisor EPT access
 
-### Hypervisor Driver (hv.sys)
+### Bundled Hypervisor
 
-Located in `kernelmode/hv/`:
-- Intel VT-x based hypervisor
-- Virtualizes the entire OS at runtime
+The Intel VT-x hypervisor is bundled into DioProcess.sys (single driver):
+- Located in `kernelmode/DioProcess/DioProcessDriver/Hypervisor/`
+- Virtualizes the OS at driver load time
 - Provides VMCALL interface for physical memory access
 - EPT (Extended Page Tables) for address translation
 - Hypercall key: `69420` (hardcoded)
 
-**Loading order:**
-1. Load hv.sys first (installs hypervisor, virtualizes OS)
-2. Load DioProcess.sys (communicates with hypervisor via VMCALL)
+**Single driver loading:**
+```batch
+sc create DioProcess type= kernel binPath= "C:\path\to\DioProcess.sys"
+sc start DioProcess
+```
 
 ## System Events - Experimental (callback crate)
 
