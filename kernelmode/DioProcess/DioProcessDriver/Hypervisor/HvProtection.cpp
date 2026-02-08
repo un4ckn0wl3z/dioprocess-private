@@ -9,10 +9,11 @@
 
 static ULONG g_ProtectedPids[MAX_PROTECTED_PIDS] = { 0 };
 static ULONG g_ProtectedPidCount = 0;
-static KSPIN_LOCK g_ProtectedPidLock;
+static ERESOURCE g_ProtectedPidLock;  // Reader-writer lock for better perf
 static bool g_HvInitialized = false;
 static bool g_HooksInstalled = false;
 static bool g_ProcessCallbackRegistered = false;
+static bool g_ResourceInitialized = false;
 
 // Function pointers for hooked functions
 using fnObReferenceObjectByHandleWithTag = NTSTATUS(__stdcall*)(HANDLE Handle,
@@ -73,10 +74,15 @@ typedef struct _SYSTEM_PROCESS_INFORMATION {
 
 bool HvIsProcessProtectedByPid(ULONG Pid)
 {
-	KIRQL oldIrql;
-	KeAcquireSpinLock(&g_ProtectedPidLock, &oldIrql);
+	if (!g_ResourceInitialized)
+		return false;
 
 	bool found = false;
+
+	// Use shared (read) lock - allows multiple readers simultaneously
+	KeEnterCriticalRegion();
+	ExAcquireResourceSharedLite(&g_ProtectedPidLock, TRUE);
+
 	for (ULONG i = 0; i < g_ProtectedPidCount; i++) {
 		if (g_ProtectedPids[i] == Pid) {
 			found = true;
@@ -84,32 +90,40 @@ bool HvIsProcessProtectedByPid(ULONG Pid)
 		}
 	}
 
-	KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+	ExReleaseResourceLite(&g_ProtectedPidLock);
+	KeLeaveCriticalRegion();
 	return found;
 }
 
 bool HvAddProtectedPid(ULONG Pid)
 {
-	KIRQL oldIrql;
-	KeAcquireSpinLock(&g_ProtectedPidLock, &oldIrql);
+	if (!g_ResourceInitialized)
+		return false;
+
+	// Use exclusive (write) lock
+	KeEnterCriticalRegion();
+	ExAcquireResourceExclusiveLite(&g_ProtectedPidLock, TRUE);
 
 	// Check if already protected
 	for (ULONG i = 0; i < g_ProtectedPidCount; i++) {
 		if (g_ProtectedPids[i] == Pid) {
-			KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+			ExReleaseResourceLite(&g_ProtectedPidLock);
+			KeLeaveCriticalRegion();
 			return true; // Already protected
 		}
 	}
 
 	// Check if list is full
 	if (g_ProtectedPidCount >= MAX_PROTECTED_PIDS) {
-		KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+		ExReleaseResourceLite(&g_ProtectedPidLock);
+		KeLeaveCriticalRegion();
 		return false;
 	}
 
 	g_ProtectedPids[g_ProtectedPidCount++] = Pid;
 
-	KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+	ExReleaseResourceLite(&g_ProtectedPidLock);
+	KeLeaveCriticalRegion();
 
 	DbgPrint("[DioProcess] Added PID %lu to HV protection list (count=%lu)\n", Pid, g_ProtectedPidCount);
 	return true;
@@ -117,8 +131,12 @@ bool HvAddProtectedPid(ULONG Pid)
 
 bool HvRemoveProtectedPid(ULONG Pid)
 {
-	KIRQL oldIrql;
-	KeAcquireSpinLock(&g_ProtectedPidLock, &oldIrql);
+	if (!g_ResourceInitialized)
+		return false;
+
+	// Use exclusive (write) lock
+	KeEnterCriticalRegion();
+	ExAcquireResourceExclusiveLite(&g_ProtectedPidLock, TRUE);
 
 	for (ULONG i = 0; i < g_ProtectedPidCount; i++) {
 		if (g_ProtectedPids[i] == Pid) {
@@ -127,22 +145,29 @@ bool HvRemoveProtectedPid(ULONG Pid)
 				g_ProtectedPids[j] = g_ProtectedPids[j + 1];
 			}
 			g_ProtectedPidCount--;
-			KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+			ExReleaseResourceLite(&g_ProtectedPidLock);
+			KeLeaveCriticalRegion();
 			DbgPrint("[DioProcess] Removed PID %lu from HV protection list (count=%lu)\n", Pid, g_ProtectedPidCount);
 			return true;
 		}
 	}
 
-	KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+	ExReleaseResourceLite(&g_ProtectedPidLock);
+	KeLeaveCriticalRegion();
 	return false;
 }
 
 ULONG HvGetProtectedPidCount()
 {
-	KIRQL oldIrql;
-	KeAcquireSpinLock(&g_ProtectedPidLock, &oldIrql);
+	if (!g_ResourceInitialized)
+		return 0;
+
+	// Use shared (read) lock
+	KeEnterCriticalRegion();
+	ExAcquireResourceSharedLite(&g_ProtectedPidLock, TRUE);
 	ULONG count = g_ProtectedPidCount;
-	KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+	ExReleaseResourceLite(&g_ProtectedPidLock);
+	KeLeaveCriticalRegion();
 	return count;
 }
 
@@ -151,14 +176,19 @@ NTSTATUS HvGetProtectedPidList(ULONG* PidBuffer, ULONG BufferSize, ULONG* Return
 	if (!PidBuffer || !ReturnedCount)
 		return STATUS_INVALID_PARAMETER;
 
-	KIRQL oldIrql;
-	KeAcquireSpinLock(&g_ProtectedPidLock, &oldIrql);
+	if (!g_ResourceInitialized)
+		return STATUS_UNSUCCESSFUL;
+
+	// Use shared (read) lock
+	KeEnterCriticalRegion();
+	ExAcquireResourceSharedLite(&g_ProtectedPidLock, TRUE);
 
 	ULONG copyCount = min(g_ProtectedPidCount, BufferSize / sizeof(ULONG));
 	RtlCopyMemory(PidBuffer, g_ProtectedPids, copyCount * sizeof(ULONG));
 	*ReturnedCount = copyCount;
 
-	KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+	ExReleaseResourceLite(&g_ProtectedPidLock);
+	KeLeaveCriticalRegion();
 	return STATUS_SUCCESS;
 }
 
@@ -167,8 +197,12 @@ NTSTATUS HvGetProtectedPidList(ULONG* PidBuffer, ULONG BufferSize, ULONG* Return
 // Internal version without logging (to avoid recursion/lock issues)
 static void HvRemoveProtectedPidInternal(ULONG Pid)
 {
-	KIRQL oldIrql;
-	KeAcquireSpinLock(&g_ProtectedPidLock, &oldIrql);
+	if (!g_ResourceInitialized)
+		return;
+
+	// Use exclusive (write) lock
+	KeEnterCriticalRegion();
+	ExAcquireResourceExclusiveLite(&g_ProtectedPidLock, TRUE);
 
 	for (ULONG i = 0; i < g_ProtectedPidCount; i++) {
 		if (g_ProtectedPids[i] == Pid) {
@@ -180,7 +214,8 @@ static void HvRemoveProtectedPidInternal(ULONG Pid)
 		}
 	}
 
-	KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+	ExReleaseResourceLite(&g_ProtectedPidLock);
+	KeLeaveCriticalRegion();
 }
 
 // Called when any process exits - removes dead PIDs from protection list
@@ -395,7 +430,13 @@ NTSTATUS HvStartHypervisor()
 	if (g_HvInitialized)
 		return STATUS_ALREADY_INITIALIZED;
 
-	KeInitializeSpinLock(&g_ProtectedPidLock);
+	// Initialize ERESOURCE (reader-writer lock)
+	NTSTATUS resStatus = ExInitializeResourceLite(&g_ProtectedPidLock);
+	if (!NT_SUCCESS(resStatus)) {
+		DbgPrint("[DioProcess] Failed to initialize ERESOURCE (0x%X)\n", resStatus);
+		return resStatus;
+	}
+	g_ResourceInitialized = true;
 
 	// Register process exit callback for auto-cleanup of dead PIDs
 	if (!g_ProcessCallbackRegistered) {
@@ -417,6 +458,11 @@ NTSTATUS HvStartHypervisor()
 		if (g_ProcessCallbackRegistered) {
 			PsSetCreateProcessNotifyRoutineEx(HvProcessNotifyCallback, TRUE);
 			g_ProcessCallbackRegistered = false;
+		}
+		// Delete ERESOURCE on failure
+		if (g_ResourceInitialized) {
+			ExDeleteResourceLite(&g_ProtectedPidLock);
+			g_ResourceInitialized = false;
 		}
 		return STATUS_HV_OPERATION_FAILED;
 	}
@@ -447,16 +493,26 @@ void HvStopHypervisor()
 		DbgPrint("[DioProcess] Process exit callback unregistered\n");
 	}
 
-	// Clear protected PID list
-	KIRQL oldIrql;
-	KeAcquireSpinLock(&g_ProtectedPidLock, &oldIrql);
-	g_ProtectedPidCount = 0;
-	RtlZeroMemory(g_ProtectedPids, sizeof(g_ProtectedPids));
-	KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+	// Clear protected PID list using ERESOURCE
+	if (g_ResourceInitialized) {
+		KeEnterCriticalRegion();
+		ExAcquireResourceExclusiveLite(&g_ProtectedPidLock, TRUE);
+		g_ProtectedPidCount = 0;
+		RtlZeroMemory(g_ProtectedPids, sizeof(g_ProtectedPids));
+		ExReleaseResourceLite(&g_ProtectedPidLock);
+		KeLeaveCriticalRegion();
+	}
 
 	// Stop hypervisor
 	hv::stop();
 	g_HvInitialized = false;
+
+	// Delete ERESOURCE after hypervisor is stopped
+	if (g_ResourceInitialized) {
+		ExDeleteResourceLite(&g_ProtectedPidLock);
+		g_ResourceInitialized = false;
+		DbgPrint("[DioProcess] ERESOURCE deleted\n");
+	}
 
 	DbgPrint("[DioProcess] Hypervisor stopped\n");
 }
