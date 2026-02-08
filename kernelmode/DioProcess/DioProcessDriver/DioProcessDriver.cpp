@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "DioProcessGlobals.h"
 #include "Locker.h"
+#include "Hypervisor/HvProtection.h"
 
 #pragma comment(lib, "aux_klib.lib")
 
@@ -50,6 +51,21 @@ NTSTATUS CompleteRequest(PIRP Irp, NTSTATUS status, ULONG_PTR info)
 void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 {
 	KdPrint((DRIVER_PREFIX "Unloading driver\n"));
+
+	// CRITICAL: Clean up hypervisor FIRST before anything else
+	// This must happen before callback unregistration to prevent BSOD
+	// (DRIVER_UNLOADED_WITHOUT_CANCELLING_PENDING_OPERATIONS)
+	if (HvAreHooksInstalled())
+	{
+		KdPrint((DRIVER_PREFIX "Removing hypervisor protection hooks...\n"));
+		HvRemoveProtectionHooks();
+	}
+	if (HvIsHypervisorRunning())
+	{
+		KdPrint((DRIVER_PREFIX "Stopping hypervisor...\n"));
+		HvStopHypervisor();
+	}
+	KdPrint((DRIVER_PREFIX "Hypervisor cleanup complete\n"));
 
 	// Unregister callbacks in reverse order if they were registered
 	if (g_CallbacksRegistered)
