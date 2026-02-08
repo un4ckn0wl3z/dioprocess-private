@@ -115,22 +115,30 @@ pub fn HypervisorTab() -> Element {
 
     rsx! {
         div {
-            style: "display: flex; flex-direction: column; flex: 1; overflow: hidden;",
+            class: "service-tab",
             tabindex: "0",
             onkeydown: handle_keydown,
             onclick: move |_| context_menu.set(HvContextMenuState::default()),
 
-            // Controls bar - Status and buttons
+            // Header
+            div { class: "header-box",
+                h1 { class: "header-title", "Hypervisor Control (Ring -1)" }
+                div { class: "header-stats",
+                    span {
+                        class: if driver_loaded { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
+                        if driver_loaded { "Driver: Loaded" } else { "Driver: Not Loaded" }
+                    }
+                    span {
+                        class: if current_status.is_running { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
+                        if current_status.is_running { "HV: Running" } else { "HV: Stopped" }
+                    }
+                    span { class: "header-shortcuts", "F5: Refresh | Esc: Close menu" }
+                }
+            }
+
+            // Controls bar - Hypervisor control buttons
             div { class: "controls",
-                // Status indicators
-                span {
-                    class: if driver_loaded { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
-                    if driver_loaded { "Driver: Loaded" } else { "Driver: Not Loaded" }
-                }
-                span {
-                    class: if current_status.is_running { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
-                    if current_status.is_running { "HV: Running" } else { "HV: Stopped" }
-                }
+                // Hooks status indicator
                 span {
                     class: if current_status.hooks_installed { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
                     if current_status.hooks_installed { "Hooks: Installed" } else { "Hooks: Not Installed" }
