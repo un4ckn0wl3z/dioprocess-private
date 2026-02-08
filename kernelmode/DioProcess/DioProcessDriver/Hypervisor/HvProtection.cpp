@@ -12,6 +12,7 @@ static ULONG g_ProtectedPidCount = 0;
 static KSPIN_LOCK g_ProtectedPidLock;
 static bool g_HvInitialized = false;
 static bool g_HooksInstalled = false;
+static bool g_ProcessCallbackRegistered = false;
 
 // Function pointers for hooked functions
 using fnObReferenceObjectByHandleWithTag = NTSTATUS(__stdcall*)(HANDLE Handle,
@@ -66,6 +67,7 @@ typedef struct _SYSTEM_PROCESS_INFORMATION {
 } SYSTEM_PROCESS_INFORMATION, *PSYSTEM_PROCESS_INFORMATION;
 
 #define SystemProcessInformation 5
+#define SystemExtendedProcessInformation 57
 
 // ============== Protected PID Management ==============
 
@@ -160,6 +162,48 @@ NTSTATUS HvGetProtectedPidList(ULONG* PidBuffer, ULONG BufferSize, ULONG* Return
 	return STATUS_SUCCESS;
 }
 
+// ============== Process Exit Callback (Auto-cleanup) ==============
+
+// Internal version without logging (to avoid recursion/lock issues)
+static void HvRemoveProtectedPidInternal(ULONG Pid)
+{
+	KIRQL oldIrql;
+	KeAcquireSpinLock(&g_ProtectedPidLock, &oldIrql);
+
+	for (ULONG i = 0; i < g_ProtectedPidCount; i++) {
+		if (g_ProtectedPids[i] == Pid) {
+			for (ULONG j = i; j < g_ProtectedPidCount - 1; j++) {
+				g_ProtectedPids[j] = g_ProtectedPids[j + 1];
+			}
+			g_ProtectedPidCount--;
+			break;
+		}
+	}
+
+	KeReleaseSpinLock(&g_ProtectedPidLock, oldIrql);
+}
+
+// Called when any process exits - removes dead PIDs from protection list
+static void HvProcessNotifyCallback(
+	PEPROCESS Process,
+	HANDLE ProcessId,
+	PPS_CREATE_NOTIFY_INFO CreateInfo)
+{
+	UNREFERENCED_PARAMETER(Process);
+
+	// Only care about process exit (CreateInfo == NULL)
+	if (CreateInfo != NULL)
+		return;
+
+	ULONG pid = (ULONG)(ULONG_PTR)ProcessId;
+
+	// Check if this PID was protected and remove it
+	if (HvIsProcessProtectedByPid(pid)) {
+		HvRemoveProtectedPidInternal(pid);
+		DbgPrint("[DioProcess] Auto-removed exited process PID %lu from HV protection\n", pid);
+	}
+}
+
 // ============== Hook Implementations ==============
 
 static uint8_t* FindObpReferenceObjectByHandleWithTag()
@@ -194,30 +238,58 @@ static NTSTATUS ObpReferenceObjectByHandleWithTagHook(HANDLE Handle, ACCESS_MASK
 }
 
 // Hook: Hide protected processes from NtQuerySystemInformation
+// Handles both SystemProcessInformation (5) and SystemExtendedProcessInformation (57)
+// Class 57 is used by Process Hacker and some other advanced tools
+// Note: Threads are embedded in process entries, so hiding a process also hides its threads
 static NTSTATUS NtQuerySystemInformationHook(ULONG SystemInformationClass,
 	PVOID SystemInformation, ULONG SystemInformationLength, PULONG ReturnLength)
 {
 	NTSTATUS stat = g_OriginalNtQuerySystemInformation(
 		SystemInformationClass, SystemInformation, SystemInformationLength, ReturnLength);
 
-	if (NT_SUCCESS(stat) && SystemInformationClass == SystemProcessInformation && SystemInformation) {
-		PSYSTEM_PROCESS_INFORMATION prev = (PSYSTEM_PROCESS_INFORMATION)SystemInformation;
-		PSYSTEM_PROCESS_INFORMATION curr = (PSYSTEM_PROCESS_INFORMATION)((PUCHAR)prev + prev->NextEntryOffset);
+	// Handle both class 5 (basic) and class 57 (extended) - same structure layout for our needs
+	if (NT_SUCCESS(stat) && SystemInformation &&
+		(SystemInformationClass == SystemProcessInformation ||
+		 SystemInformationClass == SystemExtendedProcessInformation)) {
 
-		while (prev->NextEntryOffset != 0) {
+		PSYSTEM_PROCESS_INFORMATION curr = (PSYSTEM_PROCESS_INFORMATION)SystemInformation;
+		PSYSTEM_PROCESS_INFORMATION prev = NULL;
+
+		while (curr) {
 			ULONG pid = (ULONG)(ULONG_PTR)curr->UniqueProcessId;
+			bool shouldHide = HvIsProcessProtectedByPid(pid);
 
-			if (HvIsProcessProtectedByPid(pid)) {
-				// Hide this process entry by skipping over it
-				if (curr->NextEntryOffset == 0)
+			if (shouldHide && prev == NULL) {
+				// First entry is protected - shift the entire buffer
+				// This is rare (first entry is usually System Idle Process)
+				if (curr->NextEntryOffset != 0) {
+					PSYSTEM_PROCESS_INFORMATION next = (PSYSTEM_PROCESS_INFORMATION)((PUCHAR)curr + curr->NextEntryOffset);
+					// Calculate remaining size and shift data
+					SIZE_T remainingSize = SystemInformationLength - curr->NextEntryOffset;
+					RtlMoveMemory(curr, next, remainingSize);
+					// Don't advance - recheck the new first entry
+					continue;
+				} else {
+					// Only one entry and it's protected - zero it out
+					RtlZeroMemory(curr, sizeof(SYSTEM_PROCESS_INFORMATION));
+					break;
+				}
+			} else if (shouldHide && prev != NULL) {
+				// Not first entry - skip over it by adjusting prev's NextEntryOffset
+				if (curr->NextEntryOffset == 0) {
 					prev->NextEntryOffset = 0;
-				else
+				} else {
 					prev->NextEntryOffset += curr->NextEntryOffset;
-				curr = prev;
+				}
+				// Don't update prev, recheck from same position
+				if (prev->NextEntryOffset == 0) break;
+				curr = (PSYSTEM_PROCESS_INFORMATION)((PUCHAR)prev + prev->NextEntryOffset);
+				continue;
 			}
 
+			// Move to next entry
 			prev = curr;
-			if (prev->NextEntryOffset == 0) break;
+			if (curr->NextEntryOffset == 0) break;
 			curr = (PSYSTEM_PROCESS_INFORMATION)((PUCHAR)curr + curr->NextEntryOffset);
 		}
 	}
@@ -325,10 +397,27 @@ NTSTATUS HvStartHypervisor()
 
 	KeInitializeSpinLock(&g_ProtectedPidLock);
 
+	// Register process exit callback for auto-cleanup of dead PIDs
+	if (!g_ProcessCallbackRegistered) {
+		NTSTATUS status = PsSetCreateProcessNotifyRoutineEx(HvProcessNotifyCallback, FALSE);
+		if (NT_SUCCESS(status)) {
+			g_ProcessCallbackRegistered = true;
+			DbgPrint("[DioProcess] Process exit callback registered\n");
+		} else {
+			DbgPrint("[DioProcess] Warning: Failed to register process callback (0x%X)\n", status);
+			// Continue anyway - this is not critical
+		}
+	}
+
 	DbgPrint("[DioProcess] Starting hypervisor...\n");
 
 	if (!hv::start()) {
 		DbgPrint("[DioProcess] Failed to virtualize system\n");
+		// Unregister callback on failure
+		if (g_ProcessCallbackRegistered) {
+			PsSetCreateProcessNotifyRoutineEx(HvProcessNotifyCallback, TRUE);
+			g_ProcessCallbackRegistered = false;
+		}
 		return STATUS_HV_OPERATION_FAILED;
 	}
 
@@ -350,6 +439,13 @@ void HvStopHypervisor()
 
 	// Remove hooks first
 	HvRemoveProtectionHooks();
+
+	// Unregister process exit callback
+	if (g_ProcessCallbackRegistered) {
+		PsSetCreateProcessNotifyRoutineEx(HvProcessNotifyCallback, TRUE);
+		g_ProcessCallbackRegistered = false;
+		DbgPrint("[DioProcess] Process exit callback unregistered\n");
+	}
 
 	// Clear protected PID list
 	KIRQL oldIrql;
