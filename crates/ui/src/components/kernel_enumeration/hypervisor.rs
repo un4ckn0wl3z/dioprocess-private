@@ -3,7 +3,7 @@
 //! Provides UI controls for managing the hypervisor and process protection.
 
 use callback::{
-    hv_clear_hidden_drivers, hv_hide_driver, hv_inject_shellcode, hv_install_hooks,
+    hv_clear_hidden_drivers, hv_hide_driver, hv_inject_dll, hv_inject_shellcode, hv_install_hooks,
     hv_list_hidden_drivers, hv_list_protected, hv_ping, hv_remove_hidden_driver, hv_remove_hooks,
     hv_start, hv_stop, hv_unprotect_process, is_driver_loaded, HvStatus,
 };
@@ -376,7 +376,7 @@ pub fn HypervisorTab() -> Element {
 
                 input {
                     r#type: "text",
-                    placeholder: "Shellcode file path...",
+                    placeholder: "Shellcode or DLL path...",
                     value: "{inject_shellcode_path}",
                     readonly: true,
                     style: "padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); width: 200px; font-family: monospace; font-size: 11px;",
@@ -388,9 +388,11 @@ pub fn HypervisorTab() -> Element {
                     onclick: move |_| {
                         spawn(async move {
                             let file = rfd::AsyncFileDialog::new()
+                                .add_filter("Shellcode/DLL", &["bin", "raw", "sc", "dll"])
                                 .add_filter("Shellcode", &["bin", "raw", "sc"])
+                                .add_filter("DLL", &["dll"])
                                 .add_filter("All files", &["*"])
-                                .set_title("Select Shellcode File")
+                                .set_title("Select Shellcode or DLL File")
                                 .pick_file()
                                 .await;
 
@@ -408,7 +410,7 @@ pub fn HypervisorTab() -> Element {
                     disabled: !driver_loaded || !current_status.is_running || inject_pid.read().is_empty() || inject_shellcode_path.read().is_empty(),
                     onclick: move |_| {
                         let pid_str = inject_pid.read().clone();
-                        let shellcode_path = inject_shellcode_path.read().clone();
+                        let file_path = inject_shellcode_path.read().clone();
 
                         // Parse PID
                         let pid = match pid_str.parse::<u32>() {
@@ -419,36 +421,60 @@ pub fn HypervisorTab() -> Element {
                             }
                         };
 
+                        // Detect file type by extension
+                        let is_dll = file_path.to_lowercase().ends_with(".dll");
+
                         spawn(async move {
-                            // Read shellcode from file
-                            let shellcode = match tokio::fs::read(&shellcode_path).await {
-                                Ok(data) => data,
-                                Err(e) => {
-                                    inject_result.set(Some(format!("Failed to read file: {}", e)));
-                                    return;
-                                }
-                            };
-
-                            if shellcode.is_empty() {
-                                inject_result.set(Some("Shellcode file is empty".to_string()));
-                                return;
-                            }
-
-                            match hv_inject_shellcode(pid, &shellcode) {
-                                Ok(result) => {
-                                    if result.success {
-                                        inject_result.set(Some(format!(
-                                            "Success! 0x{:X} ({} bytes via ring -1)",
-                                            result.allocated_address, result.bytes_written
-                                        )));
-                                        inject_pid.set(String::new());
-                                        inject_shellcode_path.set(String::new());
-                                    } else {
-                                        inject_result.set(Some("Injection failed".to_string()));
+                            if is_dll {
+                                // DLL injection via LoadLibraryW
+                                match hv_inject_dll(pid, &file_path) {
+                                    Ok(result) => {
+                                        if result.success {
+                                            inject_result.set(Some(format!(
+                                                "DLL injected! Path @ 0x{:X}",
+                                                result.path_address
+                                            )));
+                                            inject_pid.set(String::new());
+                                            inject_shellcode_path.set(String::new());
+                                        } else {
+                                            inject_result.set(Some("DLL injection failed".to_string()));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        inject_result.set(Some(format!("Error: {}", e)));
                                     }
                                 }
-                                Err(e) => {
-                                    inject_result.set(Some(format!("Error: {}", e)));
+                            } else {
+                                // Shellcode injection
+                                let shellcode = match tokio::fs::read(&file_path).await {
+                                    Ok(data) => data,
+                                    Err(e) => {
+                                        inject_result.set(Some(format!("Failed to read file: {}", e)));
+                                        return;
+                                    }
+                                };
+
+                                if shellcode.is_empty() {
+                                    inject_result.set(Some("Shellcode file is empty".to_string()));
+                                    return;
+                                }
+
+                                match hv_inject_shellcode(pid, &shellcode) {
+                                    Ok(result) => {
+                                        if result.success {
+                                            inject_result.set(Some(format!(
+                                                "Success! 0x{:X} ({} bytes)",
+                                                result.allocated_address, result.bytes_written
+                                            )));
+                                            inject_pid.set(String::new());
+                                            inject_shellcode_path.set(String::new());
+                                        } else {
+                                            inject_result.set(Some("Injection failed".to_string()));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        inject_result.set(Some(format!("Error: {}", e)));
+                                    }
                                 }
                             }
                             spawn(async move {
@@ -462,7 +488,7 @@ pub fn HypervisorTab() -> Element {
 
                 if let Some(ref result) = *inject_result.read() {
                     span {
-                        class: if result.starts_with("Success") { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
+                        class: if result.starts_with("Success") || result.starts_with("DLL") { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
                         style: "font-family: monospace;",
                         "{result}"
                     }
@@ -472,7 +498,7 @@ pub fn HypervisorTab() -> Element {
 
                 span {
                     style: "font-size: 11px; color: var(--text-secondary);",
-                    "Bypasses ring 0 protections"
+                    ".dll = LoadLibraryW | .bin/.raw/.sc = shellcode"
                 }
             }
 

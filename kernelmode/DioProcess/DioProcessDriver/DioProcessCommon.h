@@ -224,6 +224,9 @@ struct EventData
 #define IOCTL_DIOPROCESS_HV_INJECT_SHELLCODE \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x840, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+#define IOCTL_DIOPROCESS_HV_INJECT_DLL \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x841, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct CollectionStateResponse
 {
 	BOOLEAN IsCollecting;
@@ -482,5 +485,22 @@ struct HvInjectShellcodeResponse
 {
 	ULONG64 AllocatedAddress;                     // Where shellcode was written
 	ULONG64 BytesWritten;                         // Bytes actually written via ring -1
+	BOOLEAN Success;
+};
+
+// Request for HV_INJECT_DLL
+// Ring -1 injection: writes DLL path via hypervisor, calls LoadLibraryW
+struct HvInjectDllRequest
+{
+	ULONG TargetProcessId;                        // Target process PID
+	ULONG PathLength;                             // Length of DLL path in bytes (including null)
+	WCHAR DllPath[1];                             // Variable length wide string path
+};
+
+// Response for HV_INJECT_DLL
+struct HvInjectDllResponse
+{
+	ULONG64 ModuleBase;                           // Base address of loaded DLL (0 if failed)
+	ULONG64 PathAddress;                          // Where path was written
 	BOOLEAN Success;
 };
