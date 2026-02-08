@@ -7,8 +7,16 @@ use callback::{
     hv_stop, hv_unprotect_process, is_driver_loaded, HvStatus,
 };
 use dioxus::prelude::*;
+use std::collections::HashMap;
 
 use crate::helpers::copy_to_clipboard;
+
+/// Protected process info (PID + name)
+#[derive(Clone, Debug)]
+struct ProtectedProcess {
+    pid: u32,
+    name: String,
+}
 
 /// Context menu state for protected processes table
 #[derive(Clone, Debug, Default)]
@@ -17,13 +25,14 @@ struct HvContextMenuState {
     x: i32,
     y: i32,
     pid: u32,
+    name: String,
 }
 
 /// Hypervisor control component
 #[component]
 pub fn HypervisorTab() -> Element {
     let mut status = use_signal(|| HvStatus::default());
-    let mut protected_pids = use_signal(Vec::<u32>::new);
+    let mut protected_processes = use_signal(Vec::<ProtectedProcess>::new);
     let mut status_message = use_signal(String::new);
     let mut context_menu = use_signal(HvContextMenuState::default);
     let mut selected_pid = use_signal(|| None::<u32>);
@@ -33,7 +42,7 @@ pub fn HypervisorTab() -> Element {
     let mut refresh_status = move || {
         if !driver_loaded {
             status.set(HvStatus::default());
-            protected_pids.set(Vec::new());
+            protected_processes.set(Vec::new());
             return;
         }
 
@@ -42,15 +51,30 @@ pub fn HypervisorTab() -> Element {
                 status.set(s.clone());
                 if s.is_running {
                     if let Ok(pids) = hv_list_protected() {
-                        protected_pids.set(pids);
+                        // Build PID -> Name map from current processes
+                        let all_procs = process::get_processes();
+                        let name_map: HashMap<u32, String> = all_procs
+                            .into_iter()
+                            .map(|p| (p.pid, p.name))
+                            .collect();
+
+                        // Convert PIDs to ProtectedProcess with names
+                        let procs: Vec<ProtectedProcess> = pids
+                            .into_iter()
+                            .map(|pid| ProtectedProcess {
+                                pid,
+                                name: name_map.get(&pid).cloned().unwrap_or_else(|| "<exited>".to_string()),
+                            })
+                            .collect();
+                        protected_processes.set(procs);
                     }
                 } else {
-                    protected_pids.set(Vec::new());
+                    protected_processes.set(Vec::new());
                 }
             }
             Err(_) => {
                 status.set(HvStatus::default());
-                protected_pids.set(Vec::new());
+                protected_processes.set(Vec::new());
             }
         }
     };
@@ -70,7 +94,7 @@ pub fn HypervisorTab() -> Element {
     };
 
     let current_status = status.read();
-    let pids = protected_pids.read().clone();
+    let procs = protected_processes.read().clone();
     let ctx_menu = context_menu.read().clone();
     let msg = status_message.read().clone();
 
@@ -210,6 +234,7 @@ pub fn HypervisorTab() -> Element {
                     thead { class: "table-header",
                         tr {
                             th { class: "th", "PID" }
+                            th { class: "th", "Name" }
                             th { class: "th", "Status" }
                             th { class: "th", "Actions" }
                         }
@@ -218,7 +243,7 @@ pub fn HypervisorTab() -> Element {
                     tbody {
                         if !current_status.is_running {
                             tr {
-                                td { colspan: "3", class: "no-results",
+                                td { colspan: "4", class: "no-results",
                                     if driver_loaded {
                                         "Hypervisor not running. Click 'Start HV' to virtualize the system."
                                     } else {
@@ -228,20 +253,22 @@ pub fn HypervisorTab() -> Element {
                             }
                         } else if !current_status.hooks_installed {
                             tr {
-                                td { colspan: "3", class: "no-results",
+                                td { colspan: "4", class: "no-results",
                                     "Hooks not installed. Click 'Install Hooks' to enable process protection."
                                 }
                             }
-                        } else if pids.is_empty() {
+                        } else if procs.is_empty() {
                             tr {
-                                td { colspan: "3", class: "no-results",
+                                td { colspan: "4", class: "no-results",
                                     "No processes are hidden. Right-click a process in the Process tab and select 'HV Hide Process'."
                                 }
                             }
                         } else {
-                            for pid in pids.iter() {
+                            for proc in procs.iter() {
                                 {
-                                    let pid_val = *pid;
+                                    let pid_val = proc.pid;
+                                    let proc_name = proc.name.clone();
+                                    let proc_name_ctx = proc.name.clone();
                                     rsx! {
                                         tr {
                                             key: "{pid_val}",
@@ -254,18 +281,23 @@ pub fn HypervisorTab() -> Element {
                                                     selected_pid.set(Some(pid_val));
                                                 }
                                             },
-                                            oncontextmenu: move |e| {
-                                                e.prevent_default();
-                                                selected_pid.set(Some(pid_val));
-                                                context_menu.set(HvContextMenuState {
-                                                    visible: true,
-                                                    x: e.page_coordinates().x as i32,
-                                                    y: e.page_coordinates().y as i32,
-                                                    pid: pid_val,
-                                                });
+                                            oncontextmenu: {
+                                                let name_for_ctx = proc_name_ctx.clone();
+                                                move |e: MouseEvent| {
+                                                    e.prevent_default();
+                                                    selected_pid.set(Some(pid_val));
+                                                    context_menu.set(HvContextMenuState {
+                                                        visible: true,
+                                                        x: e.page_coordinates().x as i32,
+                                                        y: e.page_coordinates().y as i32,
+                                                        pid: pid_val,
+                                                        name: name_for_ctx.clone(),
+                                                    });
+                                                }
                                             },
 
                                             td { class: "cell mono", "{pid_val}" }
+                                            td { class: "cell", "{proc_name}" }
                                             td { class: "cell",
                                                 span { class: "cpu-low", style: "font-weight: 600;", "Hidden" }
                                             }
@@ -328,6 +360,17 @@ pub fn HypervisorTab() -> Element {
                             context_menu.set(HvContextMenuState::default());
                         },
                         "Copy PID"
+                    }
+                    button {
+                        class: "context-menu-item",
+                        onclick: {
+                            let name = ctx_menu.name.clone();
+                            move |_| {
+                                copy_to_clipboard(&name);
+                                context_menu.set(HvContextMenuState::default());
+                            }
+                        },
+                        "Copy Name"
                     }
                     button {
                         class: "context-menu-item",
