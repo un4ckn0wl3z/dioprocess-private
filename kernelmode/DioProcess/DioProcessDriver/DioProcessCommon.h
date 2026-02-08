@@ -204,10 +204,46 @@ struct EventData
 #define IOCTL_DIOPROCESS_HV_LIST_PROTECTED \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x833, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// ============== Hypervisor Driver Hiding IOCTLs ==============
+
+#define IOCTL_DIOPROCESS_HV_HIDE_DRIVER \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x834, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_UNHIDE_DRIVER \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x835, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_IS_DRIVER_HIDDEN \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x836, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_REMOVE_HIDDEN_DRIVER \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x837, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_CLEAR_HIDDEN_DRIVERS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x838, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_LIST_HIDDEN_DRIVERS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x839, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct CollectionStateResponse
 {
 	BOOLEAN IsCollecting;
 	ULONG ItemCount;
+};
+
+// ============== Driver Hiding Structures ==============
+
+#define MAX_HIDDEN_DRIVERS 16
+
+struct HideDriverRequest
+{
+	CHAR DriverName[64];  // Driver filename to hide (e.g., "dpdrv.sys")
+};
+
+struct DriverHiddenResponse
+{
+	BOOLEAN IsHidden;
+	ULONG HiddenCount;
+};
+
+struct HiddenDriverListResponse
+{
+	ULONG Count;
+	CHAR DriverNames[MAX_HIDDEN_DRIVERS][64];
 };
 
 // ============== Process Security Structures ==============

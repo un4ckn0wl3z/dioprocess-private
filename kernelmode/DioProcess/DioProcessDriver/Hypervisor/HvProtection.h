@@ -43,3 +43,28 @@ ULONG HvGetProtectedPidCount();
 // BufferSize: size of buffer in bytes
 // ReturnedCount: number of PIDs returned
 NTSTATUS HvGetProtectedPidList(ULONG* PidBuffer, ULONG BufferSize, ULONG* ReturnedCount);
+
+// ============== Driver Hiding ==============
+
+// Add a driver to the hidden list
+bool HvAddHiddenDriver(const char* driverName);
+
+// Remove a driver from the hidden list
+bool HvRemoveHiddenDriver(const char* driverName);
+
+// Clear all hidden drivers
+void HvClearHiddenDrivers();
+
+// Get count of hidden drivers
+ULONG HvGetHiddenDriverCount();
+
+// Get list of hidden drivers
+// buffer: output buffer (array of char[64])
+// bufferSize: size of buffer in bytes
+// returnedCount: number of drivers returned
+NTSTATUS HvGetHiddenDriverList(char* buffer, ULONG bufferSize, ULONG* returnedCount);
+
+// Legacy compatibility
+bool HvEnableDriverHiding(const char* driverName);
+void HvDisableDriverHiding();
+bool HvIsDriverHidingEnabled();

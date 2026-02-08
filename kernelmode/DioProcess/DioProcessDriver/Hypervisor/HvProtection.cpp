@@ -68,7 +68,33 @@ typedef struct _SYSTEM_PROCESS_INFORMATION {
 } SYSTEM_PROCESS_INFORMATION, *PSYSTEM_PROCESS_INFORMATION;
 
 #define SystemProcessInformation 5
+#define SystemModuleInformation 11
 #define SystemExtendedProcessInformation 57
+
+// ============== RTL_PROCESS_MODULES for driver hiding ==============
+
+typedef struct _RTL_PROCESS_MODULE_INFORMATION {
+	HANDLE Section;
+	PVOID MappedBase;
+	PVOID ImageBase;
+	ULONG ImageSize;
+	ULONG Flags;
+	USHORT LoadOrderIndex;
+	USHORT InitOrderIndex;
+	USHORT LoadCount;
+	USHORT OffsetToFileName;
+	UCHAR FullPathName[256];
+} RTL_PROCESS_MODULE_INFORMATION, *PRTL_PROCESS_MODULE_INFORMATION;
+
+typedef struct _RTL_PROCESS_MODULES {
+	ULONG NumberOfModules;
+	RTL_PROCESS_MODULE_INFORMATION Modules[1];
+} RTL_PROCESS_MODULES, *PRTL_PROCESS_MODULES;
+
+// Driver hiding configuration - supports multiple drivers
+#define MAX_HIDDEN_DRIVERS 16
+static char g_HiddenDriverNames[MAX_HIDDEN_DRIVERS][64] = { 0 };
+static ULONG g_HiddenDriverCount = 0;
 
 // ============== Protected PID Management ==============
 
@@ -218,6 +244,105 @@ static void HvRemoveProtectedPidInternal(ULONG Pid)
 	KeLeaveCriticalRegion();
 }
 
+// ============== Driver Hiding Control ==============
+
+// Check if a driver name is in the hidden list
+static bool IsDriverInHiddenList(const char* driverName)
+{
+	for (ULONG i = 0; i < g_HiddenDriverCount; i++) {
+		if (_stricmp(g_HiddenDriverNames[i], driverName) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool HvAddHiddenDriver(const char* driverName)
+{
+	if (!driverName || strlen(driverName) == 0 || strlen(driverName) >= 64)
+		return false;
+
+	// Check if already in list
+	if (IsDriverInHiddenList(driverName))
+		return true;
+
+	// Check if list is full
+	if (g_HiddenDriverCount >= MAX_HIDDEN_DRIVERS)
+		return false;
+
+	// Add to list
+	RtlZeroMemory(g_HiddenDriverNames[g_HiddenDriverCount], 64);
+	RtlCopyMemory(g_HiddenDriverNames[g_HiddenDriverCount], driverName, strlen(driverName));
+	g_HiddenDriverCount++;
+
+	DbgPrint("[DioProcess] Added driver to hide list: %s (count=%lu)\n", driverName, g_HiddenDriverCount);
+	return true;
+}
+
+bool HvRemoveHiddenDriver(const char* driverName)
+{
+	if (!driverName || strlen(driverName) == 0)
+		return false;
+
+	for (ULONG i = 0; i < g_HiddenDriverCount; i++) {
+		if (_stricmp(g_HiddenDriverNames[i], driverName) == 0) {
+			// Shift remaining entries
+			for (ULONG j = i; j < g_HiddenDriverCount - 1; j++) {
+				RtlCopyMemory(g_HiddenDriverNames[j], g_HiddenDriverNames[j + 1], 64);
+			}
+			RtlZeroMemory(g_HiddenDriverNames[g_HiddenDriverCount - 1], 64);
+			g_HiddenDriverCount--;
+			DbgPrint("[DioProcess] Removed driver from hide list: %s (count=%lu)\n", driverName, g_HiddenDriverCount);
+			return true;
+		}
+	}
+	return false;
+}
+
+void HvClearHiddenDrivers()
+{
+	RtlZeroMemory(g_HiddenDriverNames, sizeof(g_HiddenDriverNames));
+	g_HiddenDriverCount = 0;
+	DbgPrint("[DioProcess] Cleared all hidden drivers\n");
+}
+
+ULONG HvGetHiddenDriverCount()
+{
+	return g_HiddenDriverCount;
+}
+
+NTSTATUS HvGetHiddenDriverList(char* buffer, ULONG bufferSize, ULONG* returnedCount)
+{
+	if (!buffer || !returnedCount)
+		return STATUS_INVALID_PARAMETER;
+
+	ULONG maxEntries = bufferSize / 64;
+	ULONG copyCount = min(g_HiddenDriverCount, maxEntries);
+
+	for (ULONG i = 0; i < copyCount; i++) {
+		RtlCopyMemory(buffer + (i * 64), g_HiddenDriverNames[i], 64);
+	}
+
+	*returnedCount = copyCount;
+	return STATUS_SUCCESS;
+}
+
+// Legacy compatibility
+bool HvEnableDriverHiding(const char* driverName)
+{
+	return HvAddHiddenDriver(driverName);
+}
+
+void HvDisableDriverHiding()
+{
+	HvClearHiddenDrivers();
+}
+
+bool HvIsDriverHidingEnabled()
+{
+	return g_HiddenDriverCount > 0;
+}
+
 // Called when any process exits - removes dead PIDs from protection list
 static void HvProcessNotifyCallback(
 	PEPROCESS Process,
@@ -272,20 +397,53 @@ static NTSTATUS ObpReferenceObjectByHandleWithTagHook(HANDLE Handle, ACCESS_MASK
 		Handle, DesiredAccess, ObjectType, AccessMode, Tag, Object, HandleInformation, a0);
 }
 
-// Hook: Hide protected processes from NtQuerySystemInformation
-// Handles both SystemProcessInformation (5) and SystemExtendedProcessInformation (57)
-// Class 57 is used by Process Hacker and some other advanced tools
-// Note: Threads are embedded in process entries, so hiding a process also hides its threads
+// Helper: Case-insensitive substring search
+static bool ContainsStringInsensitive(const char* haystack, const char* needle)
+{
+	if (!haystack || !needle || needle[0] == '\0')
+		return false;
+
+	size_t haystackLen = strlen(haystack);
+	size_t needleLen = strlen(needle);
+
+	if (needleLen > haystackLen)
+		return false;
+
+	for (size_t i = 0; i <= haystackLen - needleLen; i++) {
+		bool match = true;
+		for (size_t j = 0; j < needleLen; j++) {
+			char h = haystack[i + j];
+			char n = needle[j];
+			// Convert to lowercase
+			if (h >= 'A' && h <= 'Z') h += 32;
+			if (n >= 'A' && n <= 'Z') n += 32;
+			if (h != n) {
+				match = false;
+				break;
+			}
+		}
+		if (match) return true;
+	}
+	return false;
+}
+
+// Hook: Hide protected processes and drivers from NtQuerySystemInformation
+// Handles:
+//   - Class 5 (SystemProcessInformation) - process hiding
+//   - Class 57 (SystemExtendedProcessInformation) - process hiding (Process Hacker)
+//   - Class 11 (SystemModuleInformation) - driver hiding
 static NTSTATUS NtQuerySystemInformationHook(ULONG SystemInformationClass,
 	PVOID SystemInformation, ULONG SystemInformationLength, PULONG ReturnLength)
 {
 	NTSTATUS stat = g_OriginalNtQuerySystemInformation(
 		SystemInformationClass, SystemInformation, SystemInformationLength, ReturnLength);
 
-	// Handle both class 5 (basic) and class 57 (extended) - same structure layout for our needs
-	if (NT_SUCCESS(stat) && SystemInformation &&
-		(SystemInformationClass == SystemProcessInformation ||
-		 SystemInformationClass == SystemExtendedProcessInformation)) {
+	if (!NT_SUCCESS(stat) || !SystemInformation)
+		return stat;
+
+	// ============== Process Hiding (Class 5, 57) ==============
+	if (SystemInformationClass == SystemProcessInformation ||
+		SystemInformationClass == SystemExtendedProcessInformation) {
 
 		PSYSTEM_PROCESS_INFORMATION curr = (PSYSTEM_PROCESS_INFORMATION)SystemInformation;
 		PSYSTEM_PROCESS_INFORMATION prev = NULL;
@@ -296,38 +454,70 @@ static NTSTATUS NtQuerySystemInformationHook(ULONG SystemInformationClass,
 
 			if (shouldHide && prev == NULL) {
 				// First entry is protected - shift the entire buffer
-				// This is rare (first entry is usually System Idle Process)
 				if (curr->NextEntryOffset != 0) {
 					PSYSTEM_PROCESS_INFORMATION next = (PSYSTEM_PROCESS_INFORMATION)((PUCHAR)curr + curr->NextEntryOffset);
-					// Calculate remaining size and shift data
 					SIZE_T remainingSize = SystemInformationLength - curr->NextEntryOffset;
 					RtlMoveMemory(curr, next, remainingSize);
-					// Don't advance - recheck the new first entry
 					continue;
 				} else {
-					// Only one entry and it's protected - zero it out
 					RtlZeroMemory(curr, sizeof(SYSTEM_PROCESS_INFORMATION));
 					break;
 				}
 			} else if (shouldHide && prev != NULL) {
-				// Not first entry - skip over it by adjusting prev's NextEntryOffset
 				if (curr->NextEntryOffset == 0) {
 					prev->NextEntryOffset = 0;
 				} else {
 					prev->NextEntryOffset += curr->NextEntryOffset;
 				}
-				// Don't update prev, recheck from same position
 				if (prev->NextEntryOffset == 0) break;
 				curr = (PSYSTEM_PROCESS_INFORMATION)((PUCHAR)prev + prev->NextEntryOffset);
 				continue;
 			}
 
-			// Move to next entry
 			prev = curr;
 			if (curr->NextEntryOffset == 0) break;
 			curr = (PSYSTEM_PROCESS_INFORMATION)((PUCHAR)curr + curr->NextEntryOffset);
 		}
 	}
+
+	// ============== Driver Hiding (Class 11) ==============
+	if (SystemInformationClass == SystemModuleInformation && g_HiddenDriverCount > 0) {
+		PRTL_PROCESS_MODULES modules = (PRTL_PROCESS_MODULES)SystemInformation;
+
+		if (modules->NumberOfModules > 0) {
+			ULONG writeIndex = 0;
+
+			for (ULONG i = 0; i < modules->NumberOfModules; i++) {
+				// Get filename from full path
+				const char* fullPath = (const char*)modules->Modules[i].FullPathName;
+				const char* fileName = fullPath + modules->Modules[i].OffsetToFileName;
+
+				// Check if this driver should be hidden (check against all hidden drivers)
+				bool shouldHide = false;
+				for (ULONG j = 0; j < g_HiddenDriverCount; j++) {
+					if (ContainsStringInsensitive(fileName, g_HiddenDriverNames[j])) {
+						DbgPrint("[DioProcess] Hiding driver: %s\n", fileName);
+						shouldHide = true;
+						break;
+					}
+				}
+
+				if (shouldHide)
+					continue;  // Skip this entry
+
+				// Keep this entry - copy if needed
+				if (writeIndex != i) {
+					RtlCopyMemory(&modules->Modules[writeIndex], &modules->Modules[i],
+						sizeof(RTL_PROCESS_MODULE_INFORMATION));
+				}
+				writeIndex++;
+			}
+
+			// Update module count
+			modules->NumberOfModules = writeIndex;
+		}
+	}
+
 	return stat;
 }
 

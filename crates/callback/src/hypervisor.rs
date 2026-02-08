@@ -31,6 +31,14 @@ const IOCTL_DIOPROCESS_HV_PROTECT_PROCESS: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0
 const IOCTL_DIOPROCESS_HV_UNPROTECT_PROCESS: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x831, METHOD_BUFFERED, FILE_ANY_ACCESS);
 const IOCTL_DIOPROCESS_HV_IS_PROCESS_PROTECTED: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x832, METHOD_BUFFERED, FILE_ANY_ACCESS);
 const IOCTL_DIOPROCESS_HV_LIST_PROTECTED: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x833, METHOD_BUFFERED, FILE_ANY_ACCESS);
+const IOCTL_DIOPROCESS_HV_HIDE_DRIVER: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x834, METHOD_BUFFERED, FILE_ANY_ACCESS);
+const IOCTL_DIOPROCESS_HV_UNHIDE_DRIVER: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x835, METHOD_BUFFERED, FILE_ANY_ACCESS);
+const IOCTL_DIOPROCESS_HV_IS_DRIVER_HIDDEN: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x836, METHOD_BUFFERED, FILE_ANY_ACCESS);
+const IOCTL_DIOPROCESS_HV_REMOVE_HIDDEN_DRIVER: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x837, METHOD_BUFFERED, FILE_ANY_ACCESS);
+const IOCTL_DIOPROCESS_HV_CLEAR_HIDDEN_DRIVERS: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x838, METHOD_BUFFERED, FILE_ANY_ACCESS);
+const IOCTL_DIOPROCESS_HV_LIST_HIDDEN_DRIVERS: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x839, METHOD_BUFFERED, FILE_ANY_ACCESS);
+
+const MAX_HIDDEN_DRIVERS: usize = 16;
 
 const MAX_HV_PROTECTED_PIDS: usize = 64;
 
@@ -371,6 +379,227 @@ pub fn hv_list_protected() -> Result<Vec<u32>, CallbackError> {
     if result.is_ok() {
         let count = response.count as usize;
         Ok(response.pids[..count].to_vec())
+    } else {
+        Err(CallbackError::IoctlFailed(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32))
+    }
+}
+
+// ============== Driver Hiding Functions ==============
+
+/// Request to hide a driver
+#[repr(C)]
+struct HideDriverRequest {
+    driver_name: [u8; 64],
+}
+
+/// Response for driver hidden status
+#[repr(C)]
+struct DriverHiddenResponse {
+    is_hidden: u8, // BOOLEAN
+    hidden_count: u32,
+}
+
+/// Response for listing hidden drivers
+#[repr(C)]
+struct HiddenDriverListResponse {
+    count: u32,
+    driver_names: [[u8; 64]; MAX_HIDDEN_DRIVERS],
+}
+
+/// Enable driver hiding for a specific driver
+/// The driver will be hidden from SystemModuleInformation enumeration
+pub fn hv_hide_driver(driver_name: &str) -> Result<(), CallbackError> {
+    let handle = open_driver()?;
+
+    let mut request = HideDriverRequest {
+        driver_name: [0; 64],
+    };
+
+    // Copy driver name (truncate if too long)
+    let bytes = driver_name.as_bytes();
+    let len = bytes.len().min(63);
+    request.driver_name[..len].copy_from_slice(&bytes[..len]);
+
+    let mut bytes_returned: u32 = 0;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_HV_HIDE_DRIVER,
+            Some(&request as *const _ as *const c_void),
+            size_of::<HideDriverRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+
+    unsafe { let _ = CloseHandle(handle); }
+
+    if result.is_ok() {
+        Ok(())
+    } else {
+        Err(CallbackError::IoctlFailed(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32))
+    }
+}
+
+/// Disable driver hiding
+pub fn hv_unhide_driver() -> Result<(), CallbackError> {
+    let handle = open_driver()?;
+
+    let mut bytes_returned: u32 = 0;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_HV_UNHIDE_DRIVER,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+
+    unsafe { let _ = CloseHandle(handle); }
+
+    if result.is_ok() {
+        Ok(())
+    } else {
+        Err(CallbackError::IoctlFailed(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32))
+    }
+}
+
+/// Check if driver hiding is enabled and get count
+pub fn hv_is_driver_hidden() -> Result<(bool, u32), CallbackError> {
+    let handle = open_driver()?;
+
+    let mut response = DriverHiddenResponse { is_hidden: 0, hidden_count: 0 };
+    let mut bytes_returned: u32 = 0;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_HV_IS_DRIVER_HIDDEN,
+            None,
+            0,
+            Some(&mut response as *mut _ as *mut c_void),
+            size_of::<DriverHiddenResponse>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+
+    unsafe { let _ = CloseHandle(handle); }
+
+    if result.is_ok() {
+        Ok((response.is_hidden != 0, response.hidden_count))
+    } else {
+        Err(CallbackError::IoctlFailed(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32))
+    }
+}
+
+/// Remove a specific driver from the hidden list
+pub fn hv_remove_hidden_driver(driver_name: &str) -> Result<(), CallbackError> {
+    let handle = open_driver()?;
+
+    let mut request = HideDriverRequest {
+        driver_name: [0; 64],
+    };
+
+    let bytes = driver_name.as_bytes();
+    let len = bytes.len().min(63);
+    request.driver_name[..len].copy_from_slice(&bytes[..len]);
+
+    let mut bytes_returned: u32 = 0;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_HV_REMOVE_HIDDEN_DRIVER,
+            Some(&request as *const _ as *const c_void),
+            size_of::<HideDriverRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+
+    unsafe { let _ = CloseHandle(handle); }
+
+    if result.is_ok() {
+        Ok(())
+    } else {
+        Err(CallbackError::IoctlFailed(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32))
+    }
+}
+
+/// Clear all hidden drivers
+pub fn hv_clear_hidden_drivers() -> Result<(), CallbackError> {
+    let handle = open_driver()?;
+
+    let mut bytes_returned: u32 = 0;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_HV_CLEAR_HIDDEN_DRIVERS,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+
+    unsafe { let _ = CloseHandle(handle); }
+
+    if result.is_ok() {
+        Ok(())
+    } else {
+        Err(CallbackError::IoctlFailed(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32))
+    }
+}
+
+/// Get list of all hidden drivers
+pub fn hv_list_hidden_drivers() -> Result<Vec<String>, CallbackError> {
+    let handle = open_driver()?;
+
+    let mut response = HiddenDriverListResponse {
+        count: 0,
+        driver_names: [[0; 64]; MAX_HIDDEN_DRIVERS],
+    };
+    let mut bytes_returned: u32 = 0;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_HV_LIST_HIDDEN_DRIVERS,
+            None,
+            0,
+            Some(&mut response as *mut _ as *mut c_void),
+            size_of::<HiddenDriverListResponse>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+
+    unsafe { let _ = CloseHandle(handle); }
+
+    if result.is_ok() {
+        let mut drivers = Vec::new();
+        for i in 0..response.count as usize {
+            let name_bytes = &response.driver_names[i];
+            let len = name_bytes.iter().position(|&b| b == 0).unwrap_or(64);
+            if let Ok(name) = std::str::from_utf8(&name_bytes[..len]) {
+                drivers.push(name.to_string());
+            }
+        }
+        Ok(drivers)
     } else {
         Err(CallbackError::IoctlFailed(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32))
     }

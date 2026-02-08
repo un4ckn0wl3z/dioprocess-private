@@ -126,6 +126,31 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleHvListProtected(Irp, irpSp, &info);
 		break;
 
+	// Hypervisor Driver Hiding IOCTLs
+	case IOCTL_DIOPROCESS_HV_HIDE_DRIVER:
+		status = HandleHvHideDriver(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_UNHIDE_DRIVER:
+		status = HandleHvUnhideDriver(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_IS_DRIVER_HIDDEN:
+		status = HandleHvIsDriverHidden(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_REMOVE_HIDDEN_DRIVER:
+		status = HandleHvRemoveHiddenDriver(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_CLEAR_HIDDEN_DRIVERS:
+		status = HandleHvClearHiddenDrivers(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_LIST_HIDDEN_DRIVERS:
+		status = HandleHvListHiddenDrivers(Irp, irpSp, &info);
+		break;
+
 	default:
 		status = STATUS_INVALID_DEVICE_REQUEST;
 		break;
@@ -1562,6 +1587,140 @@ NTSTATUS HandleHvListProtected(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR in
 	response->Count = returnedCount;
 
 	*info = sizeof(HvListProtectedResponse);
+
+	return status;
+}
+
+// ============== Hypervisor Driver Hiding Handlers ==============
+
+NTSTATUS HandleHvHideDriver(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(info);
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+
+	if (inputLen < sizeof(HideDriverRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HideDriverRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Ensure null-terminated
+	request->DriverName[sizeof(request->DriverName) - 1] = '\0';
+
+	if (strlen(request->DriverName) == 0)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	if (!HvEnableDriverHiding(request->DriverName))
+	{
+		return STATUS_UNSUCCESSFUL;
+	}
+
+	KdPrint((DRIVER_PREFIX "Driver hiding enabled for: %s\n", request->DriverName));
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleHvUnhideDriver(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+	UNREFERENCED_PARAMETER(info);
+
+	HvDisableDriverHiding();
+	KdPrint((DRIVER_PREFIX "Driver hiding disabled\n"));
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleHvIsDriverHidden(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (outputLen < sizeof(DriverHiddenResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto response = (DriverHiddenResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	response->IsHidden = HvIsDriverHidingEnabled();
+	response->HiddenCount = HvGetHiddenDriverCount();
+	*info = sizeof(DriverHiddenResponse);
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleHvRemoveHiddenDriver(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(info);
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+
+	if (inputLen < sizeof(HideDriverRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HideDriverRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	request->DriverName[sizeof(request->DriverName) - 1] = '\0';
+
+	if (!HvRemoveHiddenDriver(request->DriverName))
+	{
+		return STATUS_NOT_FOUND;
+	}
+
+	KdPrint((DRIVER_PREFIX "Removed hidden driver: %s\n", request->DriverName));
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleHvClearHiddenDrivers(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+	UNREFERENCED_PARAMETER(info);
+
+	HvClearHiddenDrivers();
+	KdPrint((DRIVER_PREFIX "Cleared all hidden drivers\n"));
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleHvListHiddenDrivers(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (outputLen < sizeof(HiddenDriverListResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto response = (HiddenDriverListResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	RtlZeroMemory(response, sizeof(HiddenDriverListResponse));
+
+	ULONG returnedCount = 0;
+	NTSTATUS status = HvGetHiddenDriverList((char*)response->DriverNames, sizeof(response->DriverNames), &returnedCount);
+	response->Count = returnedCount;
+
+	*info = sizeof(HiddenDriverListResponse);
 
 	return status;
 }

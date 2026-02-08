@@ -3,8 +3,9 @@
 //! Provides UI controls for managing the hypervisor and process protection.
 
 use callback::{
-    hv_install_hooks, hv_list_protected, hv_ping, hv_remove_hooks, hv_start,
-    hv_stop, hv_unprotect_process, is_driver_loaded, HvStatus,
+    hv_clear_hidden_drivers, hv_hide_driver, hv_install_hooks, hv_list_hidden_drivers,
+    hv_list_protected, hv_ping, hv_remove_hidden_driver, hv_remove_hooks, hv_start, hv_stop,
+    hv_unprotect_process, is_driver_loaded, HvStatus,
 };
 use dioxus::prelude::*;
 use std::collections::HashMap;
@@ -36,6 +37,8 @@ pub fn HypervisorTab() -> Element {
     let mut status_message = use_signal(String::new);
     let mut context_menu = use_signal(HvContextMenuState::default);
     let mut selected_pid = use_signal(|| None::<u32>);
+    let mut hidden_drivers = use_signal(Vec::<String>::new);
+    let mut driver_name_input = use_signal(|| "dpdrv.sys".to_string());
     let driver_loaded = is_driver_loaded();
 
     // Refresh status
@@ -43,7 +46,15 @@ pub fn HypervisorTab() -> Element {
         if !driver_loaded {
             status.set(HvStatus::default());
             protected_processes.set(Vec::new());
+            hidden_drivers.set(Vec::new());
             return;
+        }
+
+        // Get list of hidden drivers
+        if let Ok(drivers) = hv_list_hidden_drivers() {
+            hidden_drivers.set(drivers);
+        } else {
+            hidden_drivers.set(Vec::new());
         }
 
         match hv_ping() {
@@ -228,6 +239,121 @@ pub fn HypervisorTab() -> Element {
                 }
             }
 
+            // Driver Hiding Section
+            div {
+                class: "controls",
+                style: "border-top: 1px solid var(--border-color); padding-top: 10px;",
+
+                span { style: "font-weight: 600; margin-right: 15px;", "Driver Hiding:" }
+
+                span {
+                    class: if !hidden_drivers.read().is_empty() { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
+                    "{hidden_drivers.read().len()} hidden"
+                }
+
+                input {
+                    r#type: "text",
+                    placeholder: "Driver name (e.g., dpdrv.sys)",
+                    value: "{driver_name_input}",
+                    disabled: !driver_loaded || !current_status.hooks_installed,
+                    oninput: move |e| driver_name_input.set(e.value()),
+                    style: "padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); width: 180px; font-family: monospace;",
+                }
+
+                button {
+                    class: "btn btn-primary",
+                    disabled: !driver_loaded || !current_status.hooks_installed || driver_name_input.read().is_empty(),
+                    onclick: move |_| {
+                        let name = driver_name_input.read().clone();
+                        spawn(async move {
+                            match hv_hide_driver(&name) {
+                                Ok(()) => {
+                                    status_message.set(format!("Driver '{}' added to hide list", name));
+                                    driver_name_input.set(String::new());
+                                    refresh_status();
+                                }
+                                Err(e) => {
+                                    status_message.set(format!("Failed to hide driver: {}", e));
+                                }
+                            }
+                            spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                status_message.set(String::new());
+                            });
+                        });
+                    },
+                    "Add"
+                }
+
+                button {
+                    class: "btn btn-secondary",
+                    disabled: !driver_loaded || hidden_drivers.read().is_empty(),
+                    onclick: move |_| {
+                        spawn(async move {
+                            match hv_clear_hidden_drivers() {
+                                Ok(()) => {
+                                    status_message.set("All hidden drivers cleared".to_string());
+                                    refresh_status();
+                                }
+                                Err(e) => {
+                                    status_message.set(format!("Failed: {}", e));
+                                }
+                            }
+                            spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                status_message.set(String::new());
+                            });
+                        });
+                    },
+                    "Clear All"
+                }
+
+                // Show hidden drivers as tags
+                for driver in hidden_drivers.read().iter() {
+                    {
+                        let driver_name = driver.clone();
+                        let driver_display = driver.clone();
+                        rsx! {
+                            span {
+                                class: "driver-status driver-status-loaded",
+                                style: "display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px;",
+                                "{driver_display}"
+                                button {
+                                    style: "background: none; border: none; color: var(--text-primary); cursor: pointer; padding: 0; font-size: 12px; opacity: 0.7;",
+                                    onclick: move |e| {
+                                        e.stop_propagation();
+                                        let name = driver_name.clone();
+                                        spawn(async move {
+                                            match hv_remove_hidden_driver(&name) {
+                                                Ok(()) => {
+                                                    status_message.set(format!("Driver '{}' removed from hide list", name));
+                                                    refresh_status();
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!("Failed: {}", e));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        });
+                                    },
+                                    "×"
+                                }
+                            }
+                        }
+                    }
+                }
+
+                div { style: "flex: 1;" }
+
+                span {
+                    style: "font-size: 11px; color: var(--text-secondary);",
+                    "Max 16 drivers"
+                }
+            }
+
             // Table - Protected Processes
             div { class: "table-container",
                 table { class: "process-table",
@@ -339,10 +465,11 @@ pub fn HypervisorTab() -> Element {
                 class: "controls",
                 style: "margin-top: auto; flex-direction: column; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-secondary);",
                 p { "The hypervisor runs at ring -1 (below the OS kernel) using Intel VT-x EPT hooks." }
-                p { "Hidden processes are invisible to NtQuerySystemInformation (Task Manager, Process Explorer, etc.)" }
+                p { "Hidden processes are invisible to NtQuerySystemInformation (Task Manager, Process Explorer, Process Hacker)" }
+                p { "Hidden drivers are invisible to SystemModuleInformation (driver enumeration tools, WinObjEx64)" }
                 p {
                     style: "color: var(--danger);",
-                    "Warning: Experimental feature. Use only on test systems."
+                    "Warning: Experimental feature. PatchGuard safe but use only on test systems."
                 }
             }
 
