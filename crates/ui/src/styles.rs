@@ -464,6 +464,36 @@ const BASE_STYLES: &str = r#"
         cursor: pointer;
         accent-color: var(--accent-primary);
     }
+    .control-label {
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-right: 10px;
+        white-space: nowrap;
+    }
+    .filter-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        background: var(--accent-primary);
+        color: white;
+        border-radius: 4px;
+        font-size: 12px;
+        font-family: monospace;
+    }
+    .filter-tag-remove {
+        background: none;
+        border: none;
+        color: white;
+        cursor: pointer;
+        padding: 0;
+        font-size: 14px;
+        opacity: 0.8;
+        line-height: 1;
+    }
+    .filter-tag-remove:hover {
+        opacity: 1;
+    }
 
     /* Buttons */
     .btn {
