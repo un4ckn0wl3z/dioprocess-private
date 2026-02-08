@@ -29,12 +29,11 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - **Callback Enumeration** — List registered process/thread/image kernel callbacks (identify EDR/AV hooks)
   - **PspCidTable Enumeration** — Enumerate all processes/threads via kernel CID table (detect hidden processes)
   - Supports Windows 10 (1507-22H2) and Windows 11 (21H2-24H2)
-- **Hypervisor (Ring -1) Features** — Intel VT-x based hypervisor integration for advanced security research:
+- **Hypervisor (Ring -1) Features** — Intel VT-x based hypervisor bundled into DioProcess.sys for advanced security research:
   - **Ring -1 Injection** — Shellcode/DLL injection via hypervisor physical memory access (bypasses ring 0 protections)
   - **Process Hiding** — Hide processes from ring 0 enumeration via EPT hooks
   - **Driver Hiding** — Hide kernel drivers from ring 0 enumeration
   - Physical memory read/write via EPT translation
-  - Requires hv.sys hypervisor + DioProcess.sys driver
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
 - **Shellcode injection** — classic (from .bin file), web staging (download from URL via WinInet), and threadless (hook exported function, no new threads)
 - **Kernel injection** (requires driver) — shellcode & DLL injection from kernel mode via `RtlCreateUserThread`, bypasses usermode hooks
@@ -63,7 +62,7 @@ crates/
 │   └── src/
 │       ├── lib.rs         # Module re-exports
 │       ├── driver.rs      # IOCTLs (protection, privileges, debug flags, callback enumeration)
-│       ├── hypervisor.rs  # Hypervisor (Ring -1) bindings (hv_is_running, hv_inject_shellcode, hv_inject_dll)
+│       ├── hypervisor.rs  # Bundled hypervisor (Ring -1) bindings (hv_is_running, hv_inject_shellcode, hv_inject_dll)
 │       ├── pspcidtable.rs # PspCidTable enumeration via signature scanning
 │       ├── storage.rs     # SQLite persistence (WAL mode, batched writes)
 │       ├── types.rs       # CallbackEvent, EventType, EventCategory
@@ -83,15 +82,14 @@ crates/
 ├── ui/            # Dioxus components, router, global signals, dark theme
 └── dioprocess/    # Binary crate — entry point, custom window, manifest embedding
 kernelmode/
-├── DioProcess/        # WDM kernel driver (C++) for system event monitoring + security research
-│   ├── DioProcessDriver/
-│   │   ├── DioProcessDriver.cpp    # Driver code (device: \\.\DioProcess)
-│   │   ├── DioProcessDriver.h      # Protection structures, Windows version detection
-│   │   ├── DioProcessCommon.h      # Shared event structures + security IOCTLs
-│   │   └── IRP/DeviceControl.cpp   # IOCTL handlers including hypervisor injection
-│   └── DioProcessCli/              # Test CLI client
-└── hv/                # Intel VT-x hypervisor (hv.sys) for Ring -1 operations
-    └── ...                         # Hypervisor source (EPT, VMCALL handlers)
+└── DioProcess/        # WDM kernel driver (C++) with bundled Intel VT-x hypervisor
+    ├── DioProcessDriver/
+    │   ├── DioProcessDriver.cpp    # Driver code (device: \\.\DioProcess)
+    │   ├── DioProcessDriver.h      # Protection structures, Windows version detection
+    │   ├── DioProcessCommon.h      # Shared event structures + security IOCTLs
+    │   ├── IRP/DeviceControl.cpp   # IOCTL handlers including hypervisor injection
+    │   └── Hypervisor/             # Bundled Intel VT-x hypervisor (EPT, VMCALL handlers)
+    └── DioProcessCli/              # Test CLI client
 ```
 
 ## Implemented Techniques — Summary
@@ -133,7 +131,7 @@ Located in `crates/misc/src/kernel_inject.rs` + `kernelmode/DioProcess/DioProces
 
 ### Hypervisor (Ring -1) Features
 
-**Requires both DioProcess.sys kernel driver AND hv.sys hypervisor to be loaded.** Operates at Ring -1 (hypervisor level) via Intel VT-x, providing capabilities that bypass even kernel-level protections.
+**Requires DioProcess.sys kernel driver with bundled hypervisor.** The hypervisor is integrated into DioProcess.sys — no separate driver needed. Operates at Ring -1 (hypervisor level) via Intel VT-x, providing capabilities that bypass even kernel-level protections.
 
 #### Ring -1 Injection (Hypervisor-Level)
 
@@ -151,7 +149,7 @@ Inject shellcode or DLLs from the hypervisor level, bypassing ring 0 protections
 
 **Implementation:**
 - Driver allocates memory via `ZwAllocateVirtualMemory`, touches it with `RtlZeroMemory` to create physical backing
-- VMCALL hypercall to hv.sys for physical memory write via EPT translation
+- VMCALL hypercall to bundled hypervisor for physical memory write via EPT translation
 - Thread creation via `RtlCreateUserThread` from kernel mode
 - Located in: `kernelmode/DioProcess/DioProcessDriver/IRP/DeviceControl.cpp` and `crates/callback/src/hypervisor.rs`
 
@@ -180,13 +178,14 @@ Access via the **Hypervisor** tab (marked with red "Ring -1" badge) in main navi
 └──────────────────────────┬──────────────────────────────────┘
                            │ IOCTL
 ┌──────────────────────────▼──────────────────────────────────┐
-│            DioProcess.sys (Kernel Driver)                    │
-│   Hypervisor IOCTL handlers, VMCALL wrappers                 │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ VMCALL (Intel VT-x)
-┌──────────────────────────▼──────────────────────────────────┐
-│                    hv.sys (Hypervisor)                       │
-│   Intel VT-x, EPT, physical memory access                    │
+│                  DioProcess.sys                              │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │  Ring 0: Kernel Driver (IOCTL handlers, memory ops) │   │
+│   └──────────────────────────┬──────────────────────────┘   │
+│                              │ VMCALL                        │
+│   ┌──────────────────────────▼──────────────────────────┐   │
+│   │  Ring -1: Bundled Hypervisor (Intel VT-x, EPT)      │   │
+│   └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
