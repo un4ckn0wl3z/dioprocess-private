@@ -219,6 +219,11 @@ struct EventData
 #define IOCTL_DIOPROCESS_HV_LIST_HIDDEN_DRIVERS \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x839, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// ============== Hypervisor Injection IOCTLs (Ring -1) ==============
+
+#define IOCTL_DIOPROCESS_HV_INJECT_SHELLCODE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x840, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct CollectionStateResponse
 {
 	BOOLEAN IsCollecting;
@@ -459,4 +464,23 @@ struct HvListProtectedResponse
 {
 	ULONG Count;                                  // Number of protected PIDs returned
 	ULONG Pids[MAX_HV_PROTECTED_PIDS];            // Array of protected PIDs
+};
+
+// ============== Hypervisor Injection Structures (Ring -1) ==============
+
+// Request for HV_INJECT_SHELLCODE
+// Ring -1 injection: writes shellcode via hypervisor, bypassing all ring 0 protections
+struct HvInjectShellcodeRequest
+{
+	ULONG TargetProcessId;                        // Target process PID
+	ULONG ShellcodeSize;                          // Size of shellcode in bytes
+	UCHAR Shellcode[1];                           // Variable length shellcode
+};
+
+// Response for HV_INJECT_SHELLCODE
+struct HvInjectShellcodeResponse
+{
+	ULONG64 AllocatedAddress;                     // Where shellcode was written
+	ULONG64 BytesWritten;                         // Bytes actually written via ring -1
+	BOOLEAN Success;
 };

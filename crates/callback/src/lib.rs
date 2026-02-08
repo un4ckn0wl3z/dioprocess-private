@@ -26,10 +26,10 @@ pub use driver::{
 };
 pub use error::CallbackError;
 pub use hypervisor::{
-    hv_clear_hidden_drivers, hv_hide_driver, hv_install_hooks, hv_is_driver_hidden,
-    hv_is_process_protected, hv_is_running, hv_list_hidden_drivers, hv_list_protected, hv_ping,
-    hv_protect_process, hv_remove_hidden_driver, hv_remove_hooks, hv_start, hv_stop,
-    hv_unhide_driver, hv_unprotect_process, HvStatus,
+    hv_clear_hidden_drivers, hv_hide_driver, hv_inject_shellcode, hv_install_hooks,
+    hv_is_driver_hidden, hv_is_process_protected, hv_is_running, hv_list_hidden_drivers,
+    hv_list_protected, hv_ping, hv_protect_process, hv_remove_hidden_driver, hv_remove_hooks,
+    hv_start, hv_stop, hv_unhide_driver, hv_unprotect_process, HvInjectResult, HvStatus,
 };
 pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
 pub use storage::{EventFilter, EventStorage};

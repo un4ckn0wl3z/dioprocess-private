@@ -711,3 +711,30 @@ bool HvAreHooksInstalled()
 {
 	return g_HooksInstalled;
 }
+
+// ============== Ring -1 Injection ==============
+
+ULONG64 HvInjectShellcode(ULONG TargetPid, PVOID TargetAddress, PVOID SourceBuffer, ULONG Size)
+{
+	if (!g_HvInitialized || !HvIsHypervisorRunning())
+		return 0;
+
+	__try
+	{
+		hv::hypercall_input input;
+		input.code = hv::hypercall_inject_shellcode;
+		input.key = hv::hypercall_key;
+		input.args[0] = (ULONG64)TargetPid;           // RCX = target PID
+		input.args[1] = (ULONG64)TargetAddress;       // RDX = target VA
+		input.args[2] = (ULONG64)SourceBuffer;        // R8  = source buffer
+		input.args[3] = (ULONG64)Size;                // R9  = size
+
+		ULONG64 bytesWritten = hv::vmx_vmcall(input);
+		return bytesWritten;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		DbgPrint("[DioProcess] Exception during HvInjectShellcode\n");
+		return 0;
+	}
+}
