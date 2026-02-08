@@ -22,12 +22,13 @@ crates/
 ├── process/       # Process enumeration, threads, handles, modules, CPU/memory, string scanning
 ├── network/       # TCP/UDP connection enumeration via Windows IP Helper API
 ├── service/       # Windows Service Control Manager ops (enum, start, stop, create, delete)
-├── callback/      # Kernel driver communication + SQLite event storage + security research IOCTLs
+├── callback/      # Kernel driver communication + SQLite event storage + security research IOCTLs + hypervisor
 │   └── src/
 │       ├── lib.rs         # Module declarations + pub use re-exports
 │       ├── error.rs       # CallbackError enum
 │       ├── types.rs       # CallbackEvent, EventType, EventCategory, RegistryOperation
 │       ├── driver.rs      # Driver communication (is_driver_loaded, read_events, protect/unprotect, enable_privileges, clear_debug_flags, callback enumeration)
+│       ├── hypervisor.rs  # Hypervisor (Ring -1) bindings (hv_is_running, hv_inject_shellcode, hv_inject_dll, HvInjectResult, HvInjectDllResult)
 │       ├── pspcidtable.rs # PspCidTable enumeration (CidEntry, CidObjectType, enumerate_pspcidtable)
 │       └── storage.rs     # SQLite persistence (EventStorage, EventFilter, batched writes)
 ├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, kernel injection, process creation, process hollowing, ghostly hollowing, process herpaderping, herpaderping hollowing, token theft, module unloading, memory ops
@@ -85,7 +86,10 @@ crates/
 │       │   ├── threadless_inject_window.rs # Threadless shellcode injection modal
 │       │   ├── string_scan_window.rs    # Process memory string scan modal
 │       │   ├── utilities_tab.rs         # Usermode Utilities tab (file bloating, etc.)
-│       │   ├── kernel_utilities_tab.rs  # Kernel Utilities tab (callback enum, PspCidTable)
+│       │   ├── kernel_utilities_tab.rs  # Kernel Enumeration tab (callback enum, PspCidTable)
+│       │   ├── kernel_enumeration/
+│       │   │   ├── mod.rs               # Kernel enumeration sub-tabs
+│       │   │   └── hypervisor.rs        # Hypervisor tab (Ring -1) - standalone top-level tab
 │       │   └── callback_tab.rs          # System Events tab (Experimental)
 │       ├── config.rs             # Theme enum, AppConfig, SQLite config storage
 │       ├── routes.rs             # Tab routing definitions
@@ -142,6 +146,8 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `ObjectCallbackOperations` | callback | handle_create, handle_duplicate |
 | `CidEntry` | callback | id, object_address, object_type, parent_pid, process_name |
 | `CidObjectType` | callback | Process, Thread |
+| `HvInjectResult` | callback | bytes_written, thread_handle, shellcode_address, success |
+| `HvInjectDllResult` | callback | module_base, path_address, success |
 
 ## Build & run
 
@@ -326,6 +332,43 @@ IOCTL_DIOPROCESS_KERNEL_INJECT_DLL        // 0x00222034
 **UI Access:**
 Right-click process → Miscellaneous → **Kernel Injection** → Shellcode Injection / DLL Injection
 (Submenu disabled/grayed when driver not loaded)
+
+### 2b. Ring -1 Injection (Hypervisor Level)
+
+**Functions:**
+- `callback::hv_inject_shellcode(pid: u32, shellcode: &[u8]) -> Result<HvInjectResult, CallbackError>` — Inject shellcode via hypervisor
+- `callback::hv_inject_dll(pid: u32, dll_path: &str) -> Result<HvInjectDllResult, CallbackError>` — Inject DLL via hypervisor
+
+**Implementation:**
+Located in `kernelmode/DioProcess/DioProcessDriver/IRP/DeviceControl.cpp` (IOCTL handlers) and `crates/callback/src/hypervisor.rs` (Rust bindings).
+
+**Algorithm (Shellcode):**
+1. Open target process, allocate RWX memory via `ZwAllocateVirtualMemory`
+2. **Touch memory** via `RtlZeroMemory` while attached — creates physical backing pages
+3. Detach from process context
+4. VMCALL to hypervisor: EPT translate virtual → physical, write shellcode bytes
+5. Create thread via `RtlCreateUserThread` at shellcode address
+
+**Algorithm (DLL):**
+1. Allocate memory for DLL path, touch to page in
+2. VMCALL to write DLL path via physical memory
+3. Resolve `LoadLibraryW` via `GetLoadLibraryWAddress()`
+4. Create thread with `RtlCreateUserThread(LoadLibraryW, path_addr)`
+
+**IOCTLs:**
+```cpp
+IOCTL_DIOPROCESS_HV_INJECT_SHELLCODE  // 0x840
+IOCTL_DIOPROCESS_HV_INJECT_DLL        // 0x841
+```
+
+**Key difference from Ring 0 injection:**
+- Writes to physical memory via EPT — bypasses ring 0 memory protections
+- Requires hypervisor (hv.sys) to be running
+- Memory must be touched/paged in before hypervisor can write
+
+**UI Access:**
+Right-click process → Miscellaneous → **HV Inject Shellcode (Ring -1)** / **HV Inject DLL (Ring -1)**
+(Items disabled when hypervisor or driver not loaded)
 
 ### 3. Token Privilege Escalation
 
@@ -808,6 +851,121 @@ IOCTL_DIOPROCESS_ENUM_PSPCIDTABLE  // 0x0022203C
 - View raw EPROCESS/ETHREAD kernel addresses
 - Compare with ToolHelp32 to detect process hiding techniques
 - Security research and rootkit analysis
+
+## Hypervisor Tab (Ring -1)
+
+Access via the **Hypervisor** tab in main navigation (marked with red "Ring -1" badge). Operates at hypervisor level (Ring -1) via Intel VT-x for advanced security research.
+
+**Requirements:**
+- DioProcess.sys kernel driver loaded
+- hv.sys hypervisor loaded and running (virtualizing the OS)
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 DioProcess UI (Dioxus)                      │
+│   Hypervisor Tab [Ring -1]                                  │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ DeviceIoControl
+┌──────────────────────────▼──────────────────────────────────┐
+│              callback crate (Rust bindings)                  │
+│   hv_is_running(), hv_inject_shellcode(), hv_inject_dll()   │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ IOCTL
+┌──────────────────────────▼──────────────────────────────────┐
+│            DioProcess.sys (Kernel Driver)                    │
+│   Hypervisor IOCTL handlers, VMCALL wrappers                 │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ VMCALL (Intel VT-x)
+┌──────────────────────────▼──────────────────────────────────┐
+│                    hv.sys (Hypervisor)                       │
+│   Intel VT-x, EPT, physical memory access                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Ring -1 Injection
+
+**Functions (callback crate):**
+- `callback::hv_inject_shellcode(pid: u32, shellcode: &[u8]) -> Result<HvInjectResult, CallbackError>` — Inject shellcode via hypervisor
+- `callback::hv_inject_dll(pid: u32, dll_path: &str) -> Result<HvInjectDllResult, CallbackError>` — Inject DLL via hypervisor
+
+**HvInjectResult struct:**
+```rust
+pub struct HvInjectResult {
+    pub bytes_written: u64,      // Bytes written via VMCALL
+    pub thread_handle: u64,      // Handle to created thread
+    pub shellcode_address: u64,  // Address where shellcode was written
+    pub success: bool,
+}
+```
+
+**HvInjectDllResult struct:**
+```rust
+pub struct HvInjectDllResult {
+    pub module_base: u64,   // Base address of loaded DLL
+    pub path_address: u64,  // Address where DLL path was written
+    pub success: bool,
+}
+```
+
+**Algorithm (Shellcode Injection):**
+1. Open target process, allocate RWX memory via `ZwAllocateVirtualMemory`
+2. **Touch memory** via `RtlZeroMemory` while attached to process — creates physical backing pages
+3. Detach from process context
+4. VMCALL to hypervisor: translate virtual → physical via EPT, write shellcode to physical memory
+5. Create thread via `RtlCreateUserThread` at shellcode address
+6. Return thread handle and shellcode address
+
+**Algorithm (DLL Injection):**
+1. Allocate memory for DLL path in target process
+2. Touch memory to create physical backing
+3. VMCALL to write DLL path via physical memory
+4. Resolve `LoadLibraryW` in target process via `GetLoadLibraryWAddress()`
+5. Create thread via `RtlCreateUserThread(LoadLibraryW, dll_path_addr)`
+6. Return module base and path address
+
+**IOCTLs:**
+```cpp
+IOCTL_DIOPROCESS_HV_INJECT_SHELLCODE  // 0x840
+IOCTL_DIOPROCESS_HV_INJECT_DLL        // 0x841
+```
+
+**Key Implementation Details:**
+- Memory must be "paged in" before hypervisor can write — allocated virtual memory has no physical backing until accessed
+- Driver touches memory with `RtlZeroMemory` while attached to process context to force page-in
+- Hypervisor translates virtual → physical addresses via EPT before writing
+- Bypasses ring 0 memory protections since writes happen at physical level
+
+**PatchGuard Safety:**
+- Data-only modifications to usermode memory — does not trigger KPP
+- Hypervisor operates outside PatchGuard's monitoring scope
+- No kernel code patching or table modifications
+
+**UI Access:**
+- Hypervisor tab → Injection section
+- Right-click process → Miscellaneous → **HV Inject Shellcode (Ring -1)**
+- Right-click process → Miscellaneous → **HV Inject DLL (Ring -1)**
+
+### Other Hypervisor Features
+
+- **Status Display** — Shows hypervisor running state (hv.sys) and driver status (DioProcess.sys)
+- **Process Hiding** — Hide processes from ring 0 enumeration via EPT hooks
+- **Driver Hiding** — Hide kernel drivers from ring 0 enumeration
+- **Memory Operations** — Read/write physical and virtual memory via hypervisor EPT access
+
+### Hypervisor Driver (hv.sys)
+
+Located in `kernelmode/hv/`:
+- Intel VT-x based hypervisor
+- Virtualizes the entire OS at runtime
+- Provides VMCALL interface for physical memory access
+- EPT (Extended Page Tables) for address translation
+- Hypercall key: `69420` (hardcoded)
+
+**Loading order:**
+1. Load hv.sys first (installs hypervisor, virtualizes OS)
+2. Load DioProcess.sys (communicates with hypervisor via VMCALL)
 
 ## System Events - Experimental (callback crate)
 
