@@ -2,6 +2,7 @@
 
 mod callback_enum;
 mod drivers;
+mod hypervisor;
 mod minifilters;
 mod pspcidtable;
 
@@ -9,6 +10,7 @@ use dioxus::prelude::*;
 
 use callback_enum::CallbackEnumTab;
 use drivers::DriversTab;
+use hypervisor::HypervisorTab;
 use minifilters::MinifiltersTab;
 use pspcidtable::PspCidTableTab;
 
@@ -19,6 +21,7 @@ enum KernelUtilityTab {
     PspCidTable,
     Minifilters,
     Drivers,
+    Hypervisor,
 }
 
 /// Sort order (shared across sub-tabs)
@@ -82,6 +85,12 @@ pub fn KernelUtilitiesTab() -> Element {
                     onclick: move |_| active_tab.set(KernelUtilityTab::Drivers),
                     "Drivers Enumeration"
                 }
+
+                button {
+                    class: if *active_tab.read() == KernelUtilityTab::Hypervisor { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| active_tab.set(KernelUtilityTab::Hypervisor),
+                    "Hypervisor"
+                }
             }
 
             // Tab content
@@ -90,6 +99,7 @@ pub fn KernelUtilitiesTab() -> Element {
                 KernelUtilityTab::PspCidTable => rsx! { PspCidTableTab { driver_loaded } },
                 KernelUtilityTab::Minifilters => rsx! { MinifiltersTab { driver_loaded } },
                 KernelUtilityTab::Drivers => rsx! { DriversTab { driver_loaded } },
+                KernelUtilityTab::Hypervisor => rsx! { HypervisorTab {} },
             }
         }
     }

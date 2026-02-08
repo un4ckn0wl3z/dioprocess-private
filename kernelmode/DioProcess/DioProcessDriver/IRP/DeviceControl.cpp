@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "DioProcessGlobals.h"
 #include "Locker.h"
+#include "Hypervisor/HvProtection.h"
 
 // ============== IOCTL Device Control Dispatcher ==============
 
@@ -85,6 +86,44 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_KERNEL_INJECT_DLL:
 		status = HandleKernelInjectDll(Irp, irpSp, &info);
+		break;
+
+	// Hypervisor Control IOCTLs
+	case IOCTL_DIOPROCESS_HV_START:
+		status = HandleHvStart(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_STOP:
+		status = HandleHvStop(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_PING:
+		status = HandleHvPing(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_INSTALL_HOOKS:
+		status = HandleHvInstallHooks(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_REMOVE_HOOKS:
+		status = HandleHvRemoveHooks(Irp, irpSp, &info);
+		break;
+
+	// Hypervisor Process Protection IOCTLs
+	case IOCTL_DIOPROCESS_HV_PROTECT_PROCESS:
+		status = HandleHvProtectProcess(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_UNPROTECT_PROCESS:
+		status = HandleHvUnprotectProcess(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_IS_PROCESS_PROTECTED:
+		status = HandleHvIsProcessProtected(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_LIST_PROTECTED:
+		status = HandleHvListProtected(Irp, irpSp, &info);
 		break;
 
 	default:
@@ -1326,6 +1365,203 @@ NTSTATUS HandleKernelInjectDll(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR in
 		*info = sizeof(KernelInjectDllResponse);
 		KdPrint((DRIVER_PREFIX "Kernel DLL injection failed: 0x%X\n", status));
 	}
+
+	return status;
+}
+
+// ============== Hypervisor Control Handlers ==============
+
+NTSTATUS HandleHvStart(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+	UNREFERENCED_PARAMETER(info);
+
+	KdPrint((DRIVER_PREFIX "Starting hypervisor...\n"));
+
+	NTSTATUS status = HvStartHypervisor();
+
+	if (NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "Hypervisor started successfully\n"));
+	}
+	else
+	{
+		KdPrint((DRIVER_PREFIX "Failed to start hypervisor: 0x%X\n", status));
+	}
+
+	return status;
+}
+
+NTSTATUS HandleHvStop(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+	UNREFERENCED_PARAMETER(info);
+
+	KdPrint((DRIVER_PREFIX "Stopping hypervisor...\n"));
+	HvStopHypervisor();
+	KdPrint((DRIVER_PREFIX "Hypervisor stopped\n"));
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleHvPing(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+	if (outputLen < sizeof(HvPingResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto response = (HvPingResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	response->IsRunning = HvIsHypervisorRunning();
+	response->HooksInstalled = HvAreHooksInstalled();
+	response->ProtectedProcessCount = HvGetProtectedPidCount();
+
+	*info = sizeof(HvPingResponse);
+
+	KdPrint((DRIVER_PREFIX "HV Ping: Running=%d, Hooks=%d, Protected=%u\n",
+		response->IsRunning, response->HooksInstalled, response->ProtectedProcessCount));
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleHvInstallHooks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+	UNREFERENCED_PARAMETER(info);
+
+	KdPrint((DRIVER_PREFIX "Installing protection hooks...\n"));
+
+	NTSTATUS status = HvInstallProtectionHooks();
+
+	if (NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "Protection hooks installed successfully\n"));
+	}
+	else
+	{
+		KdPrint((DRIVER_PREFIX "Failed to install protection hooks: 0x%X\n", status));
+	}
+
+	return status;
+}
+
+NTSTATUS HandleHvRemoveHooks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+	UNREFERENCED_PARAMETER(info);
+
+	KdPrint((DRIVER_PREFIX "Removing protection hooks...\n"));
+	HvRemoveProtectionHooks();
+	KdPrint((DRIVER_PREFIX "Protection hooks removed\n"));
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleHvProtectProcess(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(info);
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(HvProtectProcessRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HvProtectProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	KdPrint((DRIVER_PREFIX "HV protecting process PID %u\n", request->ProcessId));
+
+	bool success = HvAddProtectedPid(request->ProcessId);
+	return success ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
+}
+
+NTSTATUS HandleHvUnprotectProcess(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(info);
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(HvProtectProcessRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HvProtectProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	KdPrint((DRIVER_PREFIX "HV unprotecting process PID %u\n", request->ProcessId));
+
+	bool success = HvRemoveProtectedPid(request->ProcessId);
+	return success ? STATUS_SUCCESS : STATUS_NOT_FOUND;
+}
+
+NTSTATUS HandleHvIsProcessProtected(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(HvProtectProcessRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	if (outputLen < sizeof(HvIsProtectedResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HvProtectProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
+	auto response = (HvIsProtectedResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	response->IsProtected = HvIsProcessProtectedByPid(request->ProcessId);
+	*info = sizeof(HvIsProtectedResponse);
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleHvListProtected(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (outputLen < sizeof(HvListProtectedResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto response = (HvListProtectedResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	RtlZeroMemory(response, sizeof(HvListProtectedResponse));
+
+	ULONG returnedCount = 0;
+	NTSTATUS status = HvGetProtectedPidList(response->Pids, sizeof(response->Pids), &returnedCount);
+	response->Count = returnedCount;
+
+	*info = sizeof(HvListProtectedResponse);
 
 	return status;
 }

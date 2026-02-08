@@ -180,6 +180,30 @@ struct EventData
 #define IOCTL_DIOPROCESS_ENUM_MINIFILTERS \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x811, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// ============== Hypervisor Control IOCTLs ==============
+
+#define IOCTL_DIOPROCESS_HV_START \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x820, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_STOP \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x821, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_PING \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x822, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_INSTALL_HOOKS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x823, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_REMOVE_HOOKS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x824, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// ============== Hypervisor Process Protection IOCTLs ==============
+
+#define IOCTL_DIOPROCESS_HV_PROTECT_PROCESS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x830, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_UNPROTECT_PROCESS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x831, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_IS_PROCESS_PROTECTED \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x832, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_LIST_PROTECTED \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x833, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct CollectionStateResponse
 {
 	BOOLEAN IsCollecting;
@@ -369,4 +393,34 @@ struct EnumDriversResponse
 {
 	ULONG Count;                                  // Number of entries returned
 	KernelDriverInfo Entries[1];                  // Variable length array
+};
+
+// ============== Hypervisor Control Structures ==============
+
+// Response for HV_PING - check if hypervisor is running
+struct HvPingResponse
+{
+	BOOLEAN IsRunning;                            // TRUE if hypervisor is running
+	BOOLEAN HooksInstalled;                       // TRUE if protection hooks are installed
+	ULONG ProtectedProcessCount;                  // Number of protected processes
+};
+
+// Request for HV_PROTECT_PROCESS / HV_UNPROTECT_PROCESS / HV_IS_PROCESS_PROTECTED
+struct HvProtectProcessRequest
+{
+	ULONG ProcessId;                              // Process ID to protect/unprotect
+};
+
+// Response for HV_IS_PROCESS_PROTECTED
+struct HvIsProtectedResponse
+{
+	BOOLEAN IsProtected;
+};
+
+// Response for HV_LIST_PROTECTED
+#define MAX_HV_PROTECTED_PIDS 64
+struct HvListProtectedResponse
+{
+	ULONG Count;                                  // Number of protected PIDs returned
+	ULONG Pids[MAX_HV_PROTECTED_PIDS];            // Array of protected PIDs
 };

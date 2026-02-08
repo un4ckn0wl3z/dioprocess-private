@@ -69,9 +69,11 @@
   <PropertyGroup />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
+    <IncludePath>$(ProjectDir)extern;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
+    <IncludePath>$(ProjectDir)extern;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
@@ -87,12 +89,18 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)Hypervisor;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DisableSpecificWarnings>4201;5040;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
     </ClCompile>
     <Link>
       <AdditionalOptions>/integritycheck %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalDependencies>$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(DDK_LIB_PATH)aux_klib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(DDK_LIB_PATH)aux_klib.lib;$(DDK_LIB_PATH)ntstrsafe.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <MASM>
+      <ObjectFileName>$(IntDir)%(FileName)_ASM.obj</ObjectFileName>
+    </MASM>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <DriverSign>
@@ -102,11 +110,19 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)Hypervisor;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DisableSpecificWarnings>4201;5040;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(DDK_LIB_PATH)aux_klib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(DDK_LIB_PATH)aux_klib.lib;$(DDK_LIB_PATH)ntstrsafe.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <MASM>
+      <ObjectFileName>$(IntDir)%(FileName)_ASM.obj</ObjectFileName>
+    </MASM>
   </ItemDefinitionGroup>
   <ItemGroup>
     <FilesToPackage Include="$(TargetPath)" />
@@ -119,12 +135,39 @@
     <ClInclude Include="DioProcessDriver.h" />
     <ClInclude Include="DioProcessCommon.h" />
     <ClInclude Include="DioProcessGlobals.h" />
+    <!-- Hypervisor Headers -->
+    <ClInclude Include="Hypervisor\arch.h" />
+    <ClInclude Include="Hypervisor\ept.h" />
+    <ClInclude Include="Hypervisor\exception-routines.h" />
+    <ClInclude Include="Hypervisor\exit-handlers.h" />
+    <ClInclude Include="Hypervisor\gdt.h" />
+    <ClInclude Include="Hypervisor\guest-context.h" />
+    <ClInclude Include="Hypervisor\hv.h" />
+    <ClInclude Include="Hypervisor\hypercalls.h" />
+    <ClInclude Include="Hypervisor\HvProtection.h" />
+    <ClInclude Include="Hypervisor\idt.h" />
+    <ClInclude Include="Hypervisor\interrupt-handlers.h" />
+    <ClInclude Include="Hypervisor\introspection.h" />
+    <ClInclude Include="Hypervisor\logger.h" />
+    <ClInclude Include="Hypervisor\mm.h" />
+    <ClInclude Include="Hypervisor\mtrr.h" />
+    <ClInclude Include="Hypervisor\page-tables.h" />
+    <ClInclude Include="Hypervisor\segment.h" />
+    <ClInclude Include="Hypervisor\ShadowHook\LDE64.h" />
+    <ClInclude Include="Hypervisor\ShadowHook\ShadowHook.h" />
+    <ClInclude Include="Hypervisor\spin-lock.h" />
+    <ClInclude Include="Hypervisor\timing.h" />
+    <ClInclude Include="Hypervisor\trap-frame.h" />
+    <ClInclude Include="Hypervisor\vcpu.h" />
+    <ClInclude Include="Hypervisor\vmcs.h" />
+    <ClInclude Include="Hypervisor\vmx.h" />
   </ItemGroup>
   <ItemGroup>
     <!-- Main Source Files -->
     <ClCompile Include="FastMutex.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="DioProcessDriver.cpp" />
 
@@ -152,6 +195,74 @@
     <ClCompile Include="IRP\CreateClose.cpp" />
     <ClCompile Include="IRP\Read.cpp" />
     <ClCompile Include="IRP\DeviceControl.cpp" />
+
+    <!-- Hypervisor Source Files (no precompiled header) -->
+    <ClCompile Include="Hypervisor\ept.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\exit-handlers.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\gdt.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\hv.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\hypercalls.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\HvProtection.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\idt.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\introspection.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\logger.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\mm.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\mtrr.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\page-tables.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\segment.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\ShadowHook\LDE64.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\ShadowHook\ShadowHook.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\timing.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\vcpu.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Hypervisor\vmcs.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Hypervisor Assembly Files -->
+    <MASM Include="Hypervisor\arch.asm" />
+    <MASM Include="Hypervisor\exception-routines.asm" />
+    <MASM Include="Hypervisor\interrupt-handlers.asm" />
+    <MASM Include="Hypervisor\vm-exit.asm" />
+    <MASM Include="Hypervisor\vm-launch.asm" />
+    <MASM Include="Hypervisor\vmx.asm" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Hypervisor\vmx.inl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

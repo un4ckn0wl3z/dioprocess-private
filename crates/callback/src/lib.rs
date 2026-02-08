@@ -7,9 +7,11 @@
 //! - Image (DLL/EXE) loading
 //! - Handle operations (process/thread handles)
 //! - Registry operations
+//! - Hypervisor control and process protection
 
 mod driver;
 mod error;
+mod hypervisor;
 mod pspcidtable;
 pub mod storage;
 mod types;
@@ -23,6 +25,10 @@ pub use driver::{
     ObjectCallbackInfo, ObjectCallbackOperations, ObjectCallbackType,
 };
 pub use error::CallbackError;
+pub use hypervisor::{
+    hv_install_hooks, hv_is_process_protected, hv_is_running, hv_list_protected, hv_ping,
+    hv_protect_process, hv_remove_hooks, hv_start, hv_stop, hv_unprotect_process, HvStatus,
+};
 pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
 pub use storage::{EventFilter, EventStorage};
 pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};
