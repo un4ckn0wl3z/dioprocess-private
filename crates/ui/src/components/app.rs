@@ -588,7 +588,7 @@ pub fn Layout() -> Element {
                     Link {
                         to: Route::KernelUtilitiesTab {},
                         class: if is_kernel_utilities_tab { "tab-item tab-active" } else { "tab-item" },
-                        "Kernel Utilities"
+                        "Kernel Enumeration"
                     }
                     Link {
                         to: Route::CallbackTab {},

@@ -89,7 +89,7 @@ pub fn KernelUtilitiesTab() -> Element {
 
             // Header
             div { class: "header-box",
-                h1 { class: "header-title", "Kernel Utilities" }
+                h1 { class: "header-title", "Kernel Enumeration" }
                 div { class: "header-stats",
                     span {
                         class: if driver_loaded { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
@@ -116,19 +116,19 @@ pub fn KernelUtilitiesTab() -> Element {
                 button {
                     class: if *active_tab.read() == KernelUtilityTab::PspCidTable { "btn btn-secondary active" } else { "btn btn-secondary" },
                     onclick: move |_| active_tab.set(KernelUtilityTab::PspCidTable),
-                    "PspCidTable"
+                    "PspCidTable Enumeration"
                 }
 
                 button {
                     class: if *active_tab.read() == KernelUtilityTab::Minifilters { "btn btn-secondary active" } else { "btn btn-secondary" },
                     onclick: move |_| active_tab.set(KernelUtilityTab::Minifilters),
-                    "Minifilters"
+                    "Minifilters Enumeration"
                 }
 
                 button {
                     class: if *active_tab.read() == KernelUtilityTab::Drivers { "btn btn-secondary active" } else { "btn btn-secondary" },
                     onclick: move |_| active_tab.set(KernelUtilityTab::Drivers),
-                    "Drivers"
+                    "Drivers Enumeration"
                 }
             }
 
