@@ -156,6 +156,10 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleHvInjectShellcode(Irp, irpSp, &info);
 		break;
 
+	case IOCTL_DIOPROCESS_HV_INJECT_DLL:
+		status = HandleHvInjectDll(Irp, irpSp, &info);
+		break;
+
 	default:
 		status = STATUS_INVALID_DEVICE_REQUEST;
 		break;
@@ -1963,5 +1967,264 @@ NTSTATUS HandleHvInjectShellcode(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR 
 
 	ObDereferenceObject(targetProcess);
 	*info = sizeof(HvInjectShellcodeResponse);
+	return status;
+}
+
+NTSTATUS HandleHvInjectDll(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "Ring -1 DLL injection request\n"));
+
+	// Validate hypervisor is running
+	if (!HvIsHypervisorRunning())
+	{
+		KdPrint((DRIVER_PREFIX "Hypervisor not running, cannot perform ring -1 injection\n"));
+		return STATUS_HV_NOT_PRESENT;
+	}
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(HvInjectDllRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	if (outputLen < sizeof(HvInjectDllResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HvInjectDllRequest*)Irp->AssociatedIrp.SystemBuffer;
+	auto response = (HvInjectDllResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+	if (!request || request->PathLength == 0)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Validate buffer size
+	SIZE_T expectedSize = FIELD_OFFSET(HvInjectDllRequest, DllPath) + request->PathLength;
+	if (inputLen < expectedSize)
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	KdPrint((DRIVER_PREFIX "Ring -1 injecting DLL into PID %u, path length %u\n",
+		request->TargetProcessId, request->PathLength));
+
+	NTSTATUS status = STATUS_SUCCESS;
+	PVOID pathAddress = nullptr;
+
+	// Step 1: Open target process
+	PEPROCESS targetProcess = nullptr;
+	status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)request->TargetProcessId, &targetProcess);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "Failed to lookup process: 0x%X\n", status));
+		return status;
+	}
+
+	// Step 2: Allocate memory for DLL path in target process
+	KAPC_STATE apcState;
+	KeStackAttachProcess(targetProcess, &apcState);
+
+	SIZE_T regionSize = request->PathLength;
+	status = ZwAllocateVirtualMemory(
+		ZwCurrentProcess(),
+		&pathAddress,
+		0,
+		&regionSize,
+		MEM_COMMIT | MEM_RESERVE,
+		PAGE_READWRITE
+	);
+
+	if (!NT_SUCCESS(status))
+	{
+		KeUnstackDetachProcess(&apcState);
+		ObDereferenceObject(targetProcess);
+		KdPrint((DRIVER_PREFIX "Failed to allocate memory for path: 0x%X\n", status));
+		return status;
+	}
+
+	// Touch the memory to page it in
+	__try
+	{
+		RtlZeroMemory(pathAddress, request->PathLength);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		SIZE_T freeSize = 0;
+		ZwFreeVirtualMemory(ZwCurrentProcess(), &pathAddress, &freeSize, MEM_RELEASE);
+		KeUnstackDetachProcess(&apcState);
+		ObDereferenceObject(targetProcess);
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	KeUnstackDetachProcess(&apcState);
+
+	KdPrint((DRIVER_PREFIX "Allocated path memory at 0x%p\n", pathAddress));
+
+	// Step 3: Write DLL path via ring -1
+	__try
+	{
+		ULONG64 bytesWritten = HvInjectShellcode(
+			request->TargetProcessId,
+			pathAddress,
+			(PVOID)request->DllPath,
+			request->PathLength
+		);
+
+		KdPrint((DRIVER_PREFIX "Ring -1 path write: %llu bytes\n", bytesWritten));
+
+		if (bytesWritten == 0)
+		{
+			KeStackAttachProcess(targetProcess, &apcState);
+			SIZE_T freeSize = 0;
+			ZwFreeVirtualMemory(ZwCurrentProcess(), &pathAddress, &freeSize, MEM_RELEASE);
+			KeUnstackDetachProcess(&apcState);
+			ObDereferenceObject(targetProcess);
+
+			response->Success = FALSE;
+			response->ModuleBase = 0;
+			response->PathAddress = 0;
+			*info = sizeof(HvInjectDllResponse);
+			return STATUS_UNSUCCESSFUL;
+		}
+
+		// Step 4: Find LoadLibraryW in target process using existing helper
+		WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+		PVOID loadLibraryAddr = GetLoadLibraryWAddress(request->TargetProcessId, windowsVersion);
+
+		if (!loadLibraryAddr)
+		{
+			KdPrint((DRIVER_PREFIX "Failed to find LoadLibraryW\n"));
+			KeStackAttachProcess(targetProcess, &apcState);
+			SIZE_T freeSize = 0;
+			ZwFreeVirtualMemory(ZwCurrentProcess(), &pathAddress, &freeSize, MEM_RELEASE);
+			KeUnstackDetachProcess(&apcState);
+			ObDereferenceObject(targetProcess);
+
+			response->Success = FALSE;
+			response->ModuleBase = 0;
+			response->PathAddress = 0;
+			*info = sizeof(HvInjectDllResponse);
+			return STATUS_NOT_FOUND;
+		}
+
+		// Step 5: Create remote thread to call LoadLibraryW
+		UNICODE_STRING funcName;
+		RtlInitUnicodeString(&funcName, L"RtlCreateUserThread");
+
+		typedef NTSTATUS(NTAPI* RtlCreateUserThread_t)(
+			HANDLE ProcessHandle,
+			PSECURITY_DESCRIPTOR SecurityDescriptor,
+			BOOLEAN CreateSuspended,
+			ULONG StackZeroBits,
+			PULONG StackReserved,
+			PULONG StackCommit,
+			PVOID StartAddress,
+			PVOID StartParameter,
+			PHANDLE ThreadHandle,
+			PVOID ClientId
+			);
+
+		RtlCreateUserThread_t pfnRtlCreateUserThread =
+			(RtlCreateUserThread_t)MmGetSystemRoutineAddress(&funcName);
+
+		if (!pfnRtlCreateUserThread)
+		{
+			KdPrint((DRIVER_PREFIX "Failed to resolve RtlCreateUserThread\n"));
+			KeStackAttachProcess(targetProcess, &apcState);
+			SIZE_T freeSize = 0;
+			ZwFreeVirtualMemory(ZwCurrentProcess(), &pathAddress, &freeSize, MEM_RELEASE);
+			KeUnstackDetachProcess(&apcState);
+			ObDereferenceObject(targetProcess);
+
+			response->Success = FALSE;
+			response->ModuleBase = 0;
+			response->PathAddress = (ULONG64)pathAddress;
+			*info = sizeof(HvInjectDllResponse);
+			return STATUS_NOT_FOUND;
+		}
+
+		// Get process handle
+		HANDLE processHandle = nullptr;
+		status = ObOpenObjectByPointer(
+			targetProcess,
+			OBJ_KERNEL_HANDLE,
+			nullptr,
+			PROCESS_ALL_ACCESS,
+			*PsProcessType,
+			KernelMode,
+			&processHandle
+		);
+
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to get process handle: 0x%X\n", status));
+			KeStackAttachProcess(targetProcess, &apcState);
+			SIZE_T freeSize = 0;
+			ZwFreeVirtualMemory(ZwCurrentProcess(), &pathAddress, &freeSize, MEM_RELEASE);
+			KeUnstackDetachProcess(&apcState);
+			ObDereferenceObject(targetProcess);
+
+			response->Success = FALSE;
+			response->ModuleBase = 0;
+			response->PathAddress = (ULONG64)pathAddress;
+			*info = sizeof(HvInjectDllResponse);
+			return status;
+		}
+
+		// Create the thread
+		HANDLE threadHandle = nullptr;
+		status = pfnRtlCreateUserThread(
+			processHandle,
+			nullptr,
+			FALSE,    // Not suspended
+			0,
+			nullptr,
+			nullptr,
+			loadLibraryAddr,   // Start address = LoadLibraryW
+			pathAddress,       // Parameter = DLL path
+			&threadHandle,
+			nullptr
+		);
+
+		ZwClose(processHandle);
+
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to create remote thread: 0x%X\n", status));
+			KeStackAttachProcess(targetProcess, &apcState);
+			SIZE_T freeSize = 0;
+			ZwFreeVirtualMemory(ZwCurrentProcess(), &pathAddress, &freeSize, MEM_RELEASE);
+			KeUnstackDetachProcess(&apcState);
+			ObDereferenceObject(targetProcess);
+
+			response->Success = FALSE;
+			response->ModuleBase = 0;
+			response->PathAddress = (ULONG64)pathAddress;
+			*info = sizeof(HvInjectDllResponse);
+			return status;
+		}
+
+		ZwClose(threadHandle);
+		KdPrint((DRIVER_PREFIX "Ring -1 DLL injection successful!\n"));
+
+		response->Success = TRUE;
+		response->ModuleBase = 0;  // We don't wait for the thread to complete
+		response->PathAddress = (ULONG64)pathAddress;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception during ring -1 DLL injection\n"));
+		status = STATUS_UNSUCCESSFUL;
+		response->Success = FALSE;
+		response->ModuleBase = 0;
+		response->PathAddress = 0;
+	}
+
+	ObDereferenceObject(targetProcess);
+	*info = sizeof(HvInjectDllResponse);
 	return status;
 }

