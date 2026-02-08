@@ -360,14 +360,14 @@ pub fn Layout() -> Element {
                                                         for entry in entries.flatten() {
                                                             let name = entry.file_name();
                                                             let name_str = name.to_string_lossy();
-                                                            if name_str.starts_with("un4ckn0wl3z-dpdrv-") {
+                                                            if name_str.starts_with("un4ckn0wl3z-dpdrv-prv-") {
                                                                 let _ = std::fs::remove_dir_all(entry.path());
                                                             }
                                                         }
                                                     }
 
                                                     // Fetch package
-                                                    let zip_url = "https://api.github.com/repos/un4ckn0wl3z/dpdrv/zipball/main";
+                                                    let zip_url = "https://api.github.com/repos/un4ckn0wl3z/dpdrv-prv/zipball/main";
 
                                                     let response = match ureq::get(zip_url)
                                                         .set("Authorization", &format!("Bearer {}", pat))
@@ -436,7 +436,7 @@ pub fn Layout() -> Element {
                                                             for entry in entries.flatten() {
                                                                 let name = entry.file_name();
                                                                 let name_str = name.to_string_lossy();
-                                                                if name_str.starts_with("un4ckn0wl3z-dpdrv-") && entry.path().is_dir() {
+                                                                if name_str.starts_with("un4ckn0wl3z-dpdrv-prv-") && entry.path().is_dir() {
                                                                     found = Some(entry.path());
                                                                     break;
                                                                 }
