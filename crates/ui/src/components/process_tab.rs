@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use callback::{
-    clear_debug_flags, enable_all_privileges, hv_is_running, hv_protect_process,
-    hv_unprotect_process, is_driver_loaded, protect_process, unprotect_process,
+    clear_debug_flags, enable_all_privileges, hv_inject_dll, hv_inject_shellcode, hv_is_running,
+    hv_protect_process, hv_unprotect_process, is_driver_loaded, protect_process, unprotect_process,
 };
 use dioxus::prelude::*;
 use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, inject_shellcode_classic, unhook_dll_remote_by_path, enumerate_process_modules};
@@ -1712,6 +1712,111 @@ pub fn ProcessTab() -> Element {
                                 },
                                 span { "👁️" }
                                 span { "HV Unhide Process" }
+                            }
+
+                            div { class: "context-menu-separator" }
+
+                            // HV Inject Shellcode (Ring -1)
+                            button {
+                                class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
+                                disabled: !hv_is_running(),
+                                onclick: move |_| {
+                                    let target_pid = ctx_menu.pid;
+                                    context_menu.set(ContextMenuState::default());
+
+                                    if let Some(pid) = target_pid {
+                                        spawn(async move {
+                                            let file = rfd::AsyncFileDialog::new()
+                                                .add_filter("Shellcode", &["bin", "raw", "sc"])
+                                                .add_filter("All files", &["*"])
+                                                .set_title("Select Shellcode for Ring -1 Injection")
+                                                .pick_file()
+                                                .await;
+
+                                            if let Some(f) = file {
+                                                let path = f.path().to_string_lossy().to_string();
+                                                match tokio::fs::read(&path).await {
+                                                    Ok(shellcode) => {
+                                                        if shellcode.is_empty() {
+                                                            status_message.set("✗ Shellcode file is empty".to_string());
+                                                        } else {
+                                                            match hv_inject_shellcode(pid, &shellcode) {
+                                                                Ok(result) => {
+                                                                    if result.success {
+                                                                        status_message.set(format!(
+                                                                            "✓ Ring -1 injected @ 0x{:X} ({} bytes)",
+                                                                            result.allocated_address, result.bytes_written
+                                                                        ));
+                                                                    } else {
+                                                                        status_message.set("✗ Ring -1 injection failed".to_string());
+                                                                    }
+                                                                }
+                                                                Err(e) => {
+                                                                    status_message.set(format!("✗ Ring -1 error: {}", e));
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        status_message.set(format!("✗ Failed to read file: {}", e));
+                                                    }
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        });
+                                    }
+                                },
+                                span { "💉" }
+                                span { "HV Inject Shellcode (Ring -1)" }
+                            }
+
+                            // HV Inject DLL (Ring -1)
+                            button {
+                                class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
+                                disabled: !hv_is_running(),
+                                onclick: move |_| {
+                                    let target_pid = ctx_menu.pid;
+                                    context_menu.set(ContextMenuState::default());
+
+                                    if let Some(pid) = target_pid {
+                                        spawn(async move {
+                                            let file = rfd::AsyncFileDialog::new()
+                                                .add_filter("DLL", &["dll"])
+                                                .add_filter("All files", &["*"])
+                                                .set_title("Select DLL for Ring -1 Injection")
+                                                .pick_file()
+                                                .await;
+
+                                            if let Some(f) = file {
+                                                let path = f.path().to_string_lossy().to_string();
+                                                match hv_inject_dll(pid, &path) {
+                                                    Ok(result) => {
+                                                        if result.success {
+                                                            status_message.set(format!(
+                                                                "✓ Ring -1 DLL injected @ 0x{:X}",
+                                                                result.path_address
+                                                            ));
+                                                        } else {
+                                                            status_message.set("✗ Ring -1 DLL injection failed".to_string());
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        status_message.set(format!("✗ Ring -1 DLL error: {}", e));
+                                                    }
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        });
+                                    }
+                                },
+                                span { "📦" }
+                                span { "HV Inject DLL (Ring -1)" }
                             }
                         }
                     }
