@@ -1305,114 +1305,6 @@ pub fn ProcessTab() -> Element {
 
                             div { class: "context-menu-separator" }
 
-                            // Kernel Injection sub-submenu (requires driver)
-                            div {
-                                class: "context-menu-submenu",
-                                div {
-                                    class: if is_driver_loaded() { "context-menu-submenu-trigger" } else { "context-menu-submenu-trigger disabled" },
-                                    span { "🔥" }
-                                    span { "Kernel Injection" }
-                                    span { class: "arrow", "▶" }
-                                }
-                                div {
-                                    class: "context-menu-submenu-content",
-
-                                    // Kernel Shellcode Injection
-                                    button {
-                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
-                                        disabled: !is_driver_loaded(),
-                                        onclick: move |_| {
-                                            if let Some(pid) = ctx_menu.pid {
-                                                let pid_for_spawn = pid;
-                                                context_menu.set(ContextMenuState::default());
-                                                spawn(async move {
-                                                    let file = rfd::AsyncFileDialog::new()
-                                                        .add_filter("Shellcode Binary", &["bin"])
-                                                        .add_filter("All Files", &["*"])
-                                                        .set_title("Select Shellcode for Kernel Injection")
-                                                        .pick_file()
-                                                        .await;
-                                                    if let Some(file) = file {
-                                                        match std::fs::read(file.path()) {
-                                                            Ok(shellcode) => {
-                                                                match misc::kernel_inject_shellcode(pid_for_spawn, &shellcode) {
-                                                                    Ok(address) => {
-                                                                        status_message.set(format!(
-                                                                            "✓ Kernel shellcode injection — PID: {}, Address: 0x{:X}",
-                                                                            pid_for_spawn, address
-                                                                        ));
-                                                                    }
-                                                                    Err(e) => {
-                                                                        status_message.set(format!(
-                                                                            "✗ Kernel shellcode injection failed: {}",
-                                                                            e
-                                                                        ));
-                                                                    }
-                                                                }
-                                                            }
-                                                            Err(e) => {
-                                                                status_message.set(format!("✗ Failed to read shellcode: {}", e));
-                                                            }
-                                                        }
-                                                        spawn(async move {
-                                                            tokio::time::sleep(std::time::Duration::from_secs(7)).await;
-                                                            status_message.set(String::new());
-                                                        });
-                                                    }
-                                                });
-                                            }
-                                        },
-                                        span { "🎯" }
-                                        span { "Shellcode Injection" }
-                                    }
-
-                                    // Kernel DLL Injection
-                                    button {
-                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
-                                        disabled: !is_driver_loaded(),
-                                        onclick: move |_| {
-                                            if let Some(pid) = ctx_menu.pid {
-                                                let pid_for_spawn = pid;
-                                                context_menu.set(ContextMenuState::default());
-                                                spawn(async move {
-                                                    let file = rfd::AsyncFileDialog::new()
-                                                        .add_filter("DLL Files", &["dll"])
-                                                        .add_filter("All Files", &["*"])
-                                                        .set_title("Select DLL for Kernel Injection")
-                                                        .pick_file()
-                                                        .await;
-                                                    if let Some(file) = file {
-                                                        let path = file.path().to_string_lossy().to_string();
-                                                        match misc::kernel_inject_dll(pid_for_spawn, &path) {
-                                                            Ok((dll_addr, loadlib_addr)) => {
-                                                                status_message.set(format!(
-                                                                    "✓ Kernel DLL injection — PID: {}, Path: 0x{:X}, LoadLibraryW: 0x{:X}",
-                                                                    pid_for_spawn, dll_addr, loadlib_addr
-                                                                ));
-                                                            }
-                                                            Err(e) => {
-                                                                status_message.set(format!(
-                                                                    "✗ Kernel DLL injection failed: {}",
-                                                                    e
-                                                                ));
-                                                            }
-                                                        }
-                                                        spawn(async move {
-                                                            tokio::time::sleep(std::time::Duration::from_secs(7)).await;
-                                                            status_message.set(String::new());
-                                                        });
-                                                    }
-                                                });
-                                            }
-                                        },
-                                        span { "💉" }
-                                        span { "DLL Injection" }
-                                    }
-                                }
-                            }
-
-                            div { class: "context-menu-separator" }
-
                             // DLL Unhooking sub-submenu
                             div {
                                 class: "context-menu-submenu",
@@ -1501,322 +1393,441 @@ pub fn ProcessTab() -> Element {
 
                             div { class: "context-menu-separator" }
 
-                            // Security Research features (only enabled when driver loaded)
-                            // Protect Process button
-                            button {
-                                class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
-                                disabled: !is_driver_loaded(),
-                                onclick: move |_| {
-                                    let target_pid = ctx_menu.pid;
-                                    context_menu.set(ContextMenuState::default());
+                            // Kernel (Ring 0) submenu - requires driver
+                            div {
+                                class: "context-menu-submenu",
+                                div {
+                                    class: if is_driver_loaded() { "context-menu-submenu-trigger" } else { "context-menu-submenu-trigger disabled" },
+                                    span { "🔥" }
+                                    span { "Kernel (Ring 0)" }
+                                    span { class: "arrow", "▶" }
+                                }
+                                div {
+                                    class: "context-menu-submenu-content",
 
-                                    if let Some(pid) = target_pid {
-                                        spawn(async move {
-                                            match protect_process(pid) {
-                                                Ok(()) => {
-                                                    status_message.set(format!(
-                                                        "✓ Process {} protected with PPL",
-                                                        pid
-                                                    ));
-                                                }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ Process protection failed: {}",
-                                                        e
-                                                    ));
-                                                }
-                                            }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
-                                        });
-                                    }
-                                },
-                                span { "🛡️" }
-                                span { "Protect Process" }
-                            }
-
-                            // Unprotect Process button
-                            button {
-                                class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
-                                disabled: !is_driver_loaded(),
-                                onclick: move |_| {
-                                    let target_pid = ctx_menu.pid;
-                                    context_menu.set(ContextMenuState::default());
-
-                                    if let Some(pid) = target_pid {
-                                        spawn(async move {
-                                            match unprotect_process(pid) {
-                                                Ok(()) => {
-                                                    status_message.set(format!(
-                                                        "✓ Process {} unprotected",
-                                                        pid
-                                                    ));
-                                                }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ Process unprotection failed: {}",
-                                                        e
-                                                    ));
-                                                }
-                                            }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
-                                        });
-                                    }
-                                },
-                                span { "🔓" }
-                                span { "Unprotect Process" }
-                            }
-
-                            // Enable All Privileges button
-                            button {
-                                class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
-                                disabled: !is_driver_loaded(),
-                                onclick: move |_| {
-                                    let target_pid = ctx_menu.pid;
-                                    context_menu.set(ContextMenuState::default());
-
-                                    if let Some(pid) = target_pid {
-                                        spawn(async move {
-                                            match enable_all_privileges(pid) {
-                                                Ok(()) => {
-                                                    status_message.set(format!(
-                                                        "✓ All privileges enabled for process {}",
-                                                        pid
-                                                    ));
-                                                }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ Privilege escalation failed: {}",
-                                                        e
-                                                    ));
-                                                }
-                                            }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
-                                        });
-                                    }
-                                },
-                                span { "⚡" }
-                                span { "Enable All Privileges" }
-                            }
-
-                            // Clear Debug Flags button
-                            button {
-                                class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
-                                disabled: !is_driver_loaded(),
-                                onclick: move |_| {
-                                    let target_pid = ctx_menu.pid;
-                                    context_menu.set(ContextMenuState::default());
-
-                                    if let Some(pid) = target_pid {
-                                        spawn(async move {
-                                            match clear_debug_flags(pid) {
-                                                Ok(()) => {
-                                                    status_message.set(format!(
-                                                        "✓ Debug flags cleared for process {}",
-                                                        pid
-                                                    ));
-                                                }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ Failed to clear debug flags: {}",
-                                                        e
-                                                    ));
-                                                }
-                                            }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
-                                        });
-                                    }
-                                },
-                                span { "🐛" }
-                                span { "Clear Debug Flags" }
-                            }
-
-                            div { class: "context-menu-separator" }
-
-                            // HV Hide Process button (only enabled when hypervisor is running)
-                            button {
-                                class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
-                                disabled: !hv_is_running(),
-                                onclick: move |_| {
-                                    let target_pid = ctx_menu.pid;
-                                    context_menu.set(ContextMenuState::default());
-
-                                    if let Some(pid) = target_pid {
-                                        spawn(async move {
-                                            match hv_protect_process(pid) {
-                                                Ok(()) => {
-                                                    status_message.set(format!(
-                                                        "✓ Process {} hidden via hypervisor",
-                                                        pid
-                                                    ));
-                                                }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ HV hide failed: {}",
-                                                        e
-                                                    ));
-                                                }
-                                            }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
-                                        });
-                                    }
-                                },
-                                span { "👻" }
-                                span { "HV Hide Process" }
-                            }
-
-                            // HV Unhide Process button
-                            button {
-                                class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
-                                disabled: !hv_is_running(),
-                                onclick: move |_| {
-                                    let target_pid = ctx_menu.pid;
-                                    context_menu.set(ContextMenuState::default());
-
-                                    if let Some(pid) = target_pid {
-                                        spawn(async move {
-                                            match hv_unprotect_process(pid) {
-                                                Ok(()) => {
-                                                    status_message.set(format!(
-                                                        "✓ Process {} unhidden from hypervisor",
-                                                        pid
-                                                    ));
-                                                }
-                                                Err(e) => {
-                                                    status_message.set(format!(
-                                                        "✗ HV unhide failed: {}",
-                                                        e
-                                                    ));
-                                                }
-                                            }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
-                                        });
-                                    }
-                                },
-                                span { "👁️" }
-                                span { "HV Unhide Process" }
-                            }
-
-                            div { class: "context-menu-separator" }
-
-                            // HV Inject Shellcode (Ring -1)
-                            button {
-                                class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
-                                disabled: !hv_is_running(),
-                                onclick: move |_| {
-                                    let target_pid = ctx_menu.pid;
-                                    context_menu.set(ContextMenuState::default());
-
-                                    if let Some(pid) = target_pid {
-                                        spawn(async move {
-                                            let file = rfd::AsyncFileDialog::new()
-                                                .add_filter("Shellcode", &["bin", "raw", "sc"])
-                                                .add_filter("All files", &["*"])
-                                                .set_title("Select Shellcode for Ring -1 Injection")
-                                                .pick_file()
-                                                .await;
-
-                                            if let Some(f) = file {
-                                                let path = f.path().to_string_lossy().to_string();
-                                                match tokio::fs::read(&path).await {
-                                                    Ok(shellcode) => {
-                                                        if shellcode.is_empty() {
-                                                            status_message.set("✗ Shellcode file is empty".to_string());
-                                                        } else {
-                                                            match hv_inject_shellcode(pid, &shellcode) {
-                                                                Ok(result) => {
-                                                                    if result.success {
+                                    // Kernel Shellcode Injection
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            if let Some(pid) = ctx_menu.pid {
+                                                let pid_for_spawn = pid;
+                                                context_menu.set(ContextMenuState::default());
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("Shellcode Binary", &["bin"])
+                                                        .add_filter("All Files", &["*"])
+                                                        .set_title("Select Shellcode for Kernel Injection")
+                                                        .pick_file()
+                                                        .await;
+                                                    if let Some(file) = file {
+                                                        match std::fs::read(file.path()) {
+                                                            Ok(shellcode) => {
+                                                                match misc::kernel_inject_shellcode(pid_for_spawn, &shellcode) {
+                                                                    Ok(address) => {
                                                                         status_message.set(format!(
-                                                                            "✓ Ring -1 injected @ 0x{:X} ({} bytes)",
-                                                                            result.allocated_address, result.bytes_written
+                                                                            "✓ Kernel shellcode injection — PID: {}, Address: 0x{:X}",
+                                                                            pid_for_spawn, address
                                                                         ));
-                                                                    } else {
-                                                                        status_message.set("✗ Ring -1 injection failed".to_string());
+                                                                    }
+                                                                    Err(e) => {
+                                                                        status_message.set(format!(
+                                                                            "✗ Kernel shellcode injection failed: {}",
+                                                                            e
+                                                                        ));
                                                                     }
                                                                 }
-                                                                Err(e) => {
-                                                                    status_message.set(format!("✗ Ring -1 error: {}", e));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!("✗ Failed to read shellcode: {}", e));
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        span { "🎯" }
+                                        span { "Inject Shellcode" }
+                                    }
+
+                                    // Kernel DLL Injection
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            if let Some(pid) = ctx_menu.pid {
+                                                let pid_for_spawn = pid;
+                                                context_menu.set(ContextMenuState::default());
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("DLL Files", &["dll"])
+                                                        .add_filter("All Files", &["*"])
+                                                        .set_title("Select DLL for Kernel Injection")
+                                                        .pick_file()
+                                                        .await;
+                                                    if let Some(file) = file {
+                                                        let path = file.path().to_string_lossy().to_string();
+                                                        match misc::kernel_inject_dll(pid_for_spawn, &path) {
+                                                            Ok((dll_addr, loadlib_addr)) => {
+                                                                status_message.set(format!(
+                                                                    "✓ Kernel DLL injection — PID: {}, Path: 0x{:X}, LoadLibraryW: 0x{:X}",
+                                                                    pid_for_spawn, dll_addr, loadlib_addr
+                                                                ));
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Kernel DLL injection failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        span { "💉" }
+                                        span { "Inject DLL" }
+                                    }
+
+                                    div { class: "context-menu-separator" }
+
+                                    // Protect Process button
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match protect_process(pid) {
+                                                        Ok(()) => {
+                                                            status_message.set(format!(
+                                                                "✓ Process {} protected with PPL",
+                                                                pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ Process protection failed: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "🛡️" }
+                                        span { "Protect Process" }
+                                    }
+
+                                    // Unprotect Process button
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match unprotect_process(pid) {
+                                                        Ok(()) => {
+                                                            status_message.set(format!(
+                                                                "✓ Process {} unprotected",
+                                                                pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ Process unprotection failed: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "🔓" }
+                                        span { "Unprotect Process" }
+                                    }
+
+                                    // Enable All Privileges button
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match enable_all_privileges(pid) {
+                                                        Ok(()) => {
+                                                            status_message.set(format!(
+                                                                "✓ All privileges enabled for process {}",
+                                                                pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ Privilege escalation failed: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "⚡" }
+                                        span { "Enable All Privileges" }
+                                    }
+
+                                    // Clear Debug Flags button
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match clear_debug_flags(pid) {
+                                                        Ok(()) => {
+                                                            status_message.set(format!(
+                                                                "✓ Debug flags cleared for process {}",
+                                                                pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ Failed to clear debug flags: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "🐛" }
+                                        span { "Clear Debug Flags" }
+                                    }
+                                }
+                            }
+
+                            // Hypervisor (Ring -1) submenu - requires hypervisor
+                            div {
+                                class: "context-menu-submenu",
+                                div {
+                                    class: if hv_is_running() { "context-menu-submenu-trigger" } else { "context-menu-submenu-trigger disabled" },
+                                    span { "💀" }
+                                    span { "Hypervisor (Ring -1)" }
+                                    span { class: "arrow", "▶" }
+                                }
+                                div {
+                                    class: "context-menu-submenu-content",
+
+                                    // HV Inject Shellcode (Ring -1)
+                                    button {
+                                        class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !hv_is_running(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("Shellcode", &["bin", "raw", "sc"])
+                                                        .add_filter("All files", &["*"])
+                                                        .set_title("Select Shellcode for Ring -1 Injection")
+                                                        .pick_file()
+                                                        .await;
+
+                                                    if let Some(f) = file {
+                                                        let path = f.path().to_string_lossy().to_string();
+                                                        match tokio::fs::read(&path).await {
+                                                            Ok(shellcode) => {
+                                                                if shellcode.is_empty() {
+                                                                    status_message.set("✗ Shellcode file is empty".to_string());
+                                                                } else {
+                                                                    match hv_inject_shellcode(pid, &shellcode) {
+                                                                        Ok(result) => {
+                                                                            if result.success {
+                                                                                status_message.set(format!(
+                                                                                    "✓ Ring -1 injected @ 0x{:X} ({} bytes)",
+                                                                                    result.allocated_address, result.bytes_written
+                                                                                ));
+                                                                            } else {
+                                                                                status_message.set("✗ Ring -1 injection failed".to_string());
+                                                                            }
+                                                                        }
+                                                                        Err(e) => {
+                                                                            status_message.set(format!("✗ Ring -1 error: {}", e));
+                                                                        }
+                                                                    }
                                                                 }
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!("✗ Failed to read file: {}", e));
                                                             }
                                                         }
                                                     }
-                                                    Err(e) => {
-                                                        status_message.set(format!("✗ Failed to read file: {}", e));
-                                                    }
-                                                }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
                                             }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
-                                        });
+                                        },
+                                        span { "🎯" }
+                                        span { "Inject Shellcode" }
                                     }
-                                },
-                                span { "💉" }
-                                span { "HV Inject Shellcode (Ring -1)" }
-                            }
 
-                            // HV Inject DLL (Ring -1)
-                            button {
-                                class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
-                                disabled: !hv_is_running(),
-                                onclick: move |_| {
-                                    let target_pid = ctx_menu.pid;
-                                    context_menu.set(ContextMenuState::default());
+                                    // HV Inject DLL (Ring -1)
+                                    button {
+                                        class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !hv_is_running(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
 
-                                    if let Some(pid) = target_pid {
-                                        spawn(async move {
-                                            let file = rfd::AsyncFileDialog::new()
-                                                .add_filter("DLL", &["dll"])
-                                                .add_filter("All files", &["*"])
-                                                .set_title("Select DLL for Ring -1 Injection")
-                                                .pick_file()
-                                                .await;
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("DLL", &["dll"])
+                                                        .add_filter("All files", &["*"])
+                                                        .set_title("Select DLL for Ring -1 Injection")
+                                                        .pick_file()
+                                                        .await;
 
-                                            if let Some(f) = file {
-                                                let path = f.path().to_string_lossy().to_string();
-                                                match hv_inject_dll(pid, &path) {
-                                                    Ok(result) => {
-                                                        if result.success {
-                                                            status_message.set(format!(
-                                                                "✓ Ring -1 DLL injected @ 0x{:X}",
-                                                                result.path_address
-                                                            ));
-                                                        } else {
-                                                            status_message.set("✗ Ring -1 DLL injection failed".to_string());
+                                                    if let Some(f) = file {
+                                                        let path = f.path().to_string_lossy().to_string();
+                                                        match hv_inject_dll(pid, &path) {
+                                                            Ok(result) => {
+                                                                if result.success {
+                                                                    status_message.set(format!(
+                                                                        "✓ Ring -1 DLL injected @ 0x{:X}",
+                                                                        result.path_address
+                                                                    ));
+                                                                } else {
+                                                                    status_message.set("✗ Ring -1 DLL injection failed".to_string());
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!("✗ Ring -1 DLL error: {}", e));
+                                                            }
                                                         }
                                                     }
-                                                    Err(e) => {
-                                                        status_message.set(format!("✗ Ring -1 DLL error: {}", e));
-                                                    }
-                                                }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
                                             }
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
-                                        });
+                                        },
+                                        span { "💉" }
+                                        span { "Inject DLL" }
                                     }
-                                },
-                                span { "📦" }
-                                span { "HV Inject DLL (Ring -1)" }
+
+                                    div { class: "context-menu-separator" }
+
+                                    // HV Hide Process button
+                                    button {
+                                        class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !hv_is_running(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match hv_protect_process(pid) {
+                                                        Ok(()) => {
+                                                            status_message.set(format!(
+                                                                "✓ Process {} hidden via hypervisor",
+                                                                pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ HV hide failed: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "👻" }
+                                        span { "Hide Process" }
+                                    }
+
+                                    // HV Unhide Process button
+                                    button {
+                                        class: if hv_is_running() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !hv_is_running(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match hv_unprotect_process(pid) {
+                                                        Ok(()) => {
+                                                            status_message.set(format!(
+                                                                "✓ Process {} unhidden from hypervisor",
+                                                                pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ HV unhide failed: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "👁️" }
+                                        span { "Unhide Process" }
+                                    }
+                                }
                             }
                         }
                     }
