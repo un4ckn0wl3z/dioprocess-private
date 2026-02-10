@@ -9,6 +9,7 @@ use callback::{
 };
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
+use std::collections::HashMap;
 
 use super::SortOrder;
 use crate::helpers::copy_to_clipboard;
@@ -31,6 +32,13 @@ enum CallbackSortColumn {
     Module,
 }
 
+/// Tracks a removed callback for restoration (object callbacks only need Pre/Post state)
+#[derive(Clone, Debug, Default)]
+struct RemovedCallbackInfo {
+    removed_pre: bool,
+    removed_post: bool,
+}
+
 /// Context menu state for callback table
 #[derive(Clone, Debug, Default)]
 struct CallbackContextMenuState {
@@ -43,6 +51,7 @@ struct CallbackContextMenuState {
     object_type: Option<ObjectCallbackType>, // For object callbacks (OCKC style)
     has_pre_op: bool,                         // Whether callback has PreOperation
     has_post_op: bool,                        // Whether callback has PostOperation
+    is_removed: bool,                         // Whether this callback was removed
 }
 
 /// Callback Enumeration sub-tab
@@ -59,6 +68,13 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
     let mut sort_order = use_signal(|| SortOrder::Ascending);
     let mut context_menu = use_signal(|| CallbackContextMenuState::default());
     let mut selected_index = use_signal(|| None::<u32>);
+
+    // Track removed callbacks per type (keyed by index)
+    let mut removed_process = use_signal(HashMap::<u32, RemovedCallbackInfo>::new);
+    let mut removed_thread = use_signal(HashMap::<u32, RemovedCallbackInfo>::new);
+    let mut removed_image = use_signal(HashMap::<u32, RemovedCallbackInfo>::new);
+    let mut removed_object = use_signal(HashMap::<u32, RemovedCallbackInfo>::new);
+    let mut removed_registry = use_signal(HashMap::<u32, RemovedCallbackInfo>::new);
 
     // Handle enumerate button click
     let mut handle_enumerate = move |_| {
@@ -362,8 +378,9 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
     };
 
     // Handle remove callback
-    let handle_remove = move |index: u32, module_name: String| {
+    let handle_remove = move |index: u32, module_name: String, _original_address: u64| {
         let cb_type = *callback_type.read();
+        let module_clone = module_name.clone();
 
         spawn(async move {
             let result = tokio::task::spawn_blocking(move || match cb_type {
@@ -380,8 +397,25 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
 
             match result {
                 Ok(Ok(())) => {
+                    // Track the removed callback
+                    let info = RemovedCallbackInfo::default();
+                    match cb_type {
+                        CallbackType::Process => {
+                            removed_process.write().insert(index, info);
+                        }
+                        CallbackType::Thread => {
+                            removed_thread.write().insert(index, info);
+                        }
+                        CallbackType::Image => {
+                            removed_image.write().insert(index, info);
+                        }
+                        CallbackType::Registry => {
+                            removed_registry.write().insert(index, info);
+                        }
+                        CallbackType::Object => {}
+                    }
                     status_message.set(format!(
-                        "Removed {} callback at index {} ({})",
+                        "Removed {} callback at index {} ({}) - can restore later",
                         match cb_type {
                             CallbackType::Process => "process",
                             CallbackType::Thread => "thread",
@@ -390,7 +424,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                             CallbackType::Object => "object",
                         },
                         index,
-                        module_name
+                        module_clone
                     ));
                 }
                 Ok(Err(e)) => {
@@ -410,6 +444,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                 let ctx = context_menu.read();
                 ctx.module.clone()
             };
+            let module_clone = module_name.clone();
 
             spawn(async move {
                 let result = tokio::task::spawn_blocking(move || {
@@ -419,6 +454,17 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
 
                 match result {
                     Ok(Ok(())) => {
+                        // Track the removed object callback
+                        let mut map = removed_object.write();
+                        let info = map.entry(index).or_insert(RemovedCallbackInfo::default());
+                        if remove_pre {
+                            info.removed_pre = true;
+                        }
+                        if remove_post {
+                            info.removed_post = true;
+                        }
+                        drop(map);
+
                         let ops = match (remove_pre, remove_post) {
                             (true, true) => "Pre+Post",
                             (true, false) => "Pre",
@@ -426,11 +472,11 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                             _ => "",
                         };
                         status_message.set(format!(
-                            "Removed {} object callback {} at index {} ({})",
+                            "Removed {} object callback {} at index {} ({}) - can restore later",
                             obj_type.as_str(),
                             ops,
                             index,
-                            module_name
+                            module_clone
                         ));
                     }
                     Ok(Err(e)) => {
@@ -446,6 +492,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
     // Handle restore callback (for Process/Thread/Image/Registry)
     let handle_restore = move |index: u32, module_name: String| {
         let cb_type = *callback_type.read();
+        let module_clone = module_name.clone();
 
         spawn(async move {
             let result = tokio::task::spawn_blocking(move || match cb_type {
@@ -462,6 +509,22 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
 
             match result {
                 Ok(Ok(())) => {
+                    // Remove from tracking
+                    match cb_type {
+                        CallbackType::Process => {
+                            removed_process.write().remove(&index);
+                        }
+                        CallbackType::Thread => {
+                            removed_thread.write().remove(&index);
+                        }
+                        CallbackType::Image => {
+                            removed_image.write().remove(&index);
+                        }
+                        CallbackType::Registry => {
+                            removed_registry.write().remove(&index);
+                        }
+                        CallbackType::Object => {}
+                    }
                     status_message.set(format!(
                         "Restored {} callback at index {} ({})",
                         match cb_type {
@@ -472,7 +535,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                             CallbackType::Object => "object",
                         },
                         index,
-                        module_name
+                        module_clone
                     ));
                 }
                 Ok(Err(e)) => {
@@ -492,6 +555,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                 let ctx = context_menu.read();
                 ctx.module.clone()
             };
+            let module_clone = module_name.clone();
 
             spawn(async move {
                 let result = tokio::task::spawn_blocking(move || {
@@ -501,6 +565,22 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
 
                 match result {
                     Ok(Ok(())) => {
+                        // Update tracking
+                        let mut map = removed_object.write();
+                        if let Some(info) = map.get_mut(&index) {
+                            if restore_pre {
+                                info.removed_pre = false;
+                            }
+                            if restore_post {
+                                info.removed_post = false;
+                            }
+                            // If both restored, remove from tracking
+                            if !info.removed_pre && !info.removed_post {
+                                map.remove(&index);
+                            }
+                        }
+                        drop(map);
+
                         let ops = match (restore_pre, restore_post) {
                             (true, true) => "Pre+Post",
                             (true, false) => "Pre",
@@ -512,7 +592,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                             obj_type.as_str(),
                             ops,
                             index,
-                            module_name
+                            module_clone
                         ));
                     }
                     Ok(Err(e)) => {
@@ -678,6 +758,8 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                         oncontextmenu: move |e| {
                                             e.prevent_default();
                                             selected_index.set(Some(cb.index));
+                                            let removed_info = removed_object.read().get(&cb.index).cloned();
+                                            let is_removed = removed_info.is_some();
                                             context_menu.set(CallbackContextMenuState {
                                                 visible: true,
                                                 x: e.page_coordinates().x as i32,
@@ -688,6 +770,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                                 object_type: Some(cb.object_type),
                                                 has_pre_op: cb.pre_operation_callback != 0,
                                                 has_post_op: cb.post_operation_callback != 0,
+                                                is_removed,
                                             });
                                         },
 
@@ -697,6 +780,22 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                                 class: if cb.object_type == ObjectCallbackType::Process { "cpu-low" } else { "" },
                                                 style: "font-weight: 600;",
                                                 "{cb.object_type.as_str()}"
+                                            }
+                                            {
+                                                let removed_info = removed_object.read().get(&cb.index).cloned();
+                                                if let Some(info) = removed_info {
+                                                    if info.removed_pre && info.removed_post {
+                                                        rsx! { span { class: "removed-badge", " (Both Removed)" } }
+                                                    } else if info.removed_pre {
+                                                        rsx! { span { class: "removed-badge", " (Pre Removed)" } }
+                                                    } else if info.removed_post {
+                                                        rsx! { span { class: "removed-badge", " (Post Removed)" } }
+                                                    } else {
+                                                        rsx! {}
+                                                    }
+                                                } else {
+                                                    rsx! {}
+                                                }
                                             }
                                         }
                                         td { class: "cell mono",
@@ -778,6 +877,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                         oncontextmenu: move |e| {
                                             e.prevent_default();
                                             selected_index.set(Some(cb.index));
+                                            let is_removed = removed_registry.read().contains_key(&cb.index);
                                             context_menu.set(CallbackContextMenuState {
                                                 visible: true,
                                                 x: e.page_coordinates().x as i32,
@@ -788,10 +888,16 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                                 object_type: None,
                                                 has_pre_op: false,
                                                 has_post_op: false,
+                                                is_removed,
                                             });
                                         },
 
-                                        td { class: "cell", "{cb.index}" }
+                                        td { class: "cell",
+                                            "{cb.index}"
+                                            if removed_registry.read().contains_key(&cb.index) {
+                                                span { class: "removed-badge", " (Removed)" }
+                                            }
+                                        }
                                         td { class: "cell mono", "0x{cb.callback_address:016X}" }
                                         td { class: "cell",
                                             if cb.module_offset > 0 {
@@ -862,6 +968,12 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                         oncontextmenu: move |e| {
                                             e.prevent_default();
                                             selected_index.set(Some(cb.index));
+                                            let is_removed = match current_type {
+                                                CallbackType::Process => removed_process.read().contains_key(&cb.index),
+                                                CallbackType::Thread => removed_thread.read().contains_key(&cb.index),
+                                                CallbackType::Image => removed_image.read().contains_key(&cb.index),
+                                                _ => false,
+                                            };
                                             context_menu.set(CallbackContextMenuState {
                                                 visible: true,
                                                 x: e.page_coordinates().x as i32,
@@ -872,10 +984,26 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                                 object_type: None,
                                                 has_pre_op: false,
                                                 has_post_op: false,
+                                                is_removed,
                                             });
                                         },
 
-                                        td { class: "cell", "{cb.index}" }
+                                        td { class: "cell",
+                                            "{cb.index}"
+                                            {
+                                                let is_removed = match current_type {
+                                                    CallbackType::Process => removed_process.read().contains_key(&cb.index),
+                                                    CallbackType::Thread => removed_thread.read().contains_key(&cb.index),
+                                                    CallbackType::Image => removed_image.read().contains_key(&cb.index),
+                                                    _ => false,
+                                                };
+                                                if is_removed {
+                                                    rsx! { span { class: "removed-badge", " (Removed)" } }
+                                                } else {
+                                                    rsx! {}
+                                                }
+                                            }
+                                        }
                                         td { class: "cell mono", "0x{cb.callback_address:016X}" }
                                         td { class: "cell",
                                             // Show module+offset format like TCKC
@@ -928,18 +1056,23 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                     // Divider and Remove/Restore buttons (only for Process/Thread/Image/Registry, not Object)
                     if current_type != CallbackType::Object {
                         div { class: "context-menu-divider" }
-                        button {
-                            class: "context-menu-item context-menu-danger",
-                            onclick: {
-                                let idx = ctx_menu.index;
-                                let module = ctx_menu.module.clone();
-                                move |_| {
-                                    handle_remove(idx, module.clone());
-                                    context_menu.set(CallbackContextMenuState::default());
-                                }
-                            },
-                            "Remove Callback"
+                        // Only show Remove if not already removed
+                        if !ctx_menu.is_removed {
+                            button {
+                                class: "context-menu-item context-menu-danger",
+                                onclick: {
+                                    let idx = ctx_menu.index;
+                                    let module = ctx_menu.module.clone();
+                                    let addr = ctx_menu.address;
+                                    move |_| {
+                                        handle_remove(idx, module.clone(), addr);
+                                        context_menu.set(CallbackContextMenuState::default());
+                                    }
+                                },
+                                "Remove Callback"
+                            }
                         }
+                        // Always show Restore (kernel will error if not previously removed)
                         button {
                             class: "context-menu-item context-menu-restore",
                             onclick: {

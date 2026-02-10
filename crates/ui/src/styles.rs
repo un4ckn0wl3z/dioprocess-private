@@ -807,6 +807,12 @@ const BASE_STYLES: &str = r#"
         background: rgba(34, 197, 94, 0.2);
         color: #4ade80;
     }
+    .removed-badge {
+        color: #f97316;
+        font-size: 11px;
+        font-weight: 500;
+        margin-left: 4px;
+    }
 
     /* Context Menu Submenu */
     .context-menu-submenu {
