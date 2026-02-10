@@ -504,3 +504,46 @@ struct HvInjectDllResponse
 	ULONG64 PathAddress;                          // Where path was written
 	BOOLEAN Success;
 };
+
+// ============== Early Injection IOCTLs ==============
+// Early injection injects DLLs before any user code executes (at process creation)
+
+#define IOCTL_DIOPROCESS_EARLY_INJECT_ARM \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x850, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_EARLY_INJECT_DISARM \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x851, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_EARLY_INJECT_STATUS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x852, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// ============== Early Injection Structures ==============
+
+// Injection method for early injection
+enum EarlyInjectionMethod : ULONG
+{
+	EarlyInjectTrampoline = 0,    // Hook LdrLoadDll at process creation via PsSetCreateProcessNotifyRoutineEx
+	EarlyInjectApcCallback = 1    // Queue APC when kernel32.dll loads via PsSetLoadImageNotifyRoutine
+};
+
+#define MAX_TARGET_PROCESS_NAME 64
+
+// Request to arm early injection
+struct EarlyInjectionArmRequest
+{
+	WCHAR TargetProcessName[MAX_TARGET_PROCESS_NAME];  // Process name pattern to match (e.g., "notepad.exe")
+	WCHAR DllPath[MAX_DLL_PATH_LENGTH];                // Full path to DLL to inject
+	EarlyInjectionMethod Method;                       // Injection method
+	BOOLEAN OneShot;                                   // Disarm after first injection
+};
+
+// Response for early injection status
+struct EarlyInjectionStatusResponse
+{
+	BOOLEAN Armed;                                     // Is early injection armed
+	WCHAR TargetProcessName[MAX_TARGET_PROCESS_NAME];  // Target process pattern
+	WCHAR DllPath[MAX_DLL_PATH_LENGTH];                // DLL path to inject
+	EarlyInjectionMethod Method;                       // Current method
+	ULONG InjectionCount;                              // Number of successful injections
+	ULONG LastInjectedPid;                             // PID of last injected process
+	NTSTATUS LastStatus;                               // Status of last injection attempt
+	BOOLEAN OneShot;                                   // One-shot mode enabled
+};

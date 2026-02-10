@@ -10,6 +10,7 @@
 //! - Hypervisor control and process protection
 
 mod driver;
+mod early_injection;
 mod error;
 mod hypervisor;
 mod pspcidtable;
@@ -31,6 +32,10 @@ pub use hypervisor::{
     hv_list_protected, hv_ping, hv_protect_process, hv_remove_hidden_driver, hv_remove_hooks,
     hv_start, hv_stop, hv_unhide_driver, hv_unprotect_process, HvInjectDllResult, HvInjectResult,
     HvStatus,
+};
+pub use early_injection::{
+    arm_early_injection, disarm_early_injection, get_early_injection_status,
+    EarlyInjectionMethod, EarlyInjectionStatus,
 };
 pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
 pub use storage::{EventFilter, EventStorage};
