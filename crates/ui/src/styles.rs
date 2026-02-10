@@ -788,6 +788,18 @@ const BASE_STYLES: &str = r#"
         background: var(--border-primary);
         margin: 4px 0;
     }
+    .context-menu-divider {
+        height: 1px;
+        background: var(--border-primary);
+        margin: 6px 4px;
+    }
+    .context-menu-danger {
+        color: #ef4444;
+    }
+    .context-menu-danger:hover:not(:disabled) {
+        background: rgba(239, 68, 68, 0.2);
+        color: #f87171;
+    }
 
     /* Context Menu Submenu */
     .context-menu-submenu {

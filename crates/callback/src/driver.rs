@@ -1236,35 +1236,44 @@ pub fn clear_debug_flags(pid: u32) -> Result<(), CallbackError> {
 }
 
 
-/// Information about a kernel callback
+/// Information about a kernel callback (TCKC style with RVA offset)
 #[derive(Debug, Clone)]
 pub struct CallbackInfo {
     pub module_name: String,
     pub callback_address: u64,
+    pub module_base: u64,     // Base address of the owning module
+    pub module_offset: u64,   // RVA offset within module (callback_address - module_base)
     pub index: u32,
 }
 
 /// Enumerate registered process creation callbacks
-/// Returns a vector of active callbacks with their owning module names
+/// Returns a vector of active callbacks with their owning module names and RVA offsets
 pub fn enumerate_process_callbacks() -> Result<Vec<CallbackInfo>, CallbackError> {
     let handle = open_device()?;
 
     const MAX_CALLBACKS: usize = 64;
     const MAX_MODULE_NAME: usize = 256;
 
+    // Must match kernel's CallbackInformation struct layout
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct RawCallbackInfo {
         module_name: [u8; MAX_MODULE_NAME],
         callback_address: u64,
+        module_base: u64,
+        module_offset: u64,
         index: u32,
+        _padding: u32, // Alignment padding
     }
 
     let mut buffer = vec![
         RawCallbackInfo {
             module_name: [0u8; MAX_MODULE_NAME],
             callback_address: 0,
+            module_base: 0,
+            module_offset: 0,
             index: 0,
+            _padding: 0,
         };
         MAX_CALLBACKS
     ];
@@ -1307,6 +1316,8 @@ pub fn enumerate_process_callbacks() -> Result<Vec<CallbackInfo>, CallbackError>
             callbacks.push(CallbackInfo {
                 module_name,
                 callback_address: raw.callback_address,
+                module_base: raw.module_base,
+                module_offset: raw.module_offset,
                 index: raw.index,
             });
         }
@@ -1333,19 +1344,26 @@ fn enumerate_callbacks_internal(ioctl_code: u32) -> Result<Vec<CallbackInfo>, Ca
     const MAX_CALLBACKS: usize = 64;
     const MAX_MODULE_NAME: usize = 256;
 
+    // Must match kernel's CallbackInformation struct layout
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct RawCallbackInfo {
         module_name: [u8; MAX_MODULE_NAME],
         callback_address: u64,
+        module_base: u64,
+        module_offset: u64,
         index: u32,
+        _padding: u32,
     }
 
     let mut buffer = vec![
         RawCallbackInfo {
             module_name: [0u8; MAX_MODULE_NAME],
             callback_address: 0,
+            module_base: 0,
+            module_offset: 0,
             index: 0,
+            _padding: 0,
         };
         MAX_CALLBACKS
     ];
@@ -1386,6 +1404,8 @@ fn enumerate_callbacks_internal(ioctl_code: u32) -> Result<Vec<CallbackInfo>, Ca
             callbacks.push(CallbackInfo {
                 module_name,
                 callback_address: raw.callback_address,
+                module_base: raw.module_base,
+                module_offset: raw.module_offset,
                 index: raw.index,
             });
         }
@@ -1460,6 +1480,9 @@ pub struct ObjectCallbackInfo {
     pub altitude: String,
     pub pre_operation_callback: u64,
     pub post_operation_callback: u64,
+    pub module_base: u64,           // Base address of owning module (OCKC style)
+    pub pre_operation_offset: u64,  // RVA offset for PreOperation (OCKC style)
+    pub post_operation_offset: u64, // RVA offset for PostOperation (OCKC style)
     pub object_type: ObjectCallbackType,
     pub operations: ObjectCallbackOperations,
     pub index: u32,
@@ -1481,6 +1504,9 @@ pub fn enumerate_object_callbacks() -> Result<Vec<ObjectCallbackInfo>, CallbackE
         altitude: [u8; MAX_ALTITUDE],
         pre_operation_callback: u64,
         post_operation_callback: u64,
+        module_base: u64,           // OCKC style
+        pre_operation_offset: u64,  // OCKC style
+        post_operation_offset: u64, // OCKC style
         object_type: u8,
         _padding: [u8; 3],
         operations: u32,
@@ -1552,6 +1578,9 @@ pub fn enumerate_object_callbacks() -> Result<Vec<ObjectCallbackInfo>, CallbackE
                 altitude,
                 pre_operation_callback: raw.pre_operation_callback,
                 post_operation_callback: raw.post_operation_callback,
+                module_base: raw.module_base,
+                pre_operation_offset: raw.pre_operation_offset,
+                post_operation_offset: raw.post_operation_offset,
                 object_type,
                 operations: ObjectCallbackOperations::from_u32(raw.operations),
                 index: raw.index,
@@ -1842,4 +1871,310 @@ pub fn enumerate_kernel_drivers() -> Result<Vec<KernelDriverInfo>, CallbackError
 
         Ok(drivers)
     }
+}
+
+// ============== Callback Removal ==============
+
+// IOCTL codes for callback removal
+// CTL_CODE(0x22, 0x812, 0, 0) = (0x22 << 16) | (0 << 14) | (0x812 << 2) | 0 = 0x00222048
+const IOCTL_DIOPROCESS_REMOVE_PROCESS_CALLBACK: u32 = 0x00222048;
+// CTL_CODE(0x22, 0x814, 0, 0)
+const IOCTL_DIOPROCESS_REMOVE_THREAD_CALLBACK: u32 = 0x00222050;
+// CTL_CODE(0x22, 0x815, 0, 0)
+const IOCTL_DIOPROCESS_REMOVE_IMAGE_CALLBACK: u32 = 0x00222054;
+// CTL_CODE(0x22, 0x816, 0, 0) = 0x00222058
+const IOCTL_DIOPROCESS_REMOVE_OBJECT_CALLBACK: u32 = 0x00222058;
+// CTL_CODE(0x22, 0x817, 0, 0) = 0x0022205C
+const IOCTL_DIOPROCESS_ENUM_REGISTRY_CALLBACKS: u32 = 0x0022205C;
+// CTL_CODE(0x22, 0x818, 0, 0) = 0x00222060
+const IOCTL_DIOPROCESS_REMOVE_REGISTRY_CALLBACK: u32 = 0x00222060;
+
+/// Request structure for removing callbacks (matches kernel struct)
+#[repr(C)]
+struct RemoveCallbackRequest {
+    index: u32,
+}
+
+/// Remove a process callback by index
+///
+/// This zeroes out the callback slot in the PspSetCreateProcessNotifyRoutine array,
+/// effectively removing the callback. The callback function remains in memory but
+/// will no longer be called by Windows.
+///
+/// # Safety
+/// This operation modifies kernel structures. Only use for authorized security research.
+pub fn remove_process_callback(index: u32) -> Result<(), CallbackError> {
+    remove_callback_internal(index, IOCTL_DIOPROCESS_REMOVE_PROCESS_CALLBACK)
+}
+
+/// Remove a thread callback by index
+///
+/// This zeroes out the callback slot in the PspCreateThreadNotifyRoutine array.
+pub fn remove_thread_callback(index: u32) -> Result<(), CallbackError> {
+    remove_callback_internal(index, IOCTL_DIOPROCESS_REMOVE_THREAD_CALLBACK)
+}
+
+/// Remove an image load callback by index
+///
+/// This zeroes out the callback slot in the PspLoadImageNotifyRoutine array.
+pub fn remove_image_callback(index: u32) -> Result<(), CallbackError> {
+    remove_callback_internal(index, IOCTL_DIOPROCESS_REMOVE_IMAGE_CALLBACK)
+}
+
+/// Internal helper for removing callbacks
+fn remove_callback_internal(index: u32, ioctl_code: u32) -> Result<(), CallbackError> {
+    if index >= 64 {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = RemoveCallbackRequest { index };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            ioctl_code,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<RemoveCallbackRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+// ============== Object Callback Removal (OCKC style) ==============
+
+/// Request structure for removing object callbacks (matches kernel struct)
+#[repr(C)]
+struct RemoveObjectCallbackRequest {
+    index: u32,
+    object_type: u8,  // ObjectCallbackType enum (UCHAR)
+    _padding: [u8; 3],
+    remove_pre_operation: u32,  // ULONG in kernel
+    remove_post_operation: u32, // ULONG in kernel
+}
+
+/// Remove an object callback by index (OCKC style)
+///
+/// Uses InterlockedExchangePointer to NULL out PreOperation/PostOperation callbacks.
+/// This is safer than removing the entire callback entry from the linked list.
+///
+/// # Arguments
+/// * `index` - The callback entry index
+/// * `object_type` - Process or Thread
+/// * `remove_pre` - Whether to remove the PreOperation callback
+/// * `remove_post` - Whether to remove the PostOperation callback
+///
+/// # Safety
+/// This operation modifies kernel structures. Only use for authorized security research.
+pub fn remove_object_callback(
+    index: u32,
+    object_type: ObjectCallbackType,
+    remove_pre: bool,
+    remove_post: bool,
+) -> Result<(), CallbackError> {
+    if !remove_pre && !remove_post {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = RemoveObjectCallbackRequest {
+            index,
+            object_type: object_type as u8,
+            _padding: [0; 3],
+            remove_pre_operation: if remove_pre { 1 } else { 0 },
+            remove_post_operation: if remove_post { 1 } else { 0 },
+        };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_REMOVE_OBJECT_CALLBACK,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<RemoveObjectCallbackRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+// ============== Registry Callback Enumeration and Removal (RCK style) ==============
+
+const MAX_REGISTRY_CALLBACK_ENTRIES: usize = 64;
+
+/// Information about a registry callback
+#[derive(Debug, Clone)]
+pub struct RegistryCallbackInfo {
+    /// Driver module name that registered the callback
+    pub module_name: String,
+    /// Callback altitude (priority)
+    pub altitude: String,
+    /// Callback function address in kernel
+    pub callback_address: u64,
+    /// Callback context value
+    pub context: u64,
+    /// Base address of the owning module
+    pub module_base: u64,
+    /// RVA offset for callback function (callback_address - module_base)
+    pub module_offset: u64,
+    /// Entry index in linked list
+    pub index: u32,
+}
+
+/// Raw registry callback info structure (matches kernel struct)
+#[repr(C)]
+struct RawRegistryCallbackInfo {
+    module_name: [u8; 256],  // MAX_MODULE_NAME_LENGTH
+    altitude: [u8; 64],      // MAX_ALTITUDE_LENGTH
+    callback_address: u64,
+    context: u64,
+    module_base: u64,
+    module_offset: u64,
+    index: u32,
+}
+
+/// Response structure for registry callback enumeration
+#[repr(C)]
+struct EnumRegistryCallbacksResponse {
+    count: u32,
+    entries: [RawRegistryCallbackInfo; MAX_REGISTRY_CALLBACK_ENTRIES],
+}
+
+/// Request structure for removing registry callbacks
+#[repr(C)]
+struct RemoveRegistryCallbackRequest {
+    index: u32,
+}
+
+/// Enumerate all registered registry callbacks (CmRegisterCallback)
+///
+/// Returns a list of all callbacks registered via CmRegisterCallback/CmRegisterCallbackEx.
+/// Each entry includes the callback address, owning module, altitude, and context.
+pub fn enumerate_registry_callbacks() -> Result<Vec<RegistryCallbackInfo>, CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let mut response = std::mem::zeroed::<EnumRegistryCallbacksResponse>();
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_ENUM_REGISTRY_CALLBACKS,
+            None,
+            0,
+            Some(&mut response as *mut _ as *mut _),
+            std::mem::size_of::<EnumRegistryCallbacksResponse>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+
+        let mut callbacks = Vec::with_capacity(response.count as usize);
+
+        for i in 0..response.count as usize {
+            if i >= MAX_REGISTRY_CALLBACK_ENTRIES {
+                break;
+            }
+
+            let raw = &response.entries[i];
+
+            // Skip entries with no callback address
+            if raw.callback_address == 0 {
+                continue;
+            }
+
+            // Parse module name
+            let module_end = raw.module_name.iter().position(|&c| c == 0).unwrap_or(raw.module_name.len());
+            let module_name = String::from_utf8_lossy(&raw.module_name[..module_end]).to_string();
+
+            // Parse altitude
+            let alt_end = raw.altitude.iter().position(|&c| c == 0).unwrap_or(raw.altitude.len());
+            let altitude = String::from_utf8_lossy(&raw.altitude[..alt_end]).to_string();
+
+            callbacks.push(RegistryCallbackInfo {
+                module_name,
+                altitude,
+                callback_address: raw.callback_address,
+                context: raw.context,
+                module_base: raw.module_base,
+                module_offset: raw.module_offset,
+                index: raw.index,
+            });
+        }
+
+        Ok(callbacks)
+    }
+}
+
+/// Remove a registry callback by index (RCK style)
+///
+/// This removes the callback from the kernel's callback linked list and zeros
+/// out the callback function pointer. The callback will no longer be invoked
+/// for registry operations.
+///
+/// # Safety
+/// This operation modifies kernel structures. Only use for authorized security research.
+pub fn remove_registry_callback(index: u32) -> Result<(), CallbackError> {
+    if index >= MAX_REGISTRY_CALLBACK_ENTRIES as u32 {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = RemoveRegistryCallbackRequest { index };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_REMOVE_REGISTRY_CALLBACK,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<RemoveRegistryCallbackRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
 }

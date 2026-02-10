@@ -1,6 +1,10 @@
 //! Callback Enumeration sub-tab
 
-use callback::{enumerate_object_callbacks, ObjectCallbackInfo, ObjectCallbackType};
+use callback::{
+    enumerate_object_callbacks, enumerate_registry_callbacks, remove_image_callback,
+    remove_object_callback, remove_process_callback, remove_registry_callback,
+    remove_thread_callback, ObjectCallbackInfo, ObjectCallbackType, RegistryCallbackInfo,
+};
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 
@@ -14,6 +18,7 @@ enum CallbackType {
     Thread,
     Image,
     Object,
+    Registry,
 }
 
 /// Sort column for callback table
@@ -33,6 +38,9 @@ struct CallbackContextMenuState {
     index: u32,
     address: u64,
     module: String,
+    object_type: Option<ObjectCallbackType>, // For object callbacks (OCKC style)
+    has_pre_op: bool,                         // Whether callback has PreOperation
+    has_post_op: bool,                        // Whether callback has PostOperation
 }
 
 /// Callback Enumeration sub-tab
@@ -41,6 +49,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
     let mut callback_type = use_signal(|| CallbackType::Process);
     let mut callbacks = use_signal(Vec::<callback::CallbackInfo>::new);
     let mut object_callbacks = use_signal(Vec::<ObjectCallbackInfo>::new);
+    let mut registry_callbacks = use_signal(Vec::<RegistryCallbackInfo>::new);
     let mut is_enumerating = use_signal(|| false);
     let mut status_message = use_signal(|| String::new());
     let mut search_query = use_signal(|| String::new());
@@ -69,7 +78,8 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                     Ok(Ok(cb_list)) => {
                         let count = cb_list.len();
                         object_callbacks.set(cb_list);
-                        callbacks.set(Vec::new()); // Clear regular callbacks
+                        callbacks.set(Vec::new());
+                        registry_callbacks.set(Vec::new());
                         status_message.set(format!("✓ Found {} object callbacks", count));
                     }
                     Ok(Err(e)) => {
@@ -79,13 +89,32 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                         status_message.set(format!("✗ Task error: {}", e));
                     }
                 }
+            } else if cb_type == CallbackType::Registry {
+                // Handle Registry callbacks (RCK style)
+                let result = tokio::task::spawn_blocking(enumerate_registry_callbacks).await;
+
+                match result {
+                    Ok(Ok(cb_list)) => {
+                        let count = cb_list.len();
+                        registry_callbacks.set(cb_list);
+                        callbacks.set(Vec::new());
+                        object_callbacks.set(Vec::new());
+                        status_message.set(format!("✓ Found {} registry callbacks", count));
+                    }
+                    Ok(Err(e)) => {
+                        status_message.set(format!("✗ Error: {}", e));
+                    }
+                    Err(e) => {
+                        status_message.set(format!("✗ Task error: {}", e));
+                    }
+                }
             } else {
-                // Handle regular callbacks
+                // Handle regular callbacks (Process/Thread/Image)
                 let result = tokio::task::spawn_blocking(move || match cb_type {
                     CallbackType::Process => callback::enumerate_process_callbacks(),
                     CallbackType::Thread => callback::enumerate_thread_callbacks(),
                     CallbackType::Image => callback::enumerate_image_callbacks(),
-                    CallbackType::Object => unreachable!(),
+                    CallbackType::Object | CallbackType::Registry => unreachable!(),
                 })
                 .await;
 
@@ -93,7 +122,8 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                     Ok(Ok(cb_list)) => {
                         let count = cb_list.len();
                         callbacks.set(cb_list);
-                        object_callbacks.set(Vec::new()); // Clear object callbacks
+                        object_callbacks.set(Vec::new());
+                        registry_callbacks.set(Vec::new());
                         status_message.set(format!("✓ Found {} active callbacks", count));
                     }
                     Ok(Err(e)) => {
@@ -114,6 +144,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
         let cb_type = *callback_type.read();
         let cb_list = callbacks.read().clone();
         let obj_cb_list = object_callbacks.read().clone();
+        let reg_cb_list = registry_callbacks.read().clone();
         spawn(async move {
             if let Some(file) = AsyncFileDialog::new()
                 .set_file_name("callbacks.csv")
@@ -137,12 +168,23 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                         ));
                     }
                     csv
+                } else if cb_type == CallbackType::Registry {
+                    let mut csv = String::from("Index,Address,Module,ModuleBase,Offset,Altitude,Context\n");
+                    for cb in reg_cb_list.iter() {
+                        csv.push_str(&format!(
+                            "{},0x{:016X},{},0x{:016X},0x{:X},{},0x{:016X}\n",
+                            cb.index, cb.callback_address, cb.module_name,
+                            cb.module_base, cb.module_offset, cb.altitude, cb.context
+                        ));
+                    }
+                    csv
                 } else {
-                    let mut csv = String::from("Index,Address,Module\n");
+                    let mut csv = String::from("Index,Address,Module,ModuleBase,Offset\n");
                     for cb in cb_list.iter() {
                         csv.push_str(&format!(
-                            "{},0x{:016X},{}\n",
-                            cb.index, cb.callback_address, cb.module_name
+                            "{},0x{:016X},{},0x{:016X},0x{:X}\n",
+                            cb.index, cb.callback_address, cb.module_name,
+                            cb.module_base, cb.module_offset
                         ));
                     }
                     csv
@@ -164,6 +206,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
     // Get all the data we need before rsx!
     let callback_list = callbacks.read().clone();
     let object_callback_list = object_callbacks.read().clone();
+    let registry_callback_list = registry_callbacks.read().clone();
     let query = search_query.read().to_lowercase();
     let col = *sort_column.read();
     let order = *sort_order.read();
@@ -239,13 +282,49 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
         }
     });
 
+    // Filter and sort registry callbacks
+    let mut filtered_registry_list: Vec<RegistryCallbackInfo> = registry_callback_list
+        .iter()
+        .filter(|c| {
+            if query.is_empty() {
+                return true;
+            }
+            c.module_name.to_lowercase().contains(&query)
+                || c.altitude.to_lowercase().contains(&query)
+                || format!("{:016X}", c.callback_address)
+                    .to_lowercase()
+                    .contains(&query)
+                || c.index.to_string().contains(&query)
+        })
+        .cloned()
+        .collect();
+
+    filtered_registry_list.sort_by(|a, b| {
+        let cmp = match col {
+            CallbackSortColumn::Index => a.index.cmp(&b.index),
+            CallbackSortColumn::Address => a.callback_address.cmp(&b.callback_address),
+            CallbackSortColumn::Module => a
+                .module_name
+                .to_lowercase()
+                .cmp(&b.module_name.to_lowercase()),
+        };
+        if order == SortOrder::Descending {
+            cmp.reverse()
+        } else {
+            cmp
+        }
+    });
+
     let is_running = *is_enumerating.read();
     let status_msg = status_message.read().clone();
     let query_text = search_query.read().clone();
     let ctx_menu = context_menu.read().clone();
     let is_object_type = current_type == CallbackType::Object;
+    let is_registry_type = current_type == CallbackType::Registry;
     let has_data = if is_object_type {
         !object_callback_list.is_empty()
+    } else if is_registry_type {
+        !registry_callback_list.is_empty()
     } else {
         !callback_list.is_empty()
     };
@@ -280,6 +359,88 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
         }
     };
 
+    // Handle remove callback
+    let handle_remove = move |index: u32, module_name: String| {
+        let cb_type = *callback_type.read();
+
+        spawn(async move {
+            let result = tokio::task::spawn_blocking(move || match cb_type {
+                CallbackType::Process => remove_process_callback(index),
+                CallbackType::Thread => remove_thread_callback(index),
+                CallbackType::Image => remove_image_callback(index),
+                CallbackType::Registry => remove_registry_callback(index),
+                CallbackType::Object => {
+                    // Object callbacks cannot be removed this way - use handle_remove_object
+                    Err(callback::CallbackError::IoctlFailed(0))
+                }
+            })
+            .await;
+
+            match result {
+                Ok(Ok(())) => {
+                    status_message.set(format!(
+                        "Removed {} callback at index {} ({})",
+                        match cb_type {
+                            CallbackType::Process => "process",
+                            CallbackType::Thread => "thread",
+                            CallbackType::Image => "image",
+                            CallbackType::Registry => "registry",
+                            CallbackType::Object => "object",
+                        },
+                        index,
+                        module_name
+                    ));
+                }
+                Ok(Err(e)) => {
+                    status_message.set(format!("Failed to remove callback: {:?}", e));
+                }
+                Err(e) => {
+                    status_message.set(format!("Task error: {}", e));
+                }
+            }
+        });
+    };
+
+    // Handle remove object callback (OCKC style - uses InterlockedExchangePointer)
+    let handle_remove_object =
+        move |index: u32, obj_type: ObjectCallbackType, remove_pre: bool, remove_post: bool| {
+            let module_name = {
+                let ctx = context_menu.read();
+                ctx.module.clone()
+            };
+
+            spawn(async move {
+                let result = tokio::task::spawn_blocking(move || {
+                    remove_object_callback(index, obj_type, remove_pre, remove_post)
+                })
+                .await;
+
+                match result {
+                    Ok(Ok(())) => {
+                        let ops = match (remove_pre, remove_post) {
+                            (true, true) => "Pre+Post",
+                            (true, false) => "Pre",
+                            (false, true) => "Post",
+                            _ => "",
+                        };
+                        status_message.set(format!(
+                            "Removed {} object callback {} at index {} ({})",
+                            obj_type.as_str(),
+                            ops,
+                            index,
+                            module_name
+                        ));
+                    }
+                    Ok(Err(e)) => {
+                        status_message.set(format!("Failed to remove object callback: {:?}", e));
+                    }
+                    Err(e) => {
+                        status_message.set(format!("Task error: {}", e));
+                    }
+                }
+            });
+        };
+
     rsx! {
         div {
             style: "display: flex; flex-direction: column; flex: 1; overflow: hidden;",
@@ -296,6 +457,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                         callback_type.set(CallbackType::Process);
                         callbacks.set(Vec::new());
                         object_callbacks.set(Vec::new());
+                        registry_callbacks.set(Vec::new());
                         status_message.set(String::new());
                     },
                     "Process"
@@ -306,6 +468,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                         callback_type.set(CallbackType::Thread);
                         callbacks.set(Vec::new());
                         object_callbacks.set(Vec::new());
+                        registry_callbacks.set(Vec::new());
                         status_message.set(String::new());
                     },
                     "Thread"
@@ -316,6 +479,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                         callback_type.set(CallbackType::Image);
                         callbacks.set(Vec::new());
                         object_callbacks.set(Vec::new());
+                        registry_callbacks.set(Vec::new());
                         status_message.set(String::new());
                     },
                     "Image Load"
@@ -326,9 +490,21 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                         callback_type.set(CallbackType::Object);
                         callbacks.set(Vec::new());
                         object_callbacks.set(Vec::new());
+                        registry_callbacks.set(Vec::new());
                         status_message.set(String::new());
                     },
                     "Object"
+                }
+                button {
+                    class: if current_type == CallbackType::Registry { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| {
+                        callback_type.set(CallbackType::Registry);
+                        callbacks.set(Vec::new());
+                        object_callbacks.set(Vec::new());
+                        registry_callbacks.set(Vec::new());
+                        status_message.set(String::new());
+                    },
+                    "Registry"
                 }
 
                 // Search bar
@@ -425,6 +601,9 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                                 index: cb.index,
                                                 address: cb.pre_operation_callback,
                                                 module: cb.module_name.clone(),
+                                                object_type: Some(cb.object_type),
+                                                has_pre_op: cb.pre_operation_callback != 0,
+                                                has_post_op: cb.post_operation_callback != 0,
                                             });
                                         },
 
@@ -458,8 +637,93 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                             }
                         }
                     }
+                } else if is_registry_type {
+                    // Registry callback table (RCK style)
+                    table { class: "process-table",
+                        thead { class: "table-header",
+                            tr {
+                                th {
+                                    class: "th sortable",
+                                    onclick: make_sort_handler(CallbackSortColumn::Index),
+                                    "Index{sort_indicator(CallbackSortColumn::Index)}"
+                                }
+                                th {
+                                    class: "th sortable",
+                                    onclick: make_sort_handler(CallbackSortColumn::Address),
+                                    "Callback Address{sort_indicator(CallbackSortColumn::Address)}"
+                                }
+                                th {
+                                    class: "th sortable",
+                                    onclick: make_sort_handler(CallbackSortColumn::Module),
+                                    "Driver Module{sort_indicator(CallbackSortColumn::Module)}"
+                                }
+                                th { class: "th", "Altitude" }
+                            }
+                        }
+
+                        tbody {
+                            if filtered_registry_list.is_empty() && !registry_callback_list.is_empty() {
+                                tr {
+                                    td { colspan: "4", class: "no-results",
+                                        "No callbacks match your search"
+                                    }
+                                }
+                            } else if registry_callback_list.is_empty() {
+                                tr {
+                                    td { colspan: "4", class: "no-results",
+                                        if driver_loaded {
+                                            "Click 'Refresh' to enumerate registry callbacks"
+                                        } else {
+                                            "Driver not loaded - Load DioProcess.sys to use this feature"
+                                        }
+                                    }
+                                }
+                            } else {
+                                for cb in filtered_registry_list.into_iter() {
+                                    tr {
+                                        key: "{cb.index}",
+                                        class: if *selected_index.read() == Some(cb.index) { "process-row selected" } else { "process-row" },
+                                        onclick: move |_| {
+                                            let current = *selected_index.read();
+                                            if current == Some(cb.index) {
+                                                selected_index.set(None);
+                                            } else {
+                                                selected_index.set(Some(cb.index));
+                                            }
+                                        },
+                                        oncontextmenu: move |e| {
+                                            e.prevent_default();
+                                            selected_index.set(Some(cb.index));
+                                            context_menu.set(CallbackContextMenuState {
+                                                visible: true,
+                                                x: e.page_coordinates().x as i32,
+                                                y: e.page_coordinates().y as i32,
+                                                index: cb.index,
+                                                address: cb.callback_address,
+                                                module: cb.module_name.clone(),
+                                                object_type: None,
+                                                has_pre_op: false,
+                                                has_post_op: false,
+                                            });
+                                        },
+
+                                        td { class: "cell", "{cb.index}" }
+                                        td { class: "cell mono", "0x{cb.callback_address:016X}" }
+                                        td { class: "cell",
+                                            if cb.module_offset > 0 {
+                                                "{cb.module_name}+0x{cb.module_offset:X}"
+                                            } else {
+                                                "{cb.module_name}"
+                                            }
+                                        }
+                                        td { class: "cell mono", "{cb.altitude}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 } else {
-                    // Regular callback table
+                    // Regular callback table (Process/Thread/Image)
                     table { class: "process-table",
                         thead { class: "table-header",
                             tr {
@@ -521,12 +785,22 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                                 index: cb.index,
                                                 address: cb.callback_address,
                                                 module: cb.module_name.clone(),
+                                                object_type: None,
+                                                has_pre_op: false,
+                                                has_post_op: false,
                                             });
                                         },
 
                                         td { class: "cell", "{cb.index}" }
                                         td { class: "cell mono", "0x{cb.callback_address:016X}" }
-                                        td { class: "cell", "{cb.module_name}" }
+                                        td { class: "cell",
+                                            // Show module+offset format like TCKC
+                                            if cb.module_offset > 0 {
+                                                "{cb.module_name}+0x{cb.module_offset:X}"
+                                            } else {
+                                                "{cb.module_name}"
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -565,6 +839,76 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                             context_menu.set(CallbackContextMenuState::default());
                         },
                         "Copy Module"
+                    }
+
+                    // Divider and Remove button (only for Process/Thread/Image, not Object)
+                    if current_type != CallbackType::Object && ctx_menu.address != 0 {
+                        div { class: "context-menu-divider" }
+                        button {
+                            class: "context-menu-item context-menu-danger",
+                            onclick: {
+                                let idx = ctx_menu.index;
+                                let module = ctx_menu.module.clone();
+                                move |_| {
+                                    handle_remove(idx, module.clone());
+                                    context_menu.set(CallbackContextMenuState::default());
+                                }
+                            },
+                            "Remove Callback"
+                        }
+                    }
+
+                    // Object callback removal options (OCKC style)
+                    if current_type == CallbackType::Object && (ctx_menu.has_pre_op || ctx_menu.has_post_op) {
+                        div { class: "context-menu-divider" }
+
+                        // Remove PreOperation
+                        if ctx_menu.has_pre_op {
+                            button {
+                                class: "context-menu-item context-menu-danger",
+                                onclick: {
+                                    let idx = ctx_menu.index;
+                                    let obj_type = ctx_menu.object_type.unwrap_or(ObjectCallbackType::Process);
+                                    move |_| {
+                                        handle_remove_object(idx, obj_type, true, false);
+                                        context_menu.set(CallbackContextMenuState::default());
+                                    }
+                                },
+                                "Remove Pre-Operation"
+                            }
+                        }
+
+                        // Remove PostOperation
+                        if ctx_menu.has_post_op {
+                            button {
+                                class: "context-menu-item context-menu-danger",
+                                onclick: {
+                                    let idx = ctx_menu.index;
+                                    let obj_type = ctx_menu.object_type.unwrap_or(ObjectCallbackType::Process);
+                                    move |_| {
+                                        handle_remove_object(idx, obj_type, false, true);
+                                        context_menu.set(CallbackContextMenuState::default());
+                                    }
+                                },
+                                "Remove Post-Operation"
+                            }
+                        }
+
+                        // Remove Both
+                        if ctx_menu.has_pre_op && ctx_menu.has_post_op {
+                            button {
+                                class: "context-menu-item context-menu-danger",
+                                onclick: {
+                                    let idx = ctx_menu.index;
+                                    let obj_type = ctx_menu.object_type.unwrap_or(ObjectCallbackType::Process);
+                                    move |_| {
+                                        handle_remove_object(idx, obj_type, true, true);
+                                        context_menu.set(CallbackContextMenuState::default());
+                                    }
+                                },
+                                "Remove Both"
+                            }
+                        }
                     }
                 }
             }

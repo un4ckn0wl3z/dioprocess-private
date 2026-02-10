@@ -180,6 +180,22 @@ struct EventData
 #define IOCTL_DIOPROCESS_ENUM_MINIFILTERS \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x811, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// Callback removal IOCTLs
+#define IOCTL_DIOPROCESS_REMOVE_PROCESS_CALLBACK \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x812, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_REMOVE_THREAD_CALLBACK \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x814, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_REMOVE_IMAGE_CALLBACK \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x815, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_REMOVE_OBJECT_CALLBACK \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x816, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Registry callback enumeration and removal IOCTLs (RCK style)
+#define IOCTL_DIOPROCESS_ENUM_REGISTRY_CALLBACKS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x817, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_REMOVE_REGISTRY_CALLBACK \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x818, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 // ============== Hypervisor Control IOCTLs ==============
 
 #define IOCTL_DIOPROCESS_HV_START \
@@ -326,7 +342,15 @@ struct CallbackInformation
 {
 	CHAR ModuleName[MAX_MODULE_NAME_LENGTH];
 	ULONG64 CallbackAddress;
-	ULONG Index;  // Position in the callback array
+	ULONG64 ModuleBase;     // Base address of the module (for RVA calculation)
+	ULONG64 ModuleOffset;   // RVA offset within the module (CallbackAddress - ModuleBase)
+	ULONG Index;            // Position in the callback array (0-63)
+};
+
+// Request structure for removing callbacks
+struct RemoveCallbackRequest
+{
+	ULONG Index;  // Callback slot index (0-63)
 };
 
 // ============== Object Callback Enumeration Structures ==============
@@ -354,15 +378,55 @@ struct ObjectCallbackInfo
 	CHAR Altitude[MAX_ALTITUDE_LENGTH];           // Callback altitude (priority)
 	ULONG64 PreOperationCallback;                 // Pre-operation callback address
 	ULONG64 PostOperationCallback;                // Post-operation callback address
+	ULONG64 ModuleBase;                           // Base address of owning module (OCKC style)
+	ULONG64 PreOperationOffset;                   // RVA offset for PreOperation (OCKC style)
+	ULONG64 PostOperationOffset;                  // RVA offset for PostOperation (OCKC style)
 	ObjectCallbackType ObjectType;                // Process or Thread
 	ObjectCallbackOperations Operations;          // Which operations are monitored
 	ULONG Index;                                  // Entry index
+};
+
+// Request structure for removing object callbacks (OCKC style)
+struct RemoveObjectCallbackRequest
+{
+	ULONG Index;                                  // Callback entry index
+	ObjectCallbackType ObjectType;                // Process or Thread
+	UCHAR _padding[3];                            // Alignment padding
+	ULONG RemovePreOperation;                     // Remove PreOperation callback (non-zero = true)
+	ULONG RemovePostOperation;                    // Remove PostOperation callback (non-zero = true)
 };
 
 struct EnumObjectCallbacksResponse
 {
 	ULONG Count;                                  // Number of entries returned
 	ObjectCallbackInfo Entries[1];                // Variable length array
+};
+
+// ============== Registry Callback Enumeration Structures (RCK style) ==============
+
+#define MAX_REGISTRY_CALLBACK_ENTRIES 64
+
+struct RegistryCallbackInfo
+{
+	CHAR ModuleName[MAX_MODULE_NAME_LENGTH];      // Driver that registered the callback
+	CHAR Altitude[MAX_ALTITUDE_LENGTH];           // Callback altitude (priority)
+	ULONG64 CallbackAddress;                      // Callback function address
+	ULONG64 Context;                              // Callback context value
+	ULONG64 ModuleBase;                           // Base address of owning module
+	ULONG64 ModuleOffset;                         // RVA offset for callback function
+	ULONG Index;                                  // Entry index in linked list
+};
+
+// Request structure for removing registry callbacks (RCK style)
+struct RemoveRegistryCallbackRequest
+{
+	ULONG Index;                                  // Callback entry index in linked list
+};
+
+struct EnumRegistryCallbacksResponse
+{
+	ULONG Count;                                  // Number of entries returned
+	RegistryCallbackInfo Entries[1];              // Variable length array
 };
 
 // ============== Minifilter Enumeration Structures ==============
