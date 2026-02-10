@@ -44,13 +44,7 @@ VOID EarlyInjectionGetStatus(_Out_ EarlyInjectionStatusResponse* Status);
 BOOLEAN EarlyInjectionMatchesTarget(_In_ PUNICODE_STRING ProcessName);
 
 // ============== Injection Technique Functions ==============
-
-// Trampoline injection: hooks LdrLoadDll in target process
-// Called from process creation callback
-BOOLEAN EarlyInjectTrampoline_Execute(
-	_In_ PEPROCESS Process,
-	_In_ HANDLE ProcessId
-);
+// NOTE: Trampoline method removed due to stability issues. Only APC is supported.
 
 // APC injection: queues APC when kernel32.dll loads
 // Called from image load callback with kernel32.dll base address
@@ -60,9 +54,6 @@ BOOLEAN EarlyInjectApc_Execute(
 );
 
 // ============== Helper Functions ==============
-
-// Get ntdll.dll base address in a process
-PVOID GetNtdllBaseAddress(_In_ PEPROCESS Process);
 
 // Get export address from a module
 PVOID GetProcAddressFromModule(

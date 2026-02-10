@@ -10,50 +10,8 @@ VOID OnProcessCallback(_Inout_ PEPROCESS Process, _In_ HANDLE ProcessId, _Inout_
 	{
 		KdPrint((DRIVER_PREFIX "Process (%u) Created\n", HandleToUlong(ProcessId)));
 
-		// Check for early injection trigger (Trampoline method)
-		if (CreateInfo->FileOpenNameAvailable && CreateInfo->ImageFileName)
-		{
-			if (EarlyInjectionMatchesTarget((PUNICODE_STRING)CreateInfo->ImageFileName))
-			{
-				KdPrint((DRIVER_PREFIX "Early injection target matched: %wZ (PID: %u)\n",
-					CreateInfo->ImageFileName, HandleToULong(ProcessId)));
-
-				// Only trigger if using Trampoline method
-				ExAcquireFastMutex(&g_EarlyInjectionState.Lock);
-				BOOLEAN armed = g_EarlyInjectionState.Armed;
-				EarlyInjectionMethod method = g_EarlyInjectionState.Method;
-				BOOLEAN oneShot = g_EarlyInjectionState.OneShot;
-				ExReleaseFastMutex(&g_EarlyInjectionState.Lock);
-
-				if (armed && method == EarlyInjectTrampoline)
-				{
-					BOOLEAN success = EarlyInjectTrampoline_Execute(Process, ProcessId);
-
-					ExAcquireFastMutex(&g_EarlyInjectionState.Lock);
-					if (success)
-					{
-						g_EarlyInjectionState.InjectionCount++;
-						g_EarlyInjectionState.LastInjectedPid = HandleToULong(ProcessId);
-						g_EarlyInjectionState.LastStatus = STATUS_SUCCESS;
-						KdPrint((DRIVER_PREFIX "Early injection (Trampoline) successful for PID %u\n",
-							HandleToULong(ProcessId)));
-
-						if (oneShot)
-						{
-							g_EarlyInjectionState.Armed = FALSE;
-							KdPrint((DRIVER_PREFIX "One-shot mode: early injection disarmed\n"));
-						}
-					}
-					else
-					{
-						g_EarlyInjectionState.LastStatus = STATUS_UNSUCCESSFUL;
-						KdPrint((DRIVER_PREFIX "Early injection (Trampoline) failed for PID %u\n",
-							HandleToULong(ProcessId)));
-					}
-					ExReleaseFastMutex(&g_EarlyInjectionState.Lock);
-				}
-			}
-		}
+		// NOTE: Trampoline early injection method removed due to stability issues
+		// Only APC method is now supported (triggered from ImageCallback when kernel32.dll loads)
 		auto commandLineLength = 0;
 
 		if (CreateInfo->CommandLine)
