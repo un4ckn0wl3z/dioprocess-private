@@ -6,6 +6,9 @@
 
 #pragma comment(lib, "aux_klib.lib")
 
+EXTERN_C NTKERNELAPI NTSTATUS IoCreateDriver(PUNICODE_STRING DriverName, PDRIVER_INITIALIZE InitializationFunction);
+
+
 // ============== Global Variable Definitions ==============
 
 DioProcessState g_State;
@@ -119,10 +122,9 @@ void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 
 // ============== Driver Entry ==============
 
-extern "C"
-NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
+EXTERN_C NTSTATUS driver_main(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegisterPath)
 {
-	UNREFERENCED_PARAMETER(RegistryPath);
+	UNREFERENCED_PARAMETER(RegisterPath);
 
 	NTSTATUS status;
 	PDEVICE_OBJECT devObj = nullptr;
@@ -190,4 +192,12 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 
 	KdPrint((DRIVER_PREFIX "Driver loaded successfully (callbacks NOT registered yet)\n"));
 	return STATUS_SUCCESS;
+}
+
+
+EXTERN_C NTSTATUS DriverEntry()
+{
+	UNICODE_STRING DriverName = { 0 };
+	RtlInitUnicodeString(&DriverName, L"\\Driver\\DioProcess");
+	return IoCreateDriver(&DriverName, &driver_main);
 }
