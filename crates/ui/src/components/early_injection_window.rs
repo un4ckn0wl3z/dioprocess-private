@@ -13,7 +13,8 @@ use crate::state::EARLY_INJECTION_WINDOW_STATE;
 pub fn EarlyInjectionWindow() -> Element {
     let mut target_process = use_signal(|| String::new());
     let mut dll_path = use_signal(|| String::new());
-    let mut method = use_signal(|| EarlyInjectionMethod::Trampoline);
+    // Only APC method is supported (Trampoline removed due to stability issues)
+    let method = EarlyInjectionMethod::ApcCallback;
     let mut one_shot = use_signal(|| true);
     let mut status_message = use_signal(|| String::new());
     let mut status_is_error = use_signal(|| false);
@@ -39,7 +40,6 @@ pub fn EarlyInjectionWindow() -> Element {
                         if status.armed {
                             target_process.set(status.target_process_name);
                             dll_path.set(status.dll_path);
-                            method.set(status.method);
                             one_shot.set(status.one_shot);
                         }
                         injection_count.set(status.injection_count);
@@ -90,7 +90,7 @@ pub fn EarlyInjectionWindow() -> Element {
 
         let current_target = target_process.read().clone();
         let current_dll = dll_path.read().clone();
-        let current_method = *method.read();
+        let current_method = method;  // Always APC
         let current_one_shot = *one_shot.read();
 
         if current_target.is_empty() {
@@ -269,23 +269,14 @@ pub fn EarlyInjectionWindow() -> Element {
                         }
                     }
 
-                    // Method selector
+                    // Injection method (APC only - Trampoline removed due to stability issues)
                     div { class: "create-process-field",
                         label { class: "create-process-label", "Injection Method" }
-                        select {
-                            class: "create-process-select",
-                            disabled: !driver_ok || is_armed,
-                            value: if *method.read() == EarlyInjectionMethod::Trampoline { "trampoline" } else { "apc" },
-                            onchange: move |e| {
-                                let val = e.value();
-                                method.set(if val == "trampoline" {
-                                    EarlyInjectionMethod::Trampoline
-                                } else {
-                                    EarlyInjectionMethod::ApcCallback
-                                });
-                            },
-                            option { value: "trampoline", "Trampoline (Hook LdrLoadDll at process creation)" }
-                            option { value: "apc", "APC Callback (Queue APC when kernel32.dll loads)" }
+                        input {
+                            class: "create-process-input",
+                            r#type: "text",
+                            readonly: true,
+                            value: "APC Callback (Queue APC when kernel32.dll loads)",
                         }
                     }
 
