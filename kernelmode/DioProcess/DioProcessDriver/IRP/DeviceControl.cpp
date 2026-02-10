@@ -80,6 +80,32 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleEnumPspCidTable(Irp, irpSp, &info);
 		break;
 
+	// Callback Removal IOCTLs
+	case IOCTL_DIOPROCESS_REMOVE_PROCESS_CALLBACK:
+		status = HandleRemoveProcessCallback(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_REMOVE_THREAD_CALLBACK:
+		status = HandleRemoveThreadCallback(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_REMOVE_IMAGE_CALLBACK:
+		status = HandleRemoveImageCallback(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_REMOVE_OBJECT_CALLBACK:
+		status = HandleRemoveObjectCallback(Irp, irpSp);
+		break;
+
+	// Registry Callback IOCTLs (RCK style)
+	case IOCTL_DIOPROCESS_ENUM_REGISTRY_CALLBACKS:
+		status = HandleEnumRegistryCallbacks(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_REMOVE_REGISTRY_CALLBACK:
+		status = HandleRemoveRegistryCallback(Irp, irpSp);
+		break;
+
 	// Kernel Injection IOCTLs
 	case IOCTL_DIOPROCESS_KERNEL_INJECT_SHELLCODE:
 		status = HandleKernelInjectShellcode(Irp, irpSp, &info);
@@ -648,7 +674,7 @@ NTSTATUS HandleEnumProcessCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_P
 	// Zero the output buffer
 	RtlZeroMemory(userBuffer, requiredSize);
 
-	// Enumerate all 64 callback slots
+	// Enumerate all 64 callback slots (PCKC style)
 	ULONG validCallbackCount = 0;
 	for (ULONG i = 0; i < MAX_CALLBACK_ENTRIES; i++)
 	{
@@ -666,16 +692,17 @@ NTSTATUS HandleEnumProcessCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_P
 			continue;
 		}
 
-		// Skip null entries
-		if (callbackEntry == 0)
+		// Always set the index
+		userBuffer[i].Index = i;
+
+		// Check if callback entry is valid (PCKC style: MmIsAddressValid check)
+		if (callbackEntry == 0 || !MmIsAddressValid((PVOID)callbackEntry))
 		{
-			userBuffer[i].CallbackAddress = 0;
-			userBuffer[i].Index = i;
 			continue;
 		}
 
 		// Windows stores callbacks with flags in low 3 bits
-		// Clear the flags to get the actual structure pointer
+		// Clear the flags to get the actual structure pointer (PCKC style)
 		ULONG64 callbackStructure = callbackEntry & 0xFFFFFFFFFFFFFFF8;
 
 		// The structure points to an EX_CALLBACK_ROUTINE_BLOCK
@@ -696,14 +723,13 @@ NTSTATUS HandleEnumProcessCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_P
 
 		// Store the actual function address
 		userBuffer[i].CallbackAddress = actualCallbackFunction;
-		userBuffer[i].Index = i;
 
 		// Resolve which driver owns this callback
 		SearchLoadedModules(&userBuffer[i]);
 
 		validCallbackCount++;
-		KdPrint((DRIVER_PREFIX "Callback[%d]: Entry=0x%llX Struct=0x%llX Function=0x%llX -> %s\n",
-			i, callbackEntry, callbackStructure, actualCallbackFunction, userBuffer[i].ModuleName));
+		KdPrint((DRIVER_PREFIX "[%d] ProcessCallback: 0x%llX (%s+0x%llX)\n",
+			i, actualCallbackFunction, userBuffer[i].ModuleName, userBuffer[i].ModuleOffset));
 	}
 
 	KdPrint((DRIVER_PREFIX "Found %d active process callbacks\n", validCallbackCount));
@@ -750,20 +776,26 @@ NTSTATUS HandleEnumThreadCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PT
 		__try { callbackEntry = *(PULONG64)(callbackArray + (i * 8)); }
 		__except (EXCEPTION_EXECUTE_HANDLER) { continue; }
 
-		if (callbackEntry == 0)
+		// Always set the index
+		userBuffer[i].Index = i;
+
+		// Check if callback entry is valid (TCKC style: MmIsAddressValid check)
+		if (callbackEntry == 0 || !MmIsAddressValid((PVOID)callbackEntry))
 		{
-			userBuffer[i].Index = i;
 			continue;
 		}
 
+		// Mask off low 3 bits and dereference to get actual callback function (TCKC style)
 		ULONG64 actualFunction = 0;
 		__try { actualFunction = *(PULONG64)(callbackEntry & 0xFFFFFFFFFFFFFFF8); }
 		__except (EXCEPTION_EXECUTE_HANDLER) { actualFunction = callbackEntry & 0xFFFFFFFFFFFFFFF8; }
 
 		userBuffer[i].CallbackAddress = actualFunction;
-		userBuffer[i].Index = i;
 		SearchLoadedModules(&userBuffer[i]);
 		validCount++;
+
+		KdPrint((DRIVER_PREFIX "[%d] ThreadCallback: 0x%llX (%s+0x%llX)\n",
+			i, actualFunction, userBuffer[i].ModuleName, userBuffer[i].ModuleOffset));
 	}
 
 	KdPrint((DRIVER_PREFIX "Found %d active thread callbacks\n", validCount));
@@ -810,24 +842,337 @@ NTSTATUS HandleEnumImageCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR
 		__try { callbackEntry = *(PULONG64)(callbackArray + (i * 8)); }
 		__except (EXCEPTION_EXECUTE_HANDLER) { continue; }
 
-		if (callbackEntry == 0)
+		// Always set the index
+		userBuffer[i].Index = i;
+
+		// Check if callback entry is valid (ILCK style: MmIsAddressValid check)
+		if (callbackEntry == 0 || !MmIsAddressValid((PVOID)callbackEntry))
 		{
-			userBuffer[i].Index = i;
 			continue;
 		}
 
+		// Mask off low 3 bits and dereference to get actual callback function (ILCK style)
 		ULONG64 actualFunction = 0;
 		__try { actualFunction = *(PULONG64)(callbackEntry & 0xFFFFFFFFFFFFFFF8); }
 		__except (EXCEPTION_EXECUTE_HANDLER) { actualFunction = callbackEntry & 0xFFFFFFFFFFFFFFF8; }
 
 		userBuffer[i].CallbackAddress = actualFunction;
-		userBuffer[i].Index = i;
 		SearchLoadedModules(&userBuffer[i]);
 		validCount++;
+
+		KdPrint((DRIVER_PREFIX "[%d] ImageLoadCallback: 0x%llX (%s+0x%llX)\n",
+			i, actualFunction, userBuffer[i].ModuleName, userBuffer[i].ModuleOffset));
 	}
 
 	KdPrint((DRIVER_PREFIX "Found %d active image load callbacks\n", validCount));
 	*info = requiredSize;
+	return STATUS_SUCCESS;
+}
+
+// ============== Callback Removal Handlers ==============
+
+NTSTATUS HandleRemoveProcessCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleRemoveProcessCallback called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(RemoveCallbackRequest))
+	{
+		KdPrint((DRIVER_PREFIX "Buffer too small\n"));
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (RemoveCallbackRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->Index >= MAX_CALLBACK_ENTRIES)
+	{
+		KdPrint((DRIVER_PREFIX "Invalid parameter: index=%d\n", request ? request->Index : 0));
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+	if (windowsVersion == WINDOWS_UNSUPPORTED)
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	ULONG64 arrayAddress = FindPspSetCreateProcessNotifyRoutine(windowsVersion);
+	if (arrayAddress == 0)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find PspSetCreateProcessNotifyRoutine array\n"));
+		return STATUS_NOT_FOUND;
+	}
+
+	// Calculate slot address
+	ULONG64 slotAddress = arrayAddress + (request->Index * 8);
+
+	// Zero out the callback slot using RtlZeroMemory (TCKC style)
+	__try
+	{
+		ULONG64 slotValue = *(PULONG64)slotAddress;
+		if (slotValue == 0)
+		{
+			KdPrint((DRIVER_PREFIX "Process callback slot %d is already empty\n", request->Index));
+			return STATUS_SUCCESS;
+		}
+
+		// Validate the slot contains a valid pointer before removal
+		if (!MmIsAddressValid((PVOID)slotValue))
+		{
+			KdPrint((DRIVER_PREFIX "Process callback slot %d contains invalid address 0x%llX\n", request->Index, slotValue));
+			return STATUS_INVALID_ADDRESS;
+		}
+
+		// Dereference to get actual callback address for logging
+		ULONG64 callbackAddr = *(PULONG64)(slotValue & 0xFFFFFFFFFFFFFFF8);
+
+		// Zero the slot using RtlZeroMemory (like TCKC)
+		RtlZeroMemory((PVOID)slotAddress, sizeof(ULONG64));
+		KdPrint((DRIVER_PREFIX "Removed process callback at index %d (callback was 0x%llX)\n", request->Index, callbackAddr));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception while removing process callback at index %d\n", request->Index));
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleRemoveThreadCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleRemoveThreadCallback called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(RemoveCallbackRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (RemoveCallbackRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->Index >= MAX_CALLBACK_ENTRIES)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+	if (windowsVersion == WINDOWS_UNSUPPORTED)
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	ULONG64 arrayAddress = FindPspCreateThreadNotifyRoutine(windowsVersion);
+	if (arrayAddress == 0)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find PspCreateThreadNotifyRoutine array\n"));
+		return STATUS_NOT_FOUND;
+	}
+
+	ULONG64 slotAddress = arrayAddress + (request->Index * 8);
+
+	// Zero out the callback slot using RtlZeroMemory (TCKC style)
+	__try
+	{
+		ULONG64 slotValue = *(PULONG64)slotAddress;
+		if (slotValue == 0)
+		{
+			KdPrint((DRIVER_PREFIX "Thread callback slot %d is already empty\n", request->Index));
+			return STATUS_SUCCESS;
+		}
+
+		// Validate the slot contains a valid pointer before removal
+		if (!MmIsAddressValid((PVOID)slotValue))
+		{
+			KdPrint((DRIVER_PREFIX "Thread callback slot %d contains invalid address 0x%llX\n", request->Index, slotValue));
+			return STATUS_INVALID_ADDRESS;
+		}
+
+		// Dereference to get actual callback address for logging
+		ULONG64 callbackAddr = *(PULONG64)(slotValue & 0xFFFFFFFFFFFFFFF8);
+
+		// Zero the slot using RtlZeroMemory (like TCKC)
+		RtlZeroMemory((PVOID)slotAddress, sizeof(ULONG64));
+		KdPrint((DRIVER_PREFIX "Removed thread callback at index %d (callback was 0x%llX)\n", request->Index, callbackAddr));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception while removing thread callback at index %d\n", request->Index));
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleRemoveImageCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleRemoveImageCallback called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(RemoveCallbackRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (RemoveCallbackRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->Index >= MAX_CALLBACK_ENTRIES)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+	if (windowsVersion == WINDOWS_UNSUPPORTED)
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	ULONG64 arrayAddress = FindPspLoadImageNotifyRoutine(windowsVersion);
+	if (arrayAddress == 0)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find PspLoadImageNotifyRoutine array\n"));
+		return STATUS_NOT_FOUND;
+	}
+
+	ULONG64 slotAddress = arrayAddress + (request->Index * 8);
+
+	// Zero out the callback slot using RtlZeroMemory (TCKC style)
+	__try
+	{
+		ULONG64 slotValue = *(PULONG64)slotAddress;
+		if (slotValue == 0)
+		{
+			KdPrint((DRIVER_PREFIX "Image callback slot %d is already empty\n", request->Index));
+			return STATUS_SUCCESS;
+		}
+
+		// Validate the slot contains a valid pointer before removal
+		if (!MmIsAddressValid((PVOID)slotValue))
+		{
+			KdPrint((DRIVER_PREFIX "Image callback slot %d contains invalid address 0x%llX\n", request->Index, slotValue));
+			return STATUS_INVALID_ADDRESS;
+		}
+
+		// Dereference to get actual callback address for logging
+		ULONG64 callbackAddr = *(PULONG64)(slotValue & 0xFFFFFFFFFFFFFFF8);
+
+		// Zero the slot using RtlZeroMemory (like TCKC)
+		RtlZeroMemory((PVOID)slotAddress, sizeof(ULONG64));
+		KdPrint((DRIVER_PREFIX "Removed image callback at index %d (callback was 0x%llX)\n", request->Index, callbackAddr));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception while removing image callback at index %d\n", request->Index));
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	return STATUS_SUCCESS;
+}
+
+// ============== Object Callback Removal (OCKC style) ==============
+
+NTSTATUS HandleRemoveObjectCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleRemoveObjectCallback called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(RemoveObjectCallbackRequest))
+	{
+		KdPrint((DRIVER_PREFIX "Buffer too small\n"));
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (RemoveObjectCallbackRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		KdPrint((DRIVER_PREFIX "Invalid parameter: null request\n"));
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	WINDOWS_VERSION windowsVersion = GetWindowsVersion();
+	if (windowsVersion == WINDOWS_UNSUPPORTED)
+	{
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	ULONG callbackListOffset = OBJECT_TYPE_CALLBACKLIST_OFFSET[windowsVersion];
+	POBJECT_TYPE objectType = nullptr;
+
+	// Select the correct object type based on request
+	if (request->ObjectType == ObjectCallbackProcess)
+	{
+		objectType = *PsProcessType;
+		KdPrint((DRIVER_PREFIX "Removing from Process object callbacks\n"));
+	}
+	else if (request->ObjectType == ObjectCallbackThread)
+	{
+		objectType = *PsThreadType;
+		KdPrint((DRIVER_PREFIX "Removing from Thread object callbacks\n"));
+	}
+	else
+	{
+		KdPrint((DRIVER_PREFIX "Invalid object type: %d\n", request->ObjectType));
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	if (!objectType)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to get object type\n"));
+		return STATUS_NOT_FOUND;
+	}
+
+	__try
+	{
+		// Get CallbackList at offset in _OBJECT_TYPE
+		PLIST_ENTRY callbackListHead = (PLIST_ENTRY)((ULONG_PTR)objectType + callbackListOffset);
+		PLIST_ENTRY entry = callbackListHead->Flink;
+		ULONG currentIndex = 0;
+		BOOLEAN found = FALSE;
+
+		// Walk the callback list to find the entry by index
+		while (entry != callbackListHead)
+		{
+			if (currentIndex == request->Index)
+			{
+				PCALLBACK_ENTRY_ITEM callbackItem = CONTAINING_RECORD(entry, CALLBACK_ENTRY_ITEM, EntryItemList);
+
+				if (callbackItem && MmIsAddressValid(callbackItem))
+				{
+					// Remove PreOperation callback using InterlockedExchangePointer (OCKC style)
+					if (request->RemovePreOperation && callbackItem->PreOperation)
+					{
+						KdPrint((DRIVER_PREFIX "Removing PreOperation callback at 0x%llX\n",
+							(ULONG64)callbackItem->PreOperation));
+						InterlockedExchangePointer((PVOID*)&callbackItem->PreOperation, NULL);
+					}
+
+					// Remove PostOperation callback using InterlockedExchangePointer (OCKC style)
+					if (request->RemovePostOperation && callbackItem->PostOperation)
+					{
+						KdPrint((DRIVER_PREFIX "Removing PostOperation callback at 0x%llX\n",
+							(ULONG64)callbackItem->PostOperation));
+						InterlockedExchangePointer((PVOID*)&callbackItem->PostOperation, NULL);
+					}
+
+					found = TRUE;
+					KdPrint((DRIVER_PREFIX "Successfully removed object callback at index %d\n", request->Index));
+				}
+				break;
+			}
+
+			currentIndex++;
+			entry = entry->Flink;
+		}
+
+		if (!found)
+		{
+			KdPrint((DRIVER_PREFIX "Callback at index %d not found\n", request->Index));
+			return STATUS_NOT_FOUND;
+		}
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception while removing object callback at index %d\n", request->Index));
+		return STATUS_ACCESS_VIOLATION;
+	}
+
 	return STATUS_SUCCESS;
 }
 
@@ -922,25 +1267,34 @@ NTSTATUS HandleEnumObjectCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PT
 						}
 					}
 
-					// Resolve module name for pre-operation callback
+					// Resolve module name and RVA offsets (OCKC style)
 					if (cbInfo->PreOperationCallback)
 					{
 						CallbackInformation tempInfo = { 0 };
 						tempInfo.CallbackAddress = cbInfo->PreOperationCallback;
 						SearchLoadedModules(&tempInfo);
 						RtlCopyMemory(cbInfo->ModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
+						cbInfo->ModuleBase = tempInfo.ModuleBase;
+						cbInfo->PreOperationOffset = tempInfo.ModuleOffset;
 					}
-					else if (cbInfo->PostOperationCallback)
+					if (cbInfo->PostOperationCallback)
 					{
 						CallbackInformation tempInfo = { 0 };
 						tempInfo.CallbackAddress = cbInfo->PostOperationCallback;
 						SearchLoadedModules(&tempInfo);
-						RtlCopyMemory(cbInfo->ModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
+						// If we don't have a module name yet, use this one
+						if (cbInfo->ModuleName[0] == '\0')
+						{
+							RtlCopyMemory(cbInfo->ModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
+							cbInfo->ModuleBase = tempInfo.ModuleBase;
+						}
+						cbInfo->PostOperationOffset = tempInfo.ModuleOffset;
 					}
 
-					KdPrint((DRIVER_PREFIX "Process callback[%d]: Pre=0x%llX Post=0x%llX Ops=0x%X -> %s (Alt: %s)\n",
-						callbackCount, cbInfo->PreOperationCallback, cbInfo->PostOperationCallback,
-						cbInfo->Operations, cbInfo->ModuleName, cbInfo->Altitude));
+					KdPrint((DRIVER_PREFIX "[%d] ProcessObjCallback: Pre=0x%llX(+0x%llX) Post=0x%llX(+0x%llX) -> %s (Alt: %s)\n",
+						callbackCount, cbInfo->PreOperationCallback, cbInfo->PreOperationOffset,
+						cbInfo->PostOperationCallback, cbInfo->PostOperationOffset,
+						cbInfo->ModuleName, cbInfo->Altitude));
 
 					callbackCount++;
 				}
@@ -998,24 +1352,33 @@ NTSTATUS HandleEnumObjectCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PT
 						}
 					}
 
+					// Resolve module name and RVA offsets (OCKC style)
 					if (cbInfo->PreOperationCallback)
 					{
 						CallbackInformation tempInfo = { 0 };
 						tempInfo.CallbackAddress = cbInfo->PreOperationCallback;
 						SearchLoadedModules(&tempInfo);
 						RtlCopyMemory(cbInfo->ModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
+						cbInfo->ModuleBase = tempInfo.ModuleBase;
+						cbInfo->PreOperationOffset = tempInfo.ModuleOffset;
 					}
-					else if (cbInfo->PostOperationCallback)
+					if (cbInfo->PostOperationCallback)
 					{
 						CallbackInformation tempInfo = { 0 };
 						tempInfo.CallbackAddress = cbInfo->PostOperationCallback;
 						SearchLoadedModules(&tempInfo);
-						RtlCopyMemory(cbInfo->ModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
+						if (cbInfo->ModuleName[0] == '\0')
+						{
+							RtlCopyMemory(cbInfo->ModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
+							cbInfo->ModuleBase = tempInfo.ModuleBase;
+						}
+						cbInfo->PostOperationOffset = tempInfo.ModuleOffset;
 					}
 
-					KdPrint((DRIVER_PREFIX "Thread callback[%d]: Pre=0x%llX Post=0x%llX Ops=0x%X -> %s (Alt: %s)\n",
-						callbackCount, cbInfo->PreOperationCallback, cbInfo->PostOperationCallback,
-						cbInfo->Operations, cbInfo->ModuleName, cbInfo->Altitude));
+					KdPrint((DRIVER_PREFIX "[%d] ThreadObjCallback: Pre=0x%llX(+0x%llX) Post=0x%llX(+0x%llX) -> %s (Alt: %s)\n",
+						callbackCount, cbInfo->PreOperationCallback, cbInfo->PreOperationOffset,
+						cbInfo->PostOperationCallback, cbInfo->PostOperationOffset,
+						cbInfo->ModuleName, cbInfo->Altitude));
 
 					callbackCount++;
 				}
@@ -1034,6 +1397,321 @@ NTSTATUS HandleEnumObjectCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PT
 	KdPrint((DRIVER_PREFIX "Found %d total object callbacks\n", callbackCount));
 	*info = requiredSize;
 	return status;
+}
+
+// ============== Registry Callback Enumeration (RCK style) ==============
+
+// Registry callback item structure (from CmRegisterCallback internal structures)
+typedef struct _REGISTRY_CALLBACK_ITEM {
+	LIST_ENTRY Item;
+	DWORD64 Unknown1[2];
+	DWORD64 Context;
+	DWORD64 Function;
+	UNICODE_STRING Altitude;
+	DWORD64 Unknown2[2];
+} REGISTRY_CALLBACK_ITEM, * PREGISTRY_CALLBACK_ITEM;
+
+// Find the CallbackListHead for registry callbacks using signature scanning (RCK style)
+ULONG64 FindCmCallbackListHead()
+{
+	// Get the address of nt!CmRegisterCallback
+	UNICODE_STRING routineName;
+	RtlInitUnicodeString(&routineName, L"CmRegisterCallback");
+	ULONG64 routineAddress = (ULONG64)MmGetSystemRoutineAddress(&routineName);
+	if (!routineAddress)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find CmRegisterCallback\n"));
+		return 0;
+	}
+	KdPrint((DRIVER_PREFIX "CmRegisterCallback at 0x%llX\n", routineAddress));
+
+	// Search for the first CALL or JMP instruction to find CmpRegisterCallbackInternal
+	ULONG64 tempAddress = 0;
+	for (int offset = 0; offset < 200; offset++)
+	{
+		UCHAR instruction = *(PUCHAR)(routineAddress + offset);
+		if (instruction == 0xE9 || instruction == 0xE8)  // JMP or CALL
+		{
+			LONG relativeOffset = *(LONG*)(routineAddress + offset + 1);
+			tempAddress = routineAddress + offset + 5 + relativeOffset;
+			KdPrint((DRIVER_PREFIX "Found CmpRegisterCallbackInternal at 0x%llX\n", tempAddress));
+			break;
+		}
+	}
+
+	if (!tempAddress)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find CmpRegisterCallbackInternal\n"));
+		return 0;
+	}
+
+	// Scan for the last INT 3 (0xCC) in CmpRegisterCallbackInternal
+	// The function CmpInsertCallbackInListByAltitude follows the INT 3 padding
+	ULONG64 CmpInsertCallbackInListByAltitudeAddr = 0;
+	for (int i = 0; i < 1024; i++)
+	{
+		if (*(PUCHAR)(tempAddress + i) == 0xCC)
+		{
+			// Skip all consecutive INT 3 instructions
+			while (*(PUCHAR)(tempAddress + i) == 0xCC) i++;
+
+			CmpInsertCallbackInListByAltitudeAddr = tempAddress + i;
+			KdPrint((DRIVER_PREFIX "Found CmpInsertCallbackInListByAltitude at 0x%llX\n",
+				CmpInsertCallbackInListByAltitudeAddr));
+			break;
+		}
+	}
+
+	if (!CmpInsertCallbackInListByAltitudeAddr)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find CmpInsertCallbackInListByAltitude\n"));
+		return 0;
+	}
+
+	// Search for the first LEA instruction to find CallbackListHead
+	ULONG64 callbackListHead = 0;
+	for (int i = 0; i < 300; i++)
+	{
+		// Check for LEA opcode (0x4C 0x8D for LEA RXX, [address])
+		if ((*(PUCHAR)(CmpInsertCallbackInListByAltitudeAddr + i) == 0x4C) &&
+			*(PUCHAR)(CmpInsertCallbackInListByAltitudeAddr + i + 1) == 0x8D)
+		{
+			// Extract the relative offset (4 bytes following the opcode and ModR/M byte)
+			LONG offset = *(LONG*)(CmpInsertCallbackInListByAltitudeAddr + i + 3);
+
+			// Calculate the address of CallbackListHead: current position + instruction length (7) + offset
+			callbackListHead = CmpInsertCallbackInListByAltitudeAddr + i + 7 + offset;
+			KdPrint((DRIVER_PREFIX "Found CallbackListHead at 0x%llX\n", callbackListHead));
+			break;
+		}
+	}
+
+	return callbackListHead;
+}
+
+// Helper to search for module containing a registry callback
+void SearchModulesForRegistry(RegistryCallbackInfo* CallbackInfo)
+{
+	NTSTATUS status;
+	ULONG modulesSize = 0;
+	AUX_MODULE_EXTENDED_INFO* modules = nullptr;
+	ULONG numberOfModules = 0;
+
+	status = AuxKlibInitialize();
+	if (!NT_SUCCESS(status))
+	{
+		return;
+	}
+
+	status = AuxKlibQueryModuleInformation(&modulesSize, sizeof(AUX_MODULE_EXTENDED_INFO), NULL);
+	if (!NT_SUCCESS(status) || modulesSize == 0)
+	{
+		return;
+	}
+
+	numberOfModules = modulesSize / sizeof(AUX_MODULE_EXTENDED_INFO);
+	modules = (AUX_MODULE_EXTENDED_INFO*)ExAllocatePoolWithTag(PagedPool, modulesSize, DRIVER_TAG);
+	if (!modules)
+	{
+		return;
+	}
+
+	RtlZeroMemory(modules, modulesSize);
+	status = AuxKlibQueryModuleInformation(&modulesSize, sizeof(AUX_MODULE_EXTENDED_INFO), modules);
+	if (!NT_SUCCESS(status))
+	{
+		ExFreePoolWithTag(modules, DRIVER_TAG);
+		return;
+	}
+
+	// Find the module containing the callback address
+	for (ULONG i = 0; i < numberOfModules; i++)
+	{
+		ULONG64 moduleBase = (ULONG64)modules[i].BasicInfo.ImageBase;
+		ULONG64 moduleEnd = moduleBase + modules[i].ImageSize;
+
+		if (CallbackInfo->CallbackAddress >= moduleBase && CallbackInfo->CallbackAddress < moduleEnd)
+		{
+			// Found the module
+			CallbackInfo->ModuleBase = moduleBase;
+			CallbackInfo->ModuleOffset = CallbackInfo->CallbackAddress - moduleBase;
+
+			// Copy module name (filename only)
+			const char* fullPath = (const char*)(modules[i].FullPathName + modules[i].FileNameOffset);
+			strncpy(CallbackInfo->ModuleName, fullPath, MAX_MODULE_NAME_LENGTH - 1);
+			CallbackInfo->ModuleName[MAX_MODULE_NAME_LENGTH - 1] = '\0';
+			break;
+		}
+	}
+
+	ExFreePoolWithTag(modules, DRIVER_TAG);
+}
+
+NTSTATUS HandleEnumRegistryCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "Enumerating registry callbacks (CmRegisterCallback)\n"));
+
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+	ULONG requiredSize = sizeof(EnumRegistryCallbacksResponse) +
+		(sizeof(RegistryCallbackInfo) * (MAX_REGISTRY_CALLBACK_ENTRIES - 1));
+
+	if (outputLen < requiredSize)
+	{
+		KdPrint((DRIVER_PREFIX "Buffer too small (need %d bytes, got %d)\n", requiredSize, outputLen));
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto response = (EnumRegistryCallbacksResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	RtlZeroMemory(response, requiredSize);
+
+	// Find the CallbackListHead
+	ULONG64 callbackListHead = FindCmCallbackListHead();
+	if (!callbackListHead)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find registry CallbackListHead\n"));
+		return STATUS_NOT_FOUND;
+	}
+
+	ULONG callbackCount = 0;
+	NTSTATUS status = STATUS_SUCCESS;
+
+	__try
+	{
+		// The CallbackListHead is the head of a linked list of REGISTRY_CALLBACK_ITEM
+		PREGISTRY_CALLBACK_ITEM currentItem = (PREGISTRY_CALLBACK_ITEM)callbackListHead;
+
+		// Start from the first entry (Flink from the list head)
+		// The list head itself is part of the structure, so we navigate from Item.Flink
+		PLIST_ENTRY entry = ((PLIST_ENTRY)callbackListHead)->Flink;
+
+		while ((ULONG64)entry != callbackListHead && callbackCount < MAX_REGISTRY_CALLBACK_ENTRIES)
+		{
+			PREGISTRY_CALLBACK_ITEM callbackItem = CONTAINING_RECORD(entry, REGISTRY_CALLBACK_ITEM, Item);
+
+			if (callbackItem && MmIsAddressValid(callbackItem) && callbackItem->Function != 0)
+			{
+				RegistryCallbackInfo* cbInfo = &response->Entries[callbackCount];
+				cbInfo->Index = callbackCount;
+				cbInfo->CallbackAddress = callbackItem->Function;
+				cbInfo->Context = callbackItem->Context;
+
+				// Get altitude from UNICODE_STRING
+				if (callbackItem->Altitude.Buffer && MmIsAddressValid(callbackItem->Altitude.Buffer))
+				{
+					ANSI_STRING ansiAltitude;
+					NTSTATUS convStatus = RtlUnicodeStringToAnsiString(&ansiAltitude, &callbackItem->Altitude, TRUE);
+					if (NT_SUCCESS(convStatus))
+					{
+						strncpy(cbInfo->Altitude, ansiAltitude.Buffer, MAX_ALTITUDE_LENGTH - 1);
+						cbInfo->Altitude[MAX_ALTITUDE_LENGTH - 1] = '\0';
+						RtlFreeAnsiString(&ansiAltitude);
+					}
+				}
+
+				// Resolve module information
+				SearchModulesForRegistry(cbInfo);
+
+				KdPrint((DRIVER_PREFIX "[%d] RegistryCallback: 0x%llX (%s+0x%llX) Altitude=%s\n",
+					callbackCount, cbInfo->CallbackAddress, cbInfo->ModuleName,
+					cbInfo->ModuleOffset, cbInfo->Altitude));
+
+				callbackCount++;
+			}
+
+			// Move to next entry
+			entry = entry->Flink;
+		}
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception during registry callback enumeration\n"));
+		status = STATUS_UNSUCCESSFUL;
+	}
+
+	response->Count = callbackCount;
+	KdPrint((DRIVER_PREFIX "Found %d registry callbacks\n", callbackCount));
+	*info = requiredSize;
+	return status;
+}
+
+NTSTATUS HandleRemoveRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleRemoveRegistryCallback called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(RemoveRegistryCallbackRequest))
+	{
+		KdPrint((DRIVER_PREFIX "Buffer too small\n"));
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (RemoveRegistryCallbackRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		KdPrint((DRIVER_PREFIX "Invalid parameter: null request\n"));
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Find the CallbackListHead
+	ULONG64 callbackListHead = FindCmCallbackListHead();
+	if (!callbackListHead)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to find registry CallbackListHead\n"));
+		return STATUS_NOT_FOUND;
+	}
+
+	__try
+	{
+		// Traverse the callback list to find the item at the specified index
+		PLIST_ENTRY entry = ((PLIST_ENTRY)callbackListHead)->Flink;
+		ULONG currentIndex = 0;
+		BOOLEAN found = FALSE;
+
+		while ((ULONG64)entry != callbackListHead)
+		{
+			if (currentIndex == request->Index)
+			{
+				PREGISTRY_CALLBACK_ITEM callbackItem = CONTAINING_RECORD(entry, REGISTRY_CALLBACK_ITEM, Item);
+
+				if (callbackItem && MmIsAddressValid(callbackItem))
+				{
+					ULONG64 oldFunction = callbackItem->Function;
+
+					// Unlink the callback item from the linked list (RCK style)
+					RemoveEntryList(&callbackItem->Item);
+
+					// Zero out the callback function address to disable it
+					RtlZeroMemory(&callbackItem->Function, sizeof(callbackItem->Function));
+
+					KdPrint((DRIVER_PREFIX "Removed registry callback at index %d (was 0x%llX)\n",
+						request->Index, oldFunction));
+					found = TRUE;
+				}
+				break;
+			}
+
+			currentIndex++;
+			entry = entry->Flink;
+		}
+
+		if (!found)
+		{
+			KdPrint((DRIVER_PREFIX "Registry callback at index %d not found\n", request->Index));
+			return STATUS_NOT_FOUND;
+		}
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception while removing registry callback at index %d\n", request->Index));
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	return STATUS_SUCCESS;
 }
 
 NTSTATUS HandleEnumMinifilters(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)

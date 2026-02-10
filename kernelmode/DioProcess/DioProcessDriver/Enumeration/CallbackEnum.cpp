@@ -5,11 +5,16 @@
 
 //
 // Helper function to resolve a callback address to its owning module
+// Populates ModuleName, ModuleBase, and ModuleOffset (RVA) in CallbackInfo
 //
 void SearchLoadedModules(CallbackInformation* CallbackInfo)
 {
 	if (!CallbackInfo || CallbackInfo->CallbackAddress == 0)
 		return;
+
+	// Initialize output fields
+	CallbackInfo->ModuleBase = 0;
+	CallbackInfo->ModuleOffset = 0;
 
 	NTSTATUS status = AuxKlibInitialize();
 	if (!NT_SUCCESS(status))
@@ -70,8 +75,13 @@ void SearchLoadedModules(CallbackInformation* CallbackInfo)
 			const char* fullPath = (const char*)(modules[i].FullPathName + modules[i].FileNameOffset);
 			strncpy_s(CallbackInfo->ModuleName, MAX_MODULE_NAME_LENGTH, fullPath, _TRUNCATE);
 
-			KdPrint((DRIVER_PREFIX "Resolved 0x%llX to %s (base=0x%llX size=0x%X)\n",
-				CallbackInfo->CallbackAddress, CallbackInfo->ModuleName, startAddress, imageSize));
+			// Store module base and calculate RVA offset (TCKC style)
+			CallbackInfo->ModuleBase = startAddress;
+			CallbackInfo->ModuleOffset = CallbackInfo->CallbackAddress - startAddress;
+
+			KdPrint((DRIVER_PREFIX "Resolved 0x%llX to %s+0x%llX (base=0x%llX)\n",
+				CallbackInfo->CallbackAddress, CallbackInfo->ModuleName,
+				CallbackInfo->ModuleOffset, startAddress));
 			break;
 		}
 	}
@@ -105,8 +115,8 @@ ULONG64 FindCallbackArray(const WCHAR* ExportedFunctionName)
 	ULONG64 internalFunction = 0;
 	LONG offset = 0;
 
-	// Search for CALL/JMP in first 0x50 bytes
-	for (ULONG64 i = exportedFunction; i < exportedFunction + 0x50; i++)
+	// Search for CALL/JMP in first 200 bytes (ILCK style)
+	for (ULONG64 i = exportedFunction; i < exportedFunction + 200; i++)
 	{
 		UCHAR opcode = *(PUCHAR)i;
 		if (opcode == OPCODE_CALL || opcode == OPCODE_JMP)
@@ -123,9 +133,9 @@ ULONG64 FindCallbackArray(const WCHAR* ExportedFunctionName)
 		return 0;
 	}
 
-	// Search for LEA instruction referencing the callback array
+	// Search for LEA instruction referencing the callback array (300 bytes, ILCK style)
 	offset = 0;
-	for (ULONG64 i = internalFunction; i < internalFunction + 0x100; i++)
+	for (ULONG64 i = internalFunction; i < internalFunction + 300; i++)
 	{
 		if ((*(PUCHAR)i == 0x4C && *(PUCHAR)(i + 1) == OPCODE_LEA) ||
 			(*(PUCHAR)i == 0x48 && *(PUCHAR)(i + 1) == OPCODE_LEA))

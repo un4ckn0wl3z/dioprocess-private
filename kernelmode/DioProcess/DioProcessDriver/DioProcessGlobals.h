@@ -61,6 +61,7 @@ ULONG64 FindCallbackArray(const WCHAR* ExportedFunctionName);
 ULONG64 FindPspSetCreateProcessNotifyRoutine(WINDOWS_VERSION WindowsVersion);
 ULONG64 FindPspCreateThreadNotifyRoutine(WINDOWS_VERSION WindowsVersion);
 ULONG64 FindPspLoadImageNotifyRoutine(WINDOWS_VERSION WindowsVersion);
+ULONG64 FindCmCallbackListHead();
 
 // PspCidTable enumeration
 PVOID64 GetPspCidTableAddress();
@@ -114,6 +115,16 @@ NTSTATUS HandleEnumObjectCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PT
 NTSTATUS HandleEnumMinifilters(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleEnumDrivers(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleEnumPspCidTable(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// Callback removal handlers
+NTSTATUS HandleRemoveProcessCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleRemoveThreadCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleRemoveImageCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleRemoveObjectCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
+
+// Registry callback handlers (RCK style)
+NTSTATUS HandleEnumRegistryCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleRemoveRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
 
 NTSTATUS HandleKernelInjectShellcode(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleKernelInjectDll(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);

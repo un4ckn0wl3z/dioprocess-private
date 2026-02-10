@@ -20,10 +20,12 @@ mod types;
 pub use driver::{
     clear_debug_flags, enable_all_privileges, enumerate_image_callbacks, enumerate_kernel_drivers,
     enumerate_minifilters, enumerate_object_callbacks, enumerate_process_callbacks,
-    enumerate_thread_callbacks, get_collection_state, is_driver_loaded, protect_process,
-    read_events, register_callbacks, start_collection, stop_collection, unprotect_process,
-    unregister_callbacks, CallbackInfo, KernelDriverInfo, MinifilterCallbacks, MinifilterInfo,
-    ObjectCallbackInfo, ObjectCallbackOperations, ObjectCallbackType,
+    enumerate_registry_callbacks, enumerate_thread_callbacks, get_collection_state, is_driver_loaded,
+    protect_process, read_events, register_callbacks, remove_image_callback, remove_object_callback,
+    remove_process_callback, remove_registry_callback, remove_thread_callback, start_collection,
+    stop_collection, unprotect_process, unregister_callbacks, CallbackInfo, KernelDriverInfo,
+    MinifilterCallbacks, MinifilterInfo, ObjectCallbackInfo, ObjectCallbackOperations,
+    ObjectCallbackType, RegistryCallbackInfo,
 };
 pub use error::CallbackError;
 pub use hypervisor::{
