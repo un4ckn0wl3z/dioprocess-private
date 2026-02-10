@@ -2,6 +2,7 @@
 #include "DioProcessGlobals.h"
 #include "Locker.h"
 #include "Hypervisor/HvProtection.h"
+#include "Injection/EarlyInjection.h"
 
 #pragma comment(lib, "aux_klib.lib")
 
@@ -170,6 +171,9 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 	InitializeListHead(&g_State.ItemsHead);
 	g_State.CollectionEnabled = FALSE;  // Collection disabled by default
 	g_CallbacksRegistered = FALSE;      // Callbacks not registered by default
+
+	// Initialize early injection subsystem
+	EarlyInjectionInit();
 
 	DriverObject->DriverUnload = DioProcessUnload;
 	DriverObject->MajorFunction[IRP_MJ_CREATE] = DriverObject->MajorFunction[IRP_MJ_CLOSE] = DioProcessCreateClose;

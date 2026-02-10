@@ -46,6 +46,9 @@ pub static THREADLESS_INJECT_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> =
 /// Ghost process window state - controls visibility of ghost process modal
 pub static GHOST_PROCESS_WINDOW_STATE: GlobalSignal<bool> = Signal::global(|| false);
 
+/// Early injection window state - controls visibility of early injection modal
+pub static EARLY_INJECTION_WINDOW_STATE: GlobalSignal<bool> = Signal::global(|| false);
+
 /// Process view mode - flat list or tree hierarchy
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ProcessViewMode {

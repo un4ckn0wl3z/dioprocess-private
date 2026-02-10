@@ -135,6 +135,7 @@
     <ClInclude Include="DioProcessDriver.h" />
     <ClInclude Include="DioProcessCommon.h" />
     <ClInclude Include="DioProcessGlobals.h" />
+    <ClInclude Include="Injection\EarlyInjection.h" />
     <!-- Hypervisor Headers -->
     <ClInclude Include="Hypervisor\arch.h" />
     <ClInclude Include="Hypervisor\ept.h" />
@@ -190,6 +191,7 @@
 
     <!-- Injection -->
     <ClCompile Include="Injection\KernelInject.cpp" />
+    <ClCompile Include="Injection\EarlyInjection.cpp" />
 
     <!-- IRP Handlers -->
     <ClCompile Include="IRP\CreateClose.cpp" />

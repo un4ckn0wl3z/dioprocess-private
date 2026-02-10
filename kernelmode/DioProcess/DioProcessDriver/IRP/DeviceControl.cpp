@@ -2,6 +2,7 @@
 #include "DioProcessGlobals.h"
 #include "Locker.h"
 #include "Hypervisor/HvProtection.h"
+#include "../Injection/EarlyInjection.h"
 
 // ============== IOCTL Device Control Dispatcher ==============
 
@@ -158,6 +159,19 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_HV_INJECT_DLL:
 		status = HandleHvInjectDll(Irp, irpSp, &info);
+		break;
+
+	// Early Injection IOCTLs
+	case IOCTL_DIOPROCESS_EARLY_INJECT_ARM:
+		status = HandleEarlyInjectArm(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_EARLY_INJECT_DISARM:
+		status = HandleEarlyInjectDisarm(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_EARLY_INJECT_STATUS:
+		status = HandleEarlyInjectStatus(Irp, irpSp, &info);
 		break;
 
 	default:
@@ -2227,4 +2241,100 @@ NTSTATUS HandleHvInjectDll(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
 	ObDereferenceObject(targetProcess);
 	*info = sizeof(HvInjectDllResponse);
 	return status;
+}
+
+// ============== Early Injection Handlers ==============
+
+NTSTATUS HandleEarlyInjectArm(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "Early injection ARM request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(EarlyInjectionArmRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (EarlyInjectionArmRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Ensure strings are null-terminated
+	request->TargetProcessName[MAX_TARGET_PROCESS_NAME - 1] = L'\0';
+	request->DllPath[MAX_DLL_PATH_LENGTH - 1] = L'\0';
+
+	KdPrint((DRIVER_PREFIX "Arming early injection: Target=%ws, DLL=%ws, Method=%d, OneShot=%d\n",
+		request->TargetProcessName, request->DllPath, request->Method, request->OneShot));
+
+	// Auto-register required callbacks if not already registered
+	if (!g_CallbacksRegistered)
+	{
+		NTSTATUS cbStatus;
+
+		// Register process callback (needed for Trampoline method)
+		cbStatus = PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, FALSE);
+		if (!NT_SUCCESS(cbStatus))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to register process callback for early injection (0x%X)\n", cbStatus));
+			return cbStatus;
+		}
+		KdPrint((DRIVER_PREFIX "Process callback registered for early injection\n"));
+
+		// Register image load callback (needed for APC method)
+		cbStatus = PsSetLoadImageNotifyRoutine(OnImageLoadCallback);
+		if (!NT_SUCCESS(cbStatus))
+		{
+			KdPrint((DRIVER_PREFIX "Failed to register image load callback for early injection (0x%X)\n", cbStatus));
+			// Unregister process callback on failure
+			PsSetCreateProcessNotifyRoutineEx(OnProcessCallback, TRUE);
+			return cbStatus;
+		}
+		KdPrint((DRIVER_PREFIX "Image load callback registered for early injection\n"));
+
+		g_CallbacksRegistered = TRUE;
+		KdPrint((DRIVER_PREFIX "Callbacks auto-registered for early injection\n"));
+	}
+
+	NTSTATUS status = EarlyInjectionArm(
+		request->TargetProcessName,
+		request->DllPath,
+		request->Method,
+		request->OneShot
+	);
+
+	return status;
+}
+
+NTSTATUS HandleEarlyInjectDisarm(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+
+	KdPrint((DRIVER_PREFIX "Early injection DISARM request\n"));
+
+	return EarlyInjectionDisarm();
+}
+
+NTSTATUS HandleEarlyInjectStatus(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "Early injection STATUS request\n"));
+
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+	if (outputLen < sizeof(EarlyInjectionStatusResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto response = (EarlyInjectionStatusResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	EarlyInjectionGetStatus(response);
+
+	*info = sizeof(EarlyInjectionStatusResponse);
+	return STATUS_SUCCESS;
 }

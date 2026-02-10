@@ -14,17 +14,18 @@ use process::{
 };
 
 use super::{
-    CreateProcessWindow, FunctionStompingWindow, GhostProcessWindow, GraphWindow, HandleWindow,
-    HookScanWindow, MemoryWindow, ModuleWindow, ProcessRow, ShellcodeInjectWindow,
-    StringScanWindow, ThreadWindow, ThreadlessInjectWindow, TokenThiefWindow,
+    CreateProcessWindow, EarlyInjectionWindow, FunctionStompingWindow, GhostProcessWindow,
+    GraphWindow, HandleWindow, HookScanWindow, MemoryWindow, ModuleWindow, ProcessRow,
+    ShellcodeInjectWindow, StringScanWindow, ThreadWindow, ThreadlessInjectWindow,
+    TokenThiefWindow,
 };
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
     ContextMenuState, ProcessViewMode, SortColumn, SortOrder, CREATE_PROCESS_WINDOW_STATE,
-    FUNCTION_STOMPING_WINDOW_STATE, GHOST_PROCESS_WINDOW_STATE, GRAPH_WINDOW_STATE,
-    HANDLE_WINDOW_STATE, HOOK_SCAN_WINDOW_STATE, MEMORY_WINDOW_STATE, MODULE_WINDOW_STATE,
-    SHELLCODE_INJECT_WINDOW_STATE, STRING_SCAN_WINDOW_STATE, THREAD_WINDOW_STATE,
-    THREADLESS_INJECT_WINDOW_STATE, TOKEN_THIEF_WINDOW_STATE,
+    EARLY_INJECTION_WINDOW_STATE, FUNCTION_STOMPING_WINDOW_STATE, GHOST_PROCESS_WINDOW_STATE,
+    GRAPH_WINDOW_STATE, HANDLE_WINDOW_STATE, HOOK_SCAN_WINDOW_STATE, MEMORY_WINDOW_STATE,
+    MODULE_WINDOW_STATE, SHELLCODE_INJECT_WINDOW_STATE, STRING_SCAN_WINDOW_STATE,
+    THREAD_WINDOW_STATE, THREADLESS_INJECT_WINDOW_STATE, TOKEN_THIEF_WINDOW_STATE,
 };
 
 /// A row in the tree view with metadata for rendering connectors
@@ -438,6 +439,14 @@ pub fn ProcessTab() -> Element {
                         *GHOST_PROCESS_WINDOW_STATE.write() = true;
                     },
                     "Process Ghosting"
+                }
+
+                button {
+                    class: "btn btn-secondary",
+                    onclick: move |_| {
+                        *EARLY_INJECTION_WINDOW_STATE.write() = true;
+                    },
+                    "Early Injection"
                 }
 
                 button {
@@ -1897,6 +1906,11 @@ pub fn ProcessTab() -> Element {
             // Create Ghosting Window Modal
             if *GHOST_PROCESS_WINDOW_STATE.read() {
                 GhostProcessWindow {}
+            }
+
+            // Early Injection Window Modal
+            if *EARLY_INJECTION_WINDOW_STATE.read() {
+                EarlyInjectionWindow {}
             }
 
         }
