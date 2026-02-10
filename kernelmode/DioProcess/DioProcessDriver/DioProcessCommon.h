@@ -196,6 +196,18 @@ struct EventData
 #define IOCTL_DIOPROCESS_REMOVE_REGISTRY_CALLBACK \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x818, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// Callback restore IOCTLs - restore previously removed callbacks
+#define IOCTL_DIOPROCESS_RESTORE_PROCESS_CALLBACK \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x819, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_RESTORE_THREAD_CALLBACK \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x81A, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_RESTORE_IMAGE_CALLBACK \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x81B, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_RESTORE_OBJECT_CALLBACK \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x81C, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_RESTORE_REGISTRY_CALLBACK \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x81D, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 // ============== Hypervisor Control IOCTLs ==============
 
 #define IOCTL_DIOPROCESS_HV_START \
@@ -353,6 +365,12 @@ struct RemoveCallbackRequest
 	ULONG Index;  // Callback slot index (0-63)
 };
 
+// Request structure for restoring callbacks (same as remove)
+struct RestoreCallbackRequest
+{
+	ULONG Index;  // Callback slot index (0-63)
+};
+
 // ============== Object Callback Enumeration Structures ==============
 
 #define MAX_OBJECT_CALLBACK_ENTRIES 64
@@ -396,6 +414,16 @@ struct RemoveObjectCallbackRequest
 	ULONG RemovePostOperation;                    // Remove PostOperation callback (non-zero = true)
 };
 
+// Request structure for restoring object callbacks
+struct RestoreObjectCallbackRequest
+{
+	ULONG Index;                                  // Callback entry index
+	ObjectCallbackType ObjectType;                // Process or Thread
+	UCHAR _padding[3];                            // Alignment padding
+	ULONG RestorePreOperation;                    // Restore PreOperation callback (non-zero = true)
+	ULONG RestorePostOperation;                   // Restore PostOperation callback (non-zero = true)
+};
+
 struct EnumObjectCallbacksResponse
 {
 	ULONG Count;                                  // Number of entries returned
@@ -419,6 +447,12 @@ struct RegistryCallbackInfo
 
 // Request structure for removing registry callbacks (RCK style)
 struct RemoveRegistryCallbackRequest
+{
+	ULONG Index;                                  // Callback entry index in linked list
+};
+
+// Request structure for restoring registry callbacks
+struct RestoreRegistryCallbackRequest
 {
 	ULONG Index;                                  // Callback entry index in linked list
 };

@@ -11,6 +11,46 @@ extern PVOID g_ObCallbackHandle;
 extern LARGE_INTEGER g_RegistryCookie;
 extern BOOLEAN g_CallbacksRegistered;
 
+// ============== Removed Callback Storage ==============
+// Storage for callback data that was removed, allowing restoration
+
+#define MAX_REMOVED_CALLBACKS 64
+
+// Storage for removed array-based callbacks (Process, Thread, Image)
+struct RemovedArrayCallback
+{
+	BOOLEAN IsRemoved;                           // TRUE if this slot contains removed data
+	ULONG64 OriginalValue;                       // Original callback slot value
+	ULONG64 SlotAddress;                         // Address of the slot in the callback array
+};
+
+extern RemovedArrayCallback g_RemovedProcessCallbacks[MAX_REMOVED_CALLBACKS];
+extern RemovedArrayCallback g_RemovedThreadCallbacks[MAX_REMOVED_CALLBACKS];
+extern RemovedArrayCallback g_RemovedImageCallbacks[MAX_REMOVED_CALLBACKS];
+
+// Storage for removed object callbacks
+struct RemovedObjectCallback
+{
+	BOOLEAN IsRemoved;                           // TRUE if this entry contains removed data
+	PVOID PreOperation;                          // Original PreOperation callback
+	PVOID PostOperation;                         // Original PostOperation callback
+	PVOID CallbackEntryItem;                     // Pointer to CALLBACK_ENTRY_ITEM
+};
+
+extern RemovedObjectCallback g_RemovedProcessObjectCallbacks[MAX_REMOVED_CALLBACKS];
+extern RemovedObjectCallback g_RemovedThreadObjectCallbacks[MAX_REMOVED_CALLBACKS];
+
+// Storage for removed registry callbacks
+struct RemovedRegistryCallback
+{
+	BOOLEAN IsRemoved;                           // TRUE if this entry contains removed data
+	ULONG64 OriginalFunction;                    // Original callback function address
+	PVOID CallbackItem;                          // Pointer to REGISTRY_CALLBACK_ITEM
+	LIST_ENTRY OriginalLinks;                    // Original Flink/Blink for re-linking
+};
+
+extern RemovedRegistryCallback g_RemovedRegistryCallbacks[MAX_REMOVED_CALLBACKS];
+
 // ============== Forward Declarations - Callbacks ==============
 
 VOID OnProcessCallback(
@@ -125,6 +165,13 @@ NTSTATUS HandleRemoveObjectCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
 // Registry callback handlers (RCK style)
 NTSTATUS HandleEnumRegistryCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleRemoveRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
+
+// Callback restore handlers
+NTSTATUS HandleRestoreProcessCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleRestoreThreadCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleRestoreImageCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleRestoreObjectCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleRestoreRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
 
 NTSTATUS HandleKernelInjectShellcode(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleKernelInjectDll(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);

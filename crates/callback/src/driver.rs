@@ -1889,6 +1889,18 @@ const IOCTL_DIOPROCESS_ENUM_REGISTRY_CALLBACKS: u32 = 0x0022205C;
 // CTL_CODE(0x22, 0x818, 0, 0) = 0x00222060
 const IOCTL_DIOPROCESS_REMOVE_REGISTRY_CALLBACK: u32 = 0x00222060;
 
+// Callback restore IOCTLs
+// CTL_CODE(0x22, 0x819, 0, 0) = 0x00222064
+const IOCTL_DIOPROCESS_RESTORE_PROCESS_CALLBACK: u32 = 0x00222064;
+// CTL_CODE(0x22, 0x81A, 0, 0) = 0x00222068
+const IOCTL_DIOPROCESS_RESTORE_THREAD_CALLBACK: u32 = 0x00222068;
+// CTL_CODE(0x22, 0x81B, 0, 0) = 0x0022206C
+const IOCTL_DIOPROCESS_RESTORE_IMAGE_CALLBACK: u32 = 0x0022206C;
+// CTL_CODE(0x22, 0x81C, 0, 0) = 0x00222070
+const IOCTL_DIOPROCESS_RESTORE_OBJECT_CALLBACK: u32 = 0x00222070;
+// CTL_CODE(0x22, 0x81D, 0, 0) = 0x00222074
+const IOCTL_DIOPROCESS_RESTORE_REGISTRY_CALLBACK: u32 = 0x00222074;
+
 /// Request structure for removing callbacks (matches kernel struct)
 #[repr(C)]
 struct RemoveCallbackRequest {
@@ -1938,6 +1950,135 @@ fn remove_callback_internal(index: u32, ioctl_code: u32) -> Result<(), CallbackE
             ioctl_code,
             Some(&request as *const _ as *const _),
             std::mem::size_of::<RemoveCallbackRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+// ============== Callback Restore Functions ==============
+
+/// Request structure for restoring callbacks (matches kernel struct)
+#[repr(C)]
+struct RestoreCallbackRequest {
+    index: u32,
+}
+
+/// Restore a previously removed process callback by index
+///
+/// This restores the original callback slot value that was saved when the callback
+/// was removed. Only works if the callback was removed during the current driver session.
+pub fn restore_process_callback(index: u32) -> Result<(), CallbackError> {
+    restore_callback_internal(index, IOCTL_DIOPROCESS_RESTORE_PROCESS_CALLBACK)
+}
+
+/// Restore a previously removed thread callback by index
+pub fn restore_thread_callback(index: u32) -> Result<(), CallbackError> {
+    restore_callback_internal(index, IOCTL_DIOPROCESS_RESTORE_THREAD_CALLBACK)
+}
+
+/// Restore a previously removed image callback by index
+pub fn restore_image_callback(index: u32) -> Result<(), CallbackError> {
+    restore_callback_internal(index, IOCTL_DIOPROCESS_RESTORE_IMAGE_CALLBACK)
+}
+
+/// Restore a previously removed registry callback by index
+pub fn restore_registry_callback(index: u32) -> Result<(), CallbackError> {
+    restore_callback_internal(index, IOCTL_DIOPROCESS_RESTORE_REGISTRY_CALLBACK)
+}
+
+/// Request structure for restoring object callbacks (matches kernel struct)
+#[repr(C)]
+struct RestoreObjectCallbackRequest {
+    index: u32,
+    object_type: u8,  // ObjectCallbackType enum (UCHAR)
+    _padding: [u8; 3],
+    restore_pre_operation: u32,  // ULONG in kernel
+    restore_post_operation: u32, // ULONG in kernel
+}
+
+/// Restore a previously removed object callback by index
+///
+/// This restores the original PreOperation/PostOperation callback pointers
+/// that were saved when the callback was removed.
+///
+/// # Arguments
+/// * `index` - The callback entry index
+/// * `object_type` - Process or Thread
+/// * `restore_pre` - Whether to restore the PreOperation callback
+/// * `restore_post` - Whether to restore the PostOperation callback
+pub fn restore_object_callback(
+    index: u32,
+    object_type: ObjectCallbackType,
+    restore_pre: bool,
+    restore_post: bool,
+) -> Result<(), CallbackError> {
+    if !restore_pre && !restore_post {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = RestoreObjectCallbackRequest {
+            index,
+            object_type: object_type as u8,
+            _padding: [0; 3],
+            restore_pre_operation: if restore_pre { 1 } else { 0 },
+            restore_post_operation: if restore_post { 1 } else { 0 },
+        };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_RESTORE_OBJECT_CALLBACK,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<RestoreObjectCallbackRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Internal helper for restoring callbacks
+fn restore_callback_internal(index: u32, ioctl_code: u32) -> Result<(), CallbackError> {
+    if index >= 64 {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = RestoreCallbackRequest { index };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            ioctl_code,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<RestoreCallbackRequest>() as u32,
             None,
             0,
             Some(&mut bytes_returned),

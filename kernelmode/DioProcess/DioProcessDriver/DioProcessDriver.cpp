@@ -13,6 +13,14 @@ PVOID g_ObCallbackHandle = nullptr;
 LARGE_INTEGER g_RegistryCookie = { 0 };
 BOOLEAN g_CallbacksRegistered = FALSE;
 
+// Removed callback storage for restoration
+RemovedArrayCallback g_RemovedProcessCallbacks[MAX_REMOVED_CALLBACKS] = { 0 };
+RemovedArrayCallback g_RemovedThreadCallbacks[MAX_REMOVED_CALLBACKS] = { 0 };
+RemovedArrayCallback g_RemovedImageCallbacks[MAX_REMOVED_CALLBACKS] = { 0 };
+RemovedObjectCallback g_RemovedProcessObjectCallbacks[MAX_REMOVED_CALLBACKS] = { 0 };
+RemovedObjectCallback g_RemovedThreadObjectCallbacks[MAX_REMOVED_CALLBACKS] = { 0 };
+RemovedRegistryCallback g_RemovedRegistryCallbacks[MAX_REMOVED_CALLBACKS] = { 0 };
+
 // ============== Helper Function Implementations ==============
 
 void AddItem(FullEventData* item)
