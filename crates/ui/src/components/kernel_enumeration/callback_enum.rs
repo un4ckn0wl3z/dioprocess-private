@@ -3,7 +3,9 @@
 use callback::{
     enumerate_object_callbacks, enumerate_registry_callbacks, remove_image_callback,
     remove_object_callback, remove_process_callback, remove_registry_callback,
-    remove_thread_callback, ObjectCallbackInfo, ObjectCallbackType, RegistryCallbackInfo,
+    remove_thread_callback, restore_image_callback, restore_object_callback,
+    restore_process_callback, restore_registry_callback, restore_thread_callback,
+    ObjectCallbackInfo, ObjectCallbackType, RegistryCallbackInfo,
 };
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
@@ -441,6 +443,88 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
             });
         };
 
+    // Handle restore callback (for Process/Thread/Image/Registry)
+    let handle_restore = move |index: u32, module_name: String| {
+        let cb_type = *callback_type.read();
+
+        spawn(async move {
+            let result = tokio::task::spawn_blocking(move || match cb_type {
+                CallbackType::Process => restore_process_callback(index),
+                CallbackType::Thread => restore_thread_callback(index),
+                CallbackType::Image => restore_image_callback(index),
+                CallbackType::Registry => restore_registry_callback(index),
+                CallbackType::Object => {
+                    // Object callbacks use handle_restore_object
+                    Err(callback::CallbackError::IoctlFailed(0))
+                }
+            })
+            .await;
+
+            match result {
+                Ok(Ok(())) => {
+                    status_message.set(format!(
+                        "Restored {} callback at index {} ({})",
+                        match cb_type {
+                            CallbackType::Process => "process",
+                            CallbackType::Thread => "thread",
+                            CallbackType::Image => "image",
+                            CallbackType::Registry => "registry",
+                            CallbackType::Object => "object",
+                        },
+                        index,
+                        module_name
+                    ));
+                }
+                Ok(Err(e)) => {
+                    status_message.set(format!("Failed to restore callback: {:?}", e));
+                }
+                Err(e) => {
+                    status_message.set(format!("Task error: {}", e));
+                }
+            }
+        });
+    };
+
+    // Handle restore object callback
+    let handle_restore_object =
+        move |index: u32, obj_type: ObjectCallbackType, restore_pre: bool, restore_post: bool| {
+            let module_name = {
+                let ctx = context_menu.read();
+                ctx.module.clone()
+            };
+
+            spawn(async move {
+                let result = tokio::task::spawn_blocking(move || {
+                    restore_object_callback(index, obj_type, restore_pre, restore_post)
+                })
+                .await;
+
+                match result {
+                    Ok(Ok(())) => {
+                        let ops = match (restore_pre, restore_post) {
+                            (true, true) => "Pre+Post",
+                            (true, false) => "Pre",
+                            (false, true) => "Post",
+                            _ => "",
+                        };
+                        status_message.set(format!(
+                            "Restored {} object callback {} at index {} ({})",
+                            obj_type.as_str(),
+                            ops,
+                            index,
+                            module_name
+                        ));
+                    }
+                    Ok(Err(e)) => {
+                        status_message.set(format!("Failed to restore object callback: {:?}", e));
+                    }
+                    Err(e) => {
+                        status_message.set(format!("Task error: {}", e));
+                    }
+                }
+            });
+        };
+
     rsx! {
         div {
             style: "display: flex; flex-direction: column; flex: 1; overflow: hidden;",
@@ -841,8 +925,8 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                         "Copy Module"
                     }
 
-                    // Divider and Remove button (only for Process/Thread/Image, not Object)
-                    if current_type != CallbackType::Object && ctx_menu.address != 0 {
+                    // Divider and Remove/Restore buttons (only for Process/Thread/Image/Registry, not Object)
+                    if current_type != CallbackType::Object {
                         div { class: "context-menu-divider" }
                         button {
                             class: "context-menu-item context-menu-danger",
@@ -856,10 +940,22 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                             },
                             "Remove Callback"
                         }
+                        button {
+                            class: "context-menu-item context-menu-restore",
+                            onclick: {
+                                let idx = ctx_menu.index;
+                                let module = ctx_menu.module.clone();
+                                move |_| {
+                                    handle_restore(idx, module.clone());
+                                    context_menu.set(CallbackContextMenuState::default());
+                                }
+                            },
+                            "Restore Callback"
+                        }
                     }
 
-                    // Object callback removal options (OCKC style)
-                    if current_type == CallbackType::Object && (ctx_menu.has_pre_op || ctx_menu.has_post_op) {
+                    // Object callback removal/restore options (OCKC style)
+                    if current_type == CallbackType::Object {
                         div { class: "context-menu-divider" }
 
                         // Remove PreOperation
@@ -908,6 +1004,51 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                                 },
                                 "Remove Both"
                             }
+                        }
+
+                        // Restore divider
+                        div { class: "context-menu-divider" }
+
+                        // Restore PreOperation
+                        button {
+                            class: "context-menu-item context-menu-restore",
+                            onclick: {
+                                let idx = ctx_menu.index;
+                                let obj_type = ctx_menu.object_type.unwrap_or(ObjectCallbackType::Process);
+                                move |_| {
+                                    handle_restore_object(idx, obj_type, true, false);
+                                    context_menu.set(CallbackContextMenuState::default());
+                                }
+                            },
+                            "Restore Pre-Operation"
+                        }
+
+                        // Restore PostOperation
+                        button {
+                            class: "context-menu-item context-menu-restore",
+                            onclick: {
+                                let idx = ctx_menu.index;
+                                let obj_type = ctx_menu.object_type.unwrap_or(ObjectCallbackType::Process);
+                                move |_| {
+                                    handle_restore_object(idx, obj_type, false, true);
+                                    context_menu.set(CallbackContextMenuState::default());
+                                }
+                            },
+                            "Restore Post-Operation"
+                        }
+
+                        // Restore Both
+                        button {
+                            class: "context-menu-item context-menu-restore",
+                            onclick: {
+                                let idx = ctx_menu.index;
+                                let obj_type = ctx_menu.object_type.unwrap_or(ObjectCallbackType::Process);
+                                move |_| {
+                                    handle_restore_object(idx, obj_type, true, true);
+                                    context_menu.set(CallbackContextMenuState::default());
+                                }
+                            },
+                            "Restore Both"
                         }
                     }
                 }

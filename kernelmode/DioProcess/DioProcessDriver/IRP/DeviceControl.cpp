@@ -106,6 +106,27 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleRemoveRegistryCallback(Irp, irpSp);
 		break;
 
+	// Callback Restore IOCTLs
+	case IOCTL_DIOPROCESS_RESTORE_PROCESS_CALLBACK:
+		status = HandleRestoreProcessCallback(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_RESTORE_THREAD_CALLBACK:
+		status = HandleRestoreThreadCallback(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_RESTORE_IMAGE_CALLBACK:
+		status = HandleRestoreImageCallback(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_RESTORE_OBJECT_CALLBACK:
+		status = HandleRestoreObjectCallback(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_RESTORE_REGISTRY_CALLBACK:
+		status = HandleRestoreRegistryCallback(Irp, irpSp);
+		break;
+
 	// Kernel Injection IOCTLs
 	case IOCTL_DIOPROCESS_KERNEL_INJECT_SHELLCODE:
 		status = HandleKernelInjectShellcode(Irp, irpSp, &info);
@@ -925,9 +946,14 @@ NTSTATUS HandleRemoveProcessCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
 		// Dereference to get actual callback address for logging
 		ULONG64 callbackAddr = *(PULONG64)(slotValue & 0xFFFFFFFFFFFFFFF8);
 
+		// Save original value for restoration
+		g_RemovedProcessCallbacks[request->Index].IsRemoved = TRUE;
+		g_RemovedProcessCallbacks[request->Index].OriginalValue = slotValue;
+		g_RemovedProcessCallbacks[request->Index].SlotAddress = slotAddress;
+
 		// Zero the slot using RtlZeroMemory (like TCKC)
 		RtlZeroMemory((PVOID)slotAddress, sizeof(ULONG64));
-		KdPrint((DRIVER_PREFIX "Removed process callback at index %d (callback was 0x%llX)\n", request->Index, callbackAddr));
+		KdPrint((DRIVER_PREFIX "Removed process callback at index %d (callback was 0x%llX, saved for restore)\n", request->Index, callbackAddr));
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
@@ -989,9 +1015,14 @@ NTSTATUS HandleRemoveThreadCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
 		// Dereference to get actual callback address for logging
 		ULONG64 callbackAddr = *(PULONG64)(slotValue & 0xFFFFFFFFFFFFFFF8);
 
+		// Save original value for restoration
+		g_RemovedThreadCallbacks[request->Index].IsRemoved = TRUE;
+		g_RemovedThreadCallbacks[request->Index].OriginalValue = slotValue;
+		g_RemovedThreadCallbacks[request->Index].SlotAddress = slotAddress;
+
 		// Zero the slot using RtlZeroMemory (like TCKC)
 		RtlZeroMemory((PVOID)slotAddress, sizeof(ULONG64));
-		KdPrint((DRIVER_PREFIX "Removed thread callback at index %d (callback was 0x%llX)\n", request->Index, callbackAddr));
+		KdPrint((DRIVER_PREFIX "Removed thread callback at index %d (callback was 0x%llX, saved for restore)\n", request->Index, callbackAddr));
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
@@ -1053,9 +1084,14 @@ NTSTATUS HandleRemoveImageCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
 		// Dereference to get actual callback address for logging
 		ULONG64 callbackAddr = *(PULONG64)(slotValue & 0xFFFFFFFFFFFFFFF8);
 
+		// Save original value for restoration
+		g_RemovedImageCallbacks[request->Index].IsRemoved = TRUE;
+		g_RemovedImageCallbacks[request->Index].OriginalValue = slotValue;
+		g_RemovedImageCallbacks[request->Index].SlotAddress = slotAddress;
+
 		// Zero the slot using RtlZeroMemory (like TCKC)
 		RtlZeroMemory((PVOID)slotAddress, sizeof(ULONG64));
-		KdPrint((DRIVER_PREFIX "Removed image callback at index %d (callback was 0x%llX)\n", request->Index, callbackAddr));
+		KdPrint((DRIVER_PREFIX "Removed image callback at index %d (callback was 0x%llX, saved for restore)\n", request->Index, callbackAddr));
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
@@ -1135,10 +1171,21 @@ NTSTATUS HandleRemoveObjectCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
 
 				if (callbackItem && MmIsAddressValid(callbackItem))
 				{
+					// Select the correct storage array based on object type
+					RemovedObjectCallback* storage = (request->ObjectType == ObjectCallbackProcess)
+						? g_RemovedProcessObjectCallbacks
+						: g_RemovedThreadObjectCallbacks;
+
+					// Save the callback entry pointer for restoration
+					storage[request->Index].CallbackEntryItem = callbackItem;
+					storage[request->Index].IsRemoved = TRUE;
+
 					// Remove PreOperation callback using InterlockedExchangePointer (OCKC style)
 					if (request->RemovePreOperation && callbackItem->PreOperation)
 					{
-						KdPrint((DRIVER_PREFIX "Removing PreOperation callback at 0x%llX\n",
+						// Save original PreOperation for restoration
+						storage[request->Index].PreOperation = callbackItem->PreOperation;
+						KdPrint((DRIVER_PREFIX "Removing PreOperation callback at 0x%llX (saved for restore)\n",
 							(ULONG64)callbackItem->PreOperation));
 						InterlockedExchangePointer((PVOID*)&callbackItem->PreOperation, NULL);
 					}
@@ -1146,7 +1193,9 @@ NTSTATUS HandleRemoveObjectCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
 					// Remove PostOperation callback using InterlockedExchangePointer (OCKC style)
 					if (request->RemovePostOperation && callbackItem->PostOperation)
 					{
-						KdPrint((DRIVER_PREFIX "Removing PostOperation callback at 0x%llX\n",
+						// Save original PostOperation for restoration
+						storage[request->Index].PostOperation = callbackItem->PostOperation;
+						KdPrint((DRIVER_PREFIX "Removing PostOperation callback at 0x%llX (saved for restore)\n",
 							(ULONG64)callbackItem->PostOperation));
 						InterlockedExchangePointer((PVOID*)&callbackItem->PostOperation, NULL);
 					}
@@ -1682,13 +1731,18 @@ NTSTATUS HandleRemoveRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
 				{
 					ULONG64 oldFunction = callbackItem->Function;
 
-					// Unlink the callback item from the linked list (RCK style)
-					RemoveEntryList(&callbackItem->Item);
+					// Save original values for restoration
+					g_RemovedRegistryCallbacks[request->Index].IsRemoved = TRUE;
+					g_RemovedRegistryCallbacks[request->Index].OriginalFunction = oldFunction;
+					g_RemovedRegistryCallbacks[request->Index].CallbackItem = callbackItem;
+					// Save original list links for potential re-linking
+					g_RemovedRegistryCallbacks[request->Index].OriginalLinks.Flink = callbackItem->Item.Flink;
+					g_RemovedRegistryCallbacks[request->Index].OriginalLinks.Blink = callbackItem->Item.Blink;
 
-					// Zero out the callback function address to disable it
+					// Zero out the callback function address to disable it (don't remove from list for easier restoration)
 					RtlZeroMemory(&callbackItem->Function, sizeof(callbackItem->Function));
 
-					KdPrint((DRIVER_PREFIX "Removed registry callback at index %d (was 0x%llX)\n",
+					KdPrint((DRIVER_PREFIX "Removed registry callback at index %d (was 0x%llX, saved for restore)\n",
 						request->Index, oldFunction));
 					found = TRUE;
 				}
@@ -1708,6 +1762,282 @@ NTSTATUS HandleRemoveRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
 		KdPrint((DRIVER_PREFIX "Exception while removing registry callback at index %d\n", request->Index));
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	return STATUS_SUCCESS;
+}
+
+// ============== Callback Restore Handlers ==============
+
+NTSTATUS HandleRestoreProcessCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleRestoreProcessCallback called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(RestoreCallbackRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (RestoreCallbackRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->Index >= MAX_CALLBACK_ENTRIES)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Check if we have saved data for this index
+	if (!g_RemovedProcessCallbacks[request->Index].IsRemoved)
+	{
+		KdPrint((DRIVER_PREFIX "No saved process callback at index %d\n", request->Index));
+		return STATUS_NOT_FOUND;
+	}
+
+	__try
+	{
+		ULONG64 slotAddress = g_RemovedProcessCallbacks[request->Index].SlotAddress;
+		ULONG64 originalValue = g_RemovedProcessCallbacks[request->Index].OriginalValue;
+
+		// Verify the slot is still valid
+		if (!MmIsAddressValid((PVOID)slotAddress))
+		{
+			KdPrint((DRIVER_PREFIX "Slot address 0x%llX is no longer valid\n", slotAddress));
+			return STATUS_INVALID_ADDRESS;
+		}
+
+		// Restore the original value
+		*(PULONG64)slotAddress = originalValue;
+
+		// Clear the saved data
+		g_RemovedProcessCallbacks[request->Index].IsRemoved = FALSE;
+		g_RemovedProcessCallbacks[request->Index].OriginalValue = 0;
+		g_RemovedProcessCallbacks[request->Index].SlotAddress = 0;
+
+		KdPrint((DRIVER_PREFIX "Restored process callback at index %d\n", request->Index));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception while restoring process callback at index %d\n", request->Index));
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleRestoreThreadCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleRestoreThreadCallback called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(RestoreCallbackRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (RestoreCallbackRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->Index >= MAX_CALLBACK_ENTRIES)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	if (!g_RemovedThreadCallbacks[request->Index].IsRemoved)
+	{
+		KdPrint((DRIVER_PREFIX "No saved thread callback at index %d\n", request->Index));
+		return STATUS_NOT_FOUND;
+	}
+
+	__try
+	{
+		ULONG64 slotAddress = g_RemovedThreadCallbacks[request->Index].SlotAddress;
+		ULONG64 originalValue = g_RemovedThreadCallbacks[request->Index].OriginalValue;
+
+		if (!MmIsAddressValid((PVOID)slotAddress))
+		{
+			return STATUS_INVALID_ADDRESS;
+		}
+
+		*(PULONG64)slotAddress = originalValue;
+
+		g_RemovedThreadCallbacks[request->Index].IsRemoved = FALSE;
+		g_RemovedThreadCallbacks[request->Index].OriginalValue = 0;
+		g_RemovedThreadCallbacks[request->Index].SlotAddress = 0;
+
+		KdPrint((DRIVER_PREFIX "Restored thread callback at index %d\n", request->Index));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleRestoreImageCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleRestoreImageCallback called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(RestoreCallbackRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (RestoreCallbackRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->Index >= MAX_CALLBACK_ENTRIES)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	if (!g_RemovedImageCallbacks[request->Index].IsRemoved)
+	{
+		KdPrint((DRIVER_PREFIX "No saved image callback at index %d\n", request->Index));
+		return STATUS_NOT_FOUND;
+	}
+
+	__try
+	{
+		ULONG64 slotAddress = g_RemovedImageCallbacks[request->Index].SlotAddress;
+		ULONG64 originalValue = g_RemovedImageCallbacks[request->Index].OriginalValue;
+
+		if (!MmIsAddressValid((PVOID)slotAddress))
+		{
+			return STATUS_INVALID_ADDRESS;
+		}
+
+		*(PULONG64)slotAddress = originalValue;
+
+		g_RemovedImageCallbacks[request->Index].IsRemoved = FALSE;
+		g_RemovedImageCallbacks[request->Index].OriginalValue = 0;
+		g_RemovedImageCallbacks[request->Index].SlotAddress = 0;
+
+		KdPrint((DRIVER_PREFIX "Restored image callback at index %d\n", request->Index));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleRestoreObjectCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleRestoreObjectCallback called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(RestoreObjectCallbackRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (RestoreObjectCallbackRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Select the correct storage array based on object type
+	RemovedObjectCallback* storage = (request->ObjectType == ObjectCallbackProcess)
+		? g_RemovedProcessObjectCallbacks
+		: g_RemovedThreadObjectCallbacks;
+
+	if (!storage[request->Index].IsRemoved)
+	{
+		KdPrint((DRIVER_PREFIX "No saved object callback at index %d\n", request->Index));
+		return STATUS_NOT_FOUND;
+	}
+
+	__try
+	{
+		PCALLBACK_ENTRY_ITEM callbackItem = (PCALLBACK_ENTRY_ITEM)storage[request->Index].CallbackEntryItem;
+
+		if (!callbackItem || !MmIsAddressValid(callbackItem))
+		{
+			return STATUS_INVALID_ADDRESS;
+		}
+
+		// Restore PreOperation if requested and we have saved data
+		if (request->RestorePreOperation && storage[request->Index].PreOperation)
+		{
+			InterlockedExchangePointer((PVOID*)&callbackItem->PreOperation,
+				storage[request->Index].PreOperation);
+			KdPrint((DRIVER_PREFIX "Restored PreOperation to 0x%llX\n",
+				(ULONG64)storage[request->Index].PreOperation));
+			storage[request->Index].PreOperation = NULL;
+		}
+
+		// Restore PostOperation if requested and we have saved data
+		if (request->RestorePostOperation && storage[request->Index].PostOperation)
+		{
+			InterlockedExchangePointer((PVOID*)&callbackItem->PostOperation,
+				storage[request->Index].PostOperation);
+			KdPrint((DRIVER_PREFIX "Restored PostOperation to 0x%llX\n",
+				(ULONG64)storage[request->Index].PostOperation));
+			storage[request->Index].PostOperation = NULL;
+		}
+
+		// If both operations are restored, clear the removed flag
+		if (!storage[request->Index].PreOperation && !storage[request->Index].PostOperation)
+		{
+			storage[request->Index].IsRemoved = FALSE;
+			storage[request->Index].CallbackEntryItem = NULL;
+		}
+
+		KdPrint((DRIVER_PREFIX "Restored object callback at index %d\n", request->Index));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleRestoreRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleRestoreRegistryCallback called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(RestoreRegistryCallbackRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (RestoreRegistryCallbackRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->Index >= MAX_REGISTRY_CALLBACK_ENTRIES)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	if (!g_RemovedRegistryCallbacks[request->Index].IsRemoved)
+	{
+		KdPrint((DRIVER_PREFIX "No saved registry callback at index %d\n", request->Index));
+		return STATUS_NOT_FOUND;
+	}
+
+	__try
+	{
+		PREGISTRY_CALLBACK_ITEM callbackItem =
+			(PREGISTRY_CALLBACK_ITEM)g_RemovedRegistryCallbacks[request->Index].CallbackItem;
+
+		if (!callbackItem || !MmIsAddressValid(callbackItem))
+		{
+			return STATUS_INVALID_ADDRESS;
+		}
+
+		// Restore the original function pointer
+		callbackItem->Function = g_RemovedRegistryCallbacks[request->Index].OriginalFunction;
+
+		// Clear the saved data
+		g_RemovedRegistryCallbacks[request->Index].IsRemoved = FALSE;
+		g_RemovedRegistryCallbacks[request->Index].OriginalFunction = 0;
+		g_RemovedRegistryCallbacks[request->Index].CallbackItem = NULL;
+
+		KdPrint((DRIVER_PREFIX "Restored registry callback at index %d to 0x%llX\n",
+			request->Index, callbackItem->Function));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
 		return STATUS_ACCESS_VIOLATION;
 	}
 
