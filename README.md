@@ -37,6 +37,7 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
 - **Shellcode injection** — classic (from .bin file), web staging (download from URL via WinInet), and threadless (hook exported function, no new threads)
 - **Kernel injection** (requires driver) — shellcode & DLL injection from kernel mode via `RtlCreateUserThread`, bypasses usermode hooks
+- **Early kernel injection** (requires driver) — inject DLLs before any user code executes via APC callback when kernel32.dll loads (Trampoline method removed due to stability issues)
 - **DLL Unhooking** — restore hooked DLLs (ntdll, kernel32, kernelbase, user32, advapi32, ws2_32) by replacing .text section from disk
 - **Hook Detection & Unhooking** — scan IAT entries for inline hooks (E9 JMP, E8 CALL, EB short JMP, FF25 indirect JMP, MOV+JMP x64 patterns), compare with disk, and optionally unhook detected hooks
 - **Process String Scanning** — extract ASCII and UTF-16 strings from process memory with configurable min length, encoding filter, paginated results (1000/page), and text export
@@ -64,6 +65,7 @@ crates/
 │       ├── driver.rs      # IOCTLs (protection, privileges, debug flags, callback enumeration)
 │       ├── hypervisor.rs  # Bundled hypervisor (Ring -1) bindings (hv_is_running, hv_inject_shellcode, hv_inject_dll)
 │       ├── pspcidtable.rs # PspCidTable enumeration via signature scanning
+│       ├── early_injection.rs # Early kernel injection (APC method only, Trampoline removed)
 │       ├── storage.rs     # SQLite persistence (WAL mode, batched writes)
 │       ├── types.rs       # CallbackEvent, EventType, EventCategory
 │       └── error.rs       # CallbackError enum
@@ -128,6 +130,30 @@ Located in `crates/misc/src/kernel_inject.rs` + `kernelmode/DioProcess/DioProces
 - Returns `STATUS_NOT_SUPPORTED` for unsupported Windows versions
 
 **Access:** Right-click process → **Miscellaneous → Kernel Injection** → Shellcode Injection or DLL Injection (grayed out when driver not loaded)
+
+### Early Kernel Injection (requires driver)
+
+Inject DLLs into processes **before any user code executes** — triggered by kernel callbacks at process creation time.
+
+**NOTE:** Only the **APC Callback** method is supported. The Trampoline method was removed due to stability issues (PEB.Ldr not initialized at process creation time caused STATUS_ILLEGAL_INSTRUCTION errors).
+
+**How it works (APC method):**
+1. Arm injection with target process name (e.g., "notepad.exe") and DLL path
+2. Kernel's `PsSetLoadImageNotifyRoutine` callback monitors DLL loads
+3. When `kernel32.dll` loads in a matching target process:
+   - Allocate memory, write DLL path, resolve `LoadLibraryW` via PEB walking
+   - Queue kernel APC targeting the main thread
+   - APC fires during process initialization, calling `LoadLibraryW(dll_path)`
+4. One-shot mode: auto-disarm after first successful injection
+
+**Use cases:**
+- Inject monitoring/logging DLLs before application code runs
+- Bypass DLL load order restrictions
+- Security research on early-stage process behavior
+
+**Access:** Process tab toolbar → **Early Injection** button → opens modal with target process name, DLL path picker, one-shot toggle, and arm/disarm controls (disabled when driver not loaded)
+
+**Located in:** `crates/callback/src/early_injection.rs` (Rust bindings), `kernelmode/DioProcess/DioProcessDriver/Injection/EarlyInjection.cpp` (kernel implementation)
 
 ### Hypervisor (Ring -1) Features
 

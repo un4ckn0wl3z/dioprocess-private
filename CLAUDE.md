@@ -30,6 +30,7 @@ crates/
 │       ├── driver.rs      # Driver communication (is_driver_loaded, read_events, protect/unprotect, enable_privileges, clear_debug_flags, callback enumeration)
 │       ├── hypervisor.rs  # Bundled hypervisor (Ring -1) bindings (hv_is_running, hv_inject_shellcode, hv_inject_dll, HvInjectResult, HvInjectDllResult)
 │       ├── pspcidtable.rs # PspCidTable enumeration (CidEntry, CidObjectType, enumerate_pspcidtable)
+│       ├── early_injection.rs # Early kernel injection (arm_early_injection, disarm_early_injection, get_early_injection_status) - APC method only
 │       └── storage.rs     # SQLite persistence (EventStorage, EventFilter, batched writes)
 ├── misc/          # DLL injection (7 methods), DLL unhooking, hook detection, kernel injection, process creation, process hollowing, ghostly hollowing, process herpaderping, herpaderping hollowing, token theft, module unloading, memory ops
 │   └── src/
@@ -85,6 +86,7 @@ crates/
 │       │   ├── shellcode_inject_window.rs # Shellcode injection (web staging) modal
 │       │   ├── threadless_inject_window.rs # Threadless shellcode injection modal
 │       │   ├── string_scan_window.rs    # Process memory string scan modal
+│       │   ├── early_injection_window.rs # Early kernel injection modal (APC method only)
 │       │   ├── utilities_tab.rs         # Usermode Utilities tab (file bloating, etc.)
 │       │   ├── kernel_utilities_tab.rs  # Kernel Enumeration tab (callback enum, PspCidTable)
 │       │   ├── kernel_enumeration/
@@ -148,6 +150,8 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `CidObjectType` | callback | Process, Thread |
 | `HvInjectResult` | callback | bytes_written, thread_handle, shellcode_address, success |
 | `HvInjectDllResult` | callback | module_base, path_address, success |
+| `EarlyInjectionMethod` | callback | ApcCallback (only method supported; Trampoline removed due to stability issues) |
+| `EarlyInjectionStatus` | callback | armed, target_process_name, dll_path, method, injection_count, last_injected_pid, last_status, one_shot |
 
 ## Build & run
 
@@ -195,7 +199,7 @@ pub enum Theme {
 - **Naming:** snake_case functions, PascalCase types, SCREAMING_SNAKE_CASE constants
 - **Error handling:** Custom error enums (`MiscError`, `ServiceError`) with `Result<T, E>`
 - **Unsafe:** Used for all Windows API calls; always paired with proper resource cleanup (CloseHandle)
-- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `FUNCTION_STOMPING_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`, `HOOK_SCAN_WINDOW_STATE`, `STRING_SCAN_WINDOW_STATE`, `SHELLCODE_INJECT_WINDOW_STATE`, `THREADLESS_INJECT_WINDOW_STATE`); local signals for view mode (`ProcessViewMode::Flat`/`Tree`) and expanded PIDs (`HashSet<u32>`)
+- **State management:** Dioxus global signals (`THREAD_WINDOW_STATE`, `HANDLE_WINDOW_STATE`, `MODULE_WINDOW_STATE`, `MEMORY_WINDOW_STATE`, `GRAPH_WINDOW_STATE`, `CREATE_PROCESS_WINDOW_STATE`, `TOKEN_THIEF_WINDOW_STATE`, `FUNCTION_STOMPING_WINDOW_STATE`, `GHOST_PROCESS_WINDOW_STATE`, `HOOK_SCAN_WINDOW_STATE`, `STRING_SCAN_WINDOW_STATE`, `SHELLCODE_INJECT_WINDOW_STATE`, `THREADLESS_INJECT_WINDOW_STATE`, `EARLY_INJECTION_WINDOW_STATE`); local signals for view mode (`ProcessViewMode::Flat`/`Tree`) and expanded PIDs (`HashSet<u32>`)
 - **Async:** `tokio::spawn` for background tasks
 - **Strings:** UTF-16 wide strings for Windows API, converted to/from Rust `String`
 - **UI keyboard shortcuts:** F5 (refresh), Delete (kill), Escape (close menu)
@@ -369,6 +373,67 @@ IOCTL_DIOPROCESS_HV_INJECT_DLL        // 0x841
 **UI Access:**
 Right-click process → Miscellaneous → **HV Inject Shellcode (Ring -1)** / **HV Inject DLL (Ring -1)**
 (Items disabled when driver/hypervisor not loaded)
+
+### 2c. Early Kernel Injection (DLL)
+
+Inject a DLL into a process **before any user code executes** — triggered by kernel callbacks when the target process is first created.
+
+**NOTE:** Only the APC method is supported. The Trampoline method was removed due to stability issues (STATUS_ILLEGAL_INSTRUCTION errors caused by PEB.Ldr not being initialized at process creation time).
+
+**Functions (callback crate):**
+- `callback::arm_early_injection(target: &str, dll_path: &str, method: EarlyInjectionMethod, one_shot: bool) -> Result<(), CallbackError>` — Arm early injection for target process
+- `callback::disarm_early_injection() -> Result<(), CallbackError>` — Disarm early injection
+- `callback::get_early_injection_status() -> Result<EarlyInjectionStatus, CallbackError>` — Get current injection state
+
+**EarlyInjectionMethod enum:**
+```rust
+pub enum EarlyInjectionMethod {
+    ApcCallback = 1,  // Only supported method
+    // Trampoline = 0 — REMOVED (stability issues)
+}
+```
+
+**Algorithm (APC Callback):**
+1. User arms injection with target process name (e.g., "notepad.exe") and DLL path
+2. `PsSetLoadImageNotifyRoutine` callback fires when any DLL loads in any process
+3. When `kernel32.dll` loads in a process matching the target name:
+   - Allocate RWX memory in target process via `ZwAllocateVirtualMemory`
+   - Write DLL path to allocated memory
+   - Resolve `LoadLibraryW` address in target via PEB walking + PE export parsing
+   - Queue kernel APC via `KeInitializeApc` + `KeInsertQueueApc` targeting the main thread
+   - APC calls `LoadLibraryW(dll_path)` when thread enters alertable wait (almost immediately during process init)
+4. One-shot mode: auto-disarm after first successful injection
+
+**Implementation:**
+- Kernel: `kernelmode/DioProcess/DioProcessDriver/Injection/EarlyInjection.cpp`
+- Rust bindings: `crates/callback/src/early_injection.rs`
+- UI: `crates/ui/src/components/early_injection_window.rs`
+
+**IOCTLs:**
+```cpp
+IOCTL_DIOPROCESS_EARLY_INJECT_ARM     // 0x00222140
+IOCTL_DIOPROCESS_EARLY_INJECT_DISARM  // 0x00222144
+IOCTL_DIOPROCESS_EARLY_INJECT_STATUS  // 0x00222148
+```
+
+**Why APC over Trampoline:**
+- **APC method** triggers when `kernel32.dll` loads — PEB.Ldr is fully initialized, `LoadLibraryW` is available
+- **Trampoline method** (removed) hooked `LdrLoadDll` at process creation — PEB.Ldr was NULL, causing crashes
+
+**Use Cases:**
+- Inject monitoring/logging DLLs before application code runs
+- Bypass DLL load order restrictions
+- Security research on early-stage process behavior
+
+**UI Access:**
+Process tab toolbar → **Early Injection** button → opens modal with:
+- Target process name input (e.g., "notepad.exe")
+- DLL path picker
+- One-shot toggle
+- Arm/Disarm buttons
+- Live status display (armed state, injection count, last injected PID)
+
+(Button disabled/grayed when driver not loaded)
 
 ### 3. Token Privilege Escalation
 
