@@ -1338,6 +1338,84 @@ const BASE_STYLES: &str = r#"
         text-decoration: underline;
     }
 
+    /* Install Method Selection */
+    .install-method-options {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .install-method-option {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+
+    .install-method-option:hover:not(.disabled) {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(34, 211, 238, 0.3);
+    }
+
+    .install-method-option.selected {
+        background: rgba(34, 211, 238, 0.1);
+        border-color: rgba(34, 211, 238, 0.5);
+    }
+
+    .install-method-option.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .install-method-option input[type="radio"] {
+        margin-top: 3px;
+        accent-color: #22d3ee;
+    }
+
+    .install-method-content {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: 1;
+    }
+
+    .install-method-label {
+        color: #e5e7eb;
+        font-weight: 600;
+        font-size: 14px;
+    }
+
+    .install-method-desc {
+        color: #9ca3af;
+        font-size: 12px;
+    }
+
+    .install-method-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        background: rgba(156, 163, 175, 0.2);
+        color: #9ca3af;
+        width: fit-content;
+    }
+
+    .install-method-badge.recommended {
+        background: rgba(34, 197, 94, 0.2);
+        color: #86efac;
+    }
+
+    .install-method-badge.warning {
+        background: rgba(251, 191, 36, 0.2);
+        color: #fbbf24;
+    }
+
     /* Service Tab Styles */
     .service-table .th {
         padding: 10px 12px;

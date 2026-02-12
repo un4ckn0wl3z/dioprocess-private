@@ -31,6 +31,7 @@ pub fn Layout() -> Element {
     let mut license_error = use_signal(|| String::new());
     let mut show_install_warning = use_signal(|| false);
     let mut license_validated = use_signal(|| false);
+    let mut install_method = use_signal(|| "signed".to_string()); // "kdu", "kdmapper", "signed"
     let route: Route = use_route();
 
     // Validate license on startup
@@ -266,7 +267,7 @@ pub fn Layout() -> Element {
                     }
                 }
 
-                // Install Warning Modal
+                // Install Method Selection Modal
                 if *show_install_warning.read() {
                     div {
                         class: "about-modal-overlay",
@@ -274,7 +275,7 @@ pub fn Layout() -> Element {
 
                         div {
                             class: "about-modal",
-                            style: "max-width: 500px;",
+                            style: "max-width: 550px;",
                             onclick: |e| e.stop_propagation(),
 
                             div {
@@ -282,8 +283,7 @@ pub fn Layout() -> Element {
 
                                 h2 {
                                     class: "about-modal-title",
-                                    style: "color: #fbbf24;",
-                                    "⚠️ WARNING"
+                                    "Driver Installation"
                                 }
 
                                 button {
@@ -294,25 +294,105 @@ pub fn Layout() -> Element {
                             }
 
                             div {
-                                style: "padding: 20px; display: flex; flex-direction: column; gap: 15px;",
+                                style: "padding: 20px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; max-height: calc(80vh - 70px);",
 
                                 div {
-                                    style: "color: #fbbf24; font-weight: bold; font-size: 14px;",
-                                    "Before installing the driver, you MUST:"
+                                    style: "color: #e5e7eb; font-weight: bold; font-size: 14px; margin-bottom: 5px;",
+                                    "Select Installation Method:"
                                 }
 
-                                ul {
-                                    style: "color: #e5e7eb; margin: 0; padding-left: 20px; line-height: 1.8;",
-                                    li { "Disable Hyper-V: " code { style: "background: #374151; padding: 2px 6px; border-radius: 3px;", "bcdedit /set hypervisorlaunchtype off" } }
-                                    li { "Disable Secure Boot in BIOS/UEFI" }
-                                    li { "Disable Windows driver protections (Integrity Checks / Vulnerable Driver Blocklist)" }
+                                // Radio button options
+                                div { class: "install-method-options",
+                                    // Signed Driver option (default, recommended)
+                                    label {
+                                        class: if *install_method.read() == "signed" { "install-method-option selected" } else { "install-method-option" },
+                                        onclick: move |_| install_method.set("signed".to_string()),
+                                        input {
+                                            r#type: "radio",
+                                            name: "install_method",
+                                            value: "signed",
+                                            checked: *install_method.read() == "signed",
+                                            onchange: move |_| install_method.set("signed".to_string()),
+                                        }
+                                        div { class: "install-method-content",
+                                            span { class: "install-method-label", "Signed Driver (Windows Service)" }
+                                            span { class: "install-method-badge recommended", "Recommended" }
+                                            span { class: "install-method-desc", "Full feature support - install signed driver as Windows kernel service" }
+                                        }
+                                    }
+
+                                    // KDU option
+                                    label {
+                                        class: if *install_method.read() == "kdu" { "install-method-option selected" } else { "install-method-option" },
+                                        onclick: move |_| install_method.set("kdu".to_string()),
+                                        input {
+                                            r#type: "radio",
+                                            name: "install_method",
+                                            value: "kdu",
+                                            checked: *install_method.read() == "kdu",
+                                            onchange: move |_| install_method.set("kdu".to_string()),
+                                        }
+                                        div { class: "install-method-content",
+                                            span { class: "install-method-label", "KDU (Kernel Driver Utility)" }
+                                            span { class: "install-method-desc", "Uses vulnerable driver to disable DSE (Driver Signature Enforcement)" }
+                                        }
+                                    }
+
+                                    // KDMapper option
+                                    label {
+                                        class: if *install_method.read() == "kdmapper" { "install-method-option selected" } else { "install-method-option" },
+                                        onclick: move |_| install_method.set("kdmapper".to_string()),
+                                        input {
+                                            r#type: "radio",
+                                            name: "install_method",
+                                            value: "kdmapper",
+                                            checked: *install_method.read() == "kdmapper",
+                                            onchange: move |_| install_method.set("kdmapper".to_string()),
+                                        }
+                                        div { class: "install-method-content",
+                                            span { class: "install-method-label", "KDMapper (Manual Map)" }
+                                            span { class: "install-method-badge warning", "Limited Features" }
+                                            span { class: "install-method-desc", "Uses vulnerable driver to manually map - kernel callback features NOT available" }
+                                        }
+                                    }
                                 }
 
-                                div {
-                                    style: "background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; border-radius: 5px; padding: 12px; margin-top: 10px;",
-                                    span {
-                                        style: "color: #fca5a5; font-size: 13px;",
-                                        "⚠️ Use ONLY on test systems. You are responsible for any damage."
+                                // Warning for KDU/KDMapper methods
+                                if *install_method.read() == "kdu" || *install_method.read() == "kdmapper" {
+                                    div {
+                                        style: "background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; border-radius: 5px; padding: 12px; margin-top: 10px;",
+                                        div {
+                                            style: "color: #fbbf24; font-weight: bold; font-size: 13px; margin-bottom: 8px;",
+                                            "⚠️ Before installing, you MUST:"
+                                        }
+                                        ul {
+                                            style: "color: #e5e7eb; margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.6;",
+                                            li { "Disable Hyper-V: " code { style: "background: #374151; padding: 2px 6px; border-radius: 3px;", "bcdedit /set hypervisorlaunchtype off" } }
+                                            li { "Disable Secure Boot in BIOS/UEFI" }
+                                            li { "Disable Vulnerable Driver Blocklist" }
+                                        }
+                                    }
+                                }
+
+                                // Extra warning for KDMapper about limited features
+                                if *install_method.read() == "kdmapper" {
+                                    div {
+                                        style: "background: rgba(251, 191, 36, 0.15); border: 1px solid #fbbf24; border-radius: 5px; padding: 12px; margin-top: 10px;",
+                                        span {
+                                            style: "color: #fbbf24; font-size: 13px;",
+                                            "⚠️ KDMapper does NOT support kernel callback features (System Events tab will not work)."
+                                        }
+                                    }
+                                }
+
+                                // Info for Signed method
+                                if *install_method.read() == "signed" {
+                                    div {
+                                        style: "background: rgba(34, 197, 94, 0.15); border: 1px solid #22c55e; border-radius: 5px; padding: 12px; margin-top: 10px;",
+                                        span {
+                                            style: "color: #86efac; font-size: 13px;",
+                                            "✓ Signed driver - all features available, no special system configuration required."
+                                        }
                                     }
                                 }
 
@@ -326,8 +406,9 @@ pub fn Layout() -> Element {
                                     }
 
                                     button {
-                                        class: "btn btn-danger",
+                                        class: "btn btn-primary",
                                         onclick: move |_| {
+                                            let selected_method = install_method.read().clone();
                                             show_install_warning.set(false);
 
                                             // Check if license key is configured
@@ -343,6 +424,13 @@ pub fn Layout() -> Element {
                                                     let pat = match load_pat() {
                                                         Some(p) => p,
                                                         None => return Err("Error: E1001".to_string()),
+                                                    };
+
+                                                    // Determine which script to use based on method
+                                                    let script_name = match selected_method.as_str() {
+                                                        "kdu" => "install-kdu.cmd",
+                                                        "kdmapper" => "install-kdmapper.cmd",
+                                                        _ => "install-services.cmd", // signed (default)
                                                     };
 
                                                     let appdata = match std::env::var("LOCALAPPDATA") {
@@ -450,8 +538,8 @@ pub fn Layout() -> Element {
                                                         Err(_) => return Err("Error: E1005".to_string()),
                                                     };
 
-                                                    // Run setup
-                                                    let install_script = extract_dir.join("install.cmd");
+                                                    // Run setup script based on selected method
+                                                    let install_script = extract_dir.join(script_name);
                                                     if !install_script.exists() {
                                                         let _ = std::fs::remove_dir_all(&extract_dir);
                                                         return Err("Error: E1006".to_string());
@@ -521,7 +609,7 @@ pub fn Layout() -> Element {
                                                 install_status.set(String::new());
                                             });
                                         },
-                                        "I Understand, Proceed"
+                                        "Install Driver"
                                     }
                                 }
                             }
