@@ -110,11 +110,9 @@ VOID ParseCidTable1(ULONG64 baseAddr, INT index1, INT index2, CidEntry* entries,
 VOID ParseCidTable2(ULONG64 baseAddr, INT index2, CidEntry* entries, ULONG* count, ULONG maxEntries);
 VOID ParseCidTable3(ULONG64 baseAddr, CidEntry* entries, ULONG* count, ULONG maxEntries);
 
-// Minifilter enumeration
-PVOID GetFltMgrBaseAddress(PULONG pSize);
-PVOID FindFltGlobals(PVOID fltmgrBase, ULONG fltmgrSize);
-PVOID GetModuleExport(PVOID moduleBase, PCSTR exportName);
+// Minifilter enumeration (using Filter Manager APIs)
 BOOLEAN EnumerateMinifiltersViaApi(MinifilterInfo* entries, ULONG* count, ULONG maxEntries);
+NTSTATUS UnlinkMinifilterCallbacks(const WCHAR* filterName);
 
 // Kernel driver enumeration
 extern "C" NTKERNELAPI PLIST_ENTRY PsLoadedModuleList;
@@ -153,6 +151,7 @@ NTSTATUS HandleEnumThreadCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PT
 NTSTATUS HandleEnumImageCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleEnumObjectCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleEnumMinifilters(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleUnlinkMinifilter(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandleEnumDrivers(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleEnumPspCidTable(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 

@@ -19,6 +19,8 @@ pub enum CallbackError {
     IoctlFailed(u32),
     /// Invalid parameter passed to function
     InvalidParameter,
+    /// Filter not found (for minifilter unlink)
+    FilterNotFound(String),
 }
 
 impl fmt::Display for CallbackError {
@@ -39,6 +41,9 @@ impl fmt::Display for CallbackError {
                 write!(f, "IOCTL operation failed: error code {}", code)
             }
             CallbackError::InvalidParameter => write!(f, "Invalid parameter"),
+            CallbackError::FilterNotFound(name) => {
+                write!(f, "Minifilter not found: {}", name)
+            }
         }
     }
 }

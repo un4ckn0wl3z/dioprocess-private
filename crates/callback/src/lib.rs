@@ -25,9 +25,9 @@ pub use driver::{
     remove_process_callback, remove_registry_callback, remove_thread_callback,
     restore_image_callback, restore_object_callback, restore_process_callback,
     restore_registry_callback, restore_thread_callback, start_collection, stop_collection,
-    unprotect_process, unregister_callbacks, CallbackInfo, KernelDriverInfo, MinifilterCallbacks,
-    MinifilterInfo, ObjectCallbackInfo, ObjectCallbackOperations, ObjectCallbackType,
-    RegistryCallbackInfo,
+    unlink_minifilter, unprotect_process, unregister_callbacks, CallbackInfo, KernelDriverInfo,
+    MinifilterCallbacks, MinifilterInfo, ObjectCallbackInfo, ObjectCallbackOperations,
+    ObjectCallbackType, RegistryCallbackInfo,
 };
 pub use error::CallbackError;
 pub use hypervisor::{

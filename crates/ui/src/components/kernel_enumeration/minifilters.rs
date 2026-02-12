@@ -1,6 +1,6 @@
 //! Minifilters Enumeration sub-tab
 
-use callback::{enumerate_minifilters, MinifilterInfo};
+use callback::{enumerate_minifilters, unlink_minifilter, MinifilterInfo};
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 
@@ -165,6 +165,13 @@ pub fn MinifiltersTab(driver_loaded: bool) -> Element {
     let query_text = search_query.read().clone();
     let ctx_menu = context_menu.read().clone();
     let has_data = !filter_list.is_empty();
+
+    // Clone context menu values for closures
+    let copy_filter_name = ctx_menu.filter_name.clone();
+    let copy_altitude = ctx_menu.altitude.clone();
+    let copy_address = ctx_menu.filter_address;
+    let copy_owner = ctx_menu.owner_module.clone();
+    let unlink_filter_name = ctx_menu.filter_name.clone();
 
     // Sort indicator
     let sort_indicator = move |col_check: MinifilterSortColumn| -> String {
@@ -361,7 +368,7 @@ pub fn MinifiltersTab(driver_loaded: bool) -> Element {
                     button {
                         class: "context-menu-item",
                         onclick: move |_| {
-                            copy_to_clipboard(&ctx_menu.filter_name);
+                            copy_to_clipboard(&copy_filter_name);
                             context_menu.set(MinifilterContextMenuState::default());
                         },
                         "Copy Filter Name"
@@ -369,7 +376,7 @@ pub fn MinifiltersTab(driver_loaded: bool) -> Element {
                     button {
                         class: "context-menu-item",
                         onclick: move |_| {
-                            copy_to_clipboard(&ctx_menu.altitude);
+                            copy_to_clipboard(&copy_altitude);
                             context_menu.set(MinifilterContextMenuState::default());
                         },
                         "Copy Altitude"
@@ -377,7 +384,7 @@ pub fn MinifiltersTab(driver_loaded: bool) -> Element {
                     button {
                         class: "context-menu-item",
                         onclick: move |_| {
-                            copy_to_clipboard(&format!("0x{:016X}", ctx_menu.filter_address));
+                            copy_to_clipboard(&format!("0x{:016X}", copy_address));
                             context_menu.set(MinifilterContextMenuState::default());
                         },
                         "Copy Address"
@@ -385,10 +392,48 @@ pub fn MinifiltersTab(driver_loaded: bool) -> Element {
                     button {
                         class: "context-menu-item",
                         onclick: move |_| {
-                            copy_to_clipboard(&ctx_menu.owner_module);
+                            copy_to_clipboard(&copy_owner);
                             context_menu.set(MinifilterContextMenuState::default());
                         },
                         "Copy Owner Module"
+                    }
+                    div { class: "context-menu-divider" }
+                    button {
+                        class: "context-menu-item danger",
+                        onclick: move |_| {
+                            let name = unlink_filter_name.clone();
+                            context_menu.set(MinifilterContextMenuState::default());
+                            status_message.set(format!("Unlinking {}...", name));
+                            spawn(async move {
+                                let name_clone = name.clone();
+                                let result = tokio::task::spawn_blocking(move || {
+                                    unlink_minifilter(&name_clone)
+                                }).await;
+
+                                match result {
+                                    Ok(Ok(())) => {
+                                        status_message.set(format!("✓ Unlinked callbacks for {}", name));
+                                        // Refresh the list
+                                        is_enumerating.set(true);
+                                        let refresh_result = tokio::task::spawn_blocking(enumerate_minifilters).await;
+                                        match refresh_result {
+                                            Ok(Ok(filters)) => {
+                                                minifilters.set(filters);
+                                            }
+                                            _ => {}
+                                        }
+                                        is_enumerating.set(false);
+                                    }
+                                    Ok(Err(e)) => {
+                                        status_message.set(format!("✗ Failed to unlink {}: {}", name, e));
+                                    }
+                                    Err(e) => {
+                                        status_message.set(format!("✗ Task error: {}", e));
+                                    }
+                                }
+                            });
+                        },
+                        "⚠️ Unlink Callbacks"
                     }
                 }
             }

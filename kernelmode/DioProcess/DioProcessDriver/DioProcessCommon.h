@@ -180,6 +180,10 @@ struct EventData
 #define IOCTL_DIOPROCESS_ENUM_MINIFILTERS \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x811, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// Minifilter callback unlink IOCTL
+#define IOCTL_DIOPROCESS_UNLINK_MINIFILTER \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x817, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 // Callback removal IOCTLs
 #define IOCTL_DIOPROCESS_REMOVE_PROCESS_CALLBACK \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x812, METHOD_BUFFERED, FILE_ANY_ACCESS)
@@ -192,9 +196,9 @@ struct EventData
 
 // Registry callback enumeration and removal IOCTLs (RCK style)
 #define IOCTL_DIOPROCESS_ENUM_REGISTRY_CALLBACKS \
-	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x817, METHOD_BUFFERED, FILE_ANY_ACCESS)
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x81E, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_DIOPROCESS_REMOVE_REGISTRY_CALLBACK \
-	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x818, METHOD_BUFFERED, FILE_ANY_ACCESS)
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x81F, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 // Callback restore IOCTLs - restore previously removed callbacks
 #define IOCTL_DIOPROCESS_RESTORE_PROCESS_CALLBACK \
@@ -506,6 +510,12 @@ struct EnumMinifiltersResponse
 {
 	ULONG Count;                                  // Number of entries returned
 	MinifilterInfo Entries[1];                    // Variable length array
+};
+
+// Minifilter unlink request structure
+struct UnlinkMinifilterRequest
+{
+	WCHAR FilterName[MAX_FILTER_NAME_LENGTH];     // Name of the filter to unlink callbacks
 };
 
 // ============== Kernel Driver Enumeration ==============

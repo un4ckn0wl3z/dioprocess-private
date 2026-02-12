@@ -1594,6 +1594,7 @@ pub fn enumerate_object_callbacks() -> Result<Vec<ObjectCallbackInfo>, CallbackE
 // ============== Minifilter Enumeration ==============
 
 const IOCTL_DIOPROCESS_ENUM_MINIFILTERS: u32 = 0x00222044; // CTL_CODE(0x22, 0x811, 0, 0)
+const IOCTL_DIOPROCESS_UNLINK_MINIFILTER: u32 = 0x0022205C; // CTL_CODE(0x22, 0x817, 0, 0)
 
 /// Callbacks registered by a minifilter for file operations
 #[derive(Debug, Clone, Default)]
@@ -1756,6 +1757,56 @@ pub fn enumerate_minifilters() -> Result<Vec<MinifilterInfo>, CallbackError> {
     }
 }
 
+/// Unlink minifilter callbacks by filter name
+/// This removes the minifilter's Pre/Post operation callbacks from the callback chain
+pub fn unlink_minifilter(filter_name: &str) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    const MAX_FILTER_NAME: usize = 64;
+
+    #[repr(C)]
+    struct UnlinkRequest {
+        filter_name: [u16; MAX_FILTER_NAME],
+    }
+
+    let mut request = UnlinkRequest {
+        filter_name: [0u16; MAX_FILTER_NAME],
+    };
+
+    // Convert filter name to wide string
+    let wide_name: Vec<u16> = filter_name.encode_utf16().collect();
+    let copy_len = wide_name.len().min(MAX_FILTER_NAME - 1);
+    request.filter_name[..copy_len].copy_from_slice(&wide_name[..copy_len]);
+
+    unsafe {
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_UNLINK_MINIFILTER,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<UnlinkRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            // STATUS_NOT_FOUND = 0xC0000225
+            if err.0 == 0xC0000225u32 as i32 as u32 {
+                return Err(CallbackError::FilterNotFound(filter_name.to_string()));
+            }
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+
+        Ok(())
+    }
+}
+
 // ============== Kernel Driver Enumeration ==============
 
 const IOCTL_DIOPROCESS_ENUM_DRIVERS: u32 = 0x0022204C; // CTL_CODE(0x22, 0x813, 0, 0)
@@ -1884,10 +1935,10 @@ const IOCTL_DIOPROCESS_REMOVE_THREAD_CALLBACK: u32 = 0x00222050;
 const IOCTL_DIOPROCESS_REMOVE_IMAGE_CALLBACK: u32 = 0x00222054;
 // CTL_CODE(0x22, 0x816, 0, 0) = 0x00222058
 const IOCTL_DIOPROCESS_REMOVE_OBJECT_CALLBACK: u32 = 0x00222058;
-// CTL_CODE(0x22, 0x817, 0, 0) = 0x0022205C
-const IOCTL_DIOPROCESS_ENUM_REGISTRY_CALLBACKS: u32 = 0x0022205C;
-// CTL_CODE(0x22, 0x818, 0, 0) = 0x00222060
-const IOCTL_DIOPROCESS_REMOVE_REGISTRY_CALLBACK: u32 = 0x00222060;
+// CTL_CODE(0x22, 0x81E, 0, 0) = 0x00222078
+const IOCTL_DIOPROCESS_ENUM_REGISTRY_CALLBACKS: u32 = 0x00222078;
+// CTL_CODE(0x22, 0x81F, 0, 0) = 0x0022207C
+const IOCTL_DIOPROCESS_REMOVE_REGISTRY_CALLBACK: u32 = 0x0022207C;
 
 // Callback restore IOCTLs
 // CTL_CODE(0x22, 0x819, 0, 0) = 0x00222064

@@ -917,6 +917,62 @@ IOCTL_DIOPROCESS_ENUM_PSPCIDTABLE  // 0x0022203C
 - Compare with ToolHelp32 to detect process hiding techniques
 - Security research and rootkit analysis
 
+### Minifilters sub-tab
+
+Enumerate and unlink filesystem minifilter drivers registered with the Filter Manager:
+
+**Functions (callback crate):**
+- `callback::enumerate_minifilters() -> Result<Vec<MinifilterInfo>, CallbackError>` — List all registered minifilters
+- `callback::unlink_minifilter(filter_name: &str) -> Result<(), CallbackError>` — Unlink minifilter callbacks by name
+
+**MinifilterInfo struct:**
+```rust
+pub struct MinifilterInfo {
+    pub filter_name: String,        // Filter driver name (e.g., "WdFilter")
+    pub altitude: String,           // Filter altitude (load order priority)
+    pub filter_address: u64,        // Address of FLT_FILTER structure
+    pub frame_id: u64,              // Filter frame ID
+    pub num_instances: u32,         // Number of active instances
+    pub flags: u32,                 // Filter flags
+    pub callbacks: MinifilterCallbacks, // Pre/Post callbacks
+    pub owner_module: String,       // Driver module that owns this filter
+    pub index: u32,
+}
+```
+
+**IOCTLs:**
+```cpp
+IOCTL_DIOPROCESS_ENUM_MINIFILTERS    // 0x00222044
+IOCTL_DIOPROCESS_UNLINK_MINIFILTER   // 0x0022205C
+```
+
+**Implementation:**
+- Uses `FltEnumerateFilters` + `FltGetFilterInformation` API (documented Filter Manager approach)
+- Reliably retrieves filter name, altitude, and instance count
+- Unlink operation finds the target filter's instances and unlinks callback nodes from the linked list
+- Validates callback node pointers against loaded driver modules for safety
+
+**UI Features:**
+- **Minifilter table** — Name, Altitude, Address, Instances, Pre/Post Create/Read/Write callbacks, Owner Module
+- **Sorting** — Click column headers (default: descending by altitude)
+- **Search filter** — Filter by name, altitude, or owner module
+- **CSV export** — Export to minifilters.csv
+- **Context menu:**
+  - Copy Filter Name / Altitude / Address / Owner Module
+  - **Unlink Callbacks** — Remove the minifilter's Pre/Post operation callbacks (dangerous operation)
+- **Color coding** — Altitude highlighted in yellow for visibility
+
+**Use Cases:**
+- Identify EDR/AV minifilters monitoring file operations
+- Disable specific minifilter callbacks for security research
+- Analyze minifilter load order via altitude values
+- Test minifilter bypass techniques in controlled environments
+
+**Known EDR/AV Minifilters:**
+WdFilter (Windows Defender), SentinelMonitor, CarbonBlackK, esensor, mfeaskm, symefasi, CyOptics, csagent, etc.
+
+⚠️ **Warning:** Unlinking minifilter callbacks can destabilize security products and the system. Use only on test systems.
+
 ## Hypervisor Tab (Ring -1)
 
 Access via the **Hypervisor** tab in main navigation (marked with red "Ring -1" badge). Operates at hypervisor level (Ring -1) via Intel VT-x for advanced security research.

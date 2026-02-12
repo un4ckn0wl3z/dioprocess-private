@@ -1,228 +1,159 @@
 #include "pch.h"
 #include "DioProcessGlobals.h"
+#include <fltKernel.h>
 
-// ============== Minifilter Enumeration ==============
+// ============== Minifilter Enumeration & Unlink ==============
+// Based on MKC (Minifilter Callback Killer) approach
 
-// Find fltmgr.sys base address using AuxKlib
-PVOID GetFltMgrBaseAddress(PULONG pSize)
-{
-	ULONG modulesSize = 0;
-	NTSTATUS status;
-	PAUX_MODULE_EXTENDED_INFO modules = NULL;
-	PVOID fltmgrBase = NULL;
+// Callback node structure for minifilter operations
+typedef struct _CALLBACK_NODE {
+	LIST_ENTRY CallbackLinks;
+	PFLT_INSTANCE Instance;
+	union {
+		PVOID PreOperation;
+		PVOID GenerateFileName;
+		PVOID NormalizeNameComponent;
+		PVOID NormalizeNameComponentEx;
+	};
+	union {
+		PVOID NormalizeContextCleanup;
+		PVOID PostOperation;
+	};
+	ULONG64 Flags;
+} CALLBACK_NODE, *PCALLBACK_NODE;
 
-	// Get required buffer size
-	status = AuxKlibQueryModuleInformation(&modulesSize, sizeof(AUX_MODULE_EXTENDED_INFO), NULL);
-	if (!NT_SUCCESS(status) || modulesSize == 0)
-	{
-		KdPrint((DRIVER_PREFIX "AuxKlibQueryModuleInformation failed: 0x%08X\n", status));
-		return NULL;
-	}
+// System information class for module enumeration
+typedef enum _SYSTEM_INFORMATION_CLASS_MM {
+	SystemModuleInformation = 0x0B
+} SYSTEM_INFORMATION_CLASS_MM;
 
-	modules = (PAUX_MODULE_EXTENDED_INFO)ExAllocatePool2(POOL_FLAG_NON_PAGED, modulesSize, DRIVER_TAG);
-	if (!modules)
-	{
-		KdPrint((DRIVER_PREFIX "Failed to allocate module buffer\n"));
-		return NULL;
-	}
+typedef struct _RTL_PROCESS_MODULE_INFORMATION_MM {
+	ULONG Section;
+	PVOID MappedBase;
+	PVOID ImageBase;
+	ULONG ImageSize;
+	ULONG Flags;
+	USHORT LoadOrderIndex;
+	USHORT InitOrderIndex;
+	USHORT LoadCount;
+	USHORT OffsetToFileName;
+	CHAR FullPathName[256];
+} RTL_PROCESS_MODULE_INFORMATION_MM, *PRTL_PROCESS_MODULE_INFORMATION_MM;
 
-	status = AuxKlibQueryModuleInformation(&modulesSize, sizeof(AUX_MODULE_EXTENDED_INFO), modules);
-	if (!NT_SUCCESS(status))
-	{
-		KdPrint((DRIVER_PREFIX "AuxKlibQueryModuleInformation second call failed: 0x%08X\n", status));
-		ExFreePoolWithTag(modules, DRIVER_TAG);
-		return NULL;
-	}
+typedef struct _RTL_PROCESS_MODULES_MM {
+	ULONG NumberOfModules;
+	RTL_PROCESS_MODULE_INFORMATION_MM Modules[1];
+} RTL_PROCESS_MODULES_MM, *PRTL_PROCESS_MODULES_MM;
 
-	ULONG numModules = modulesSize / sizeof(AUX_MODULE_EXTENDED_INFO);
-	for (ULONG i = 0; i < numModules; i++)
-	{
-		// Get just the filename part
-		PCHAR fileName = (PCHAR)(modules[i].FullPathName + modules[i].FileNameOffset);
-		if (_stricmp(fileName, "fltmgr.sys") == 0)
-		{
-			fltmgrBase = modules[i].BasicInfo.ImageBase;
-			if (pSize)
-				*pSize = modules[i].ImageSize;
-			KdPrint((DRIVER_PREFIX "Found fltmgr.sys at: %p, size: 0x%X\n", fltmgrBase, modules[i].ImageSize));
-			break;
-		}
-	}
-
-	ExFreePoolWithTag(modules, DRIVER_TAG);
-	return fltmgrBase;
-}
-
-// Find FltGlobals by pattern scanning fltmgr.sys
-// We look for the pattern that references FltGlobals.FrameList
-PVOID FindFltGlobals(PVOID fltmgrBase, ULONG fltmgrSize)
-{
-	if (!fltmgrBase || fltmgrSize == 0)
-		return NULL;
-
-	PUCHAR searchBase = (PUCHAR)fltmgrBase;
-	PUCHAR searchEnd = searchBase + fltmgrSize - 0x100;
-
-	// Pattern: LEA reg, [rip+offset] pointing to FltGlobals
-	// We search for references to FltpFrameList or FltGlobals.FrameList
-	// Common pattern: 48 8D 0D/05/15/1D/25/2D/35/3D [offset] - LEA rcx/rax/rdx/rbx/r8-r15, [rip+offset]
-
-	for (PUCHAR p = searchBase; p < searchEnd; p++)
-	{
-		__try
-		{
-			// Look for LEA instruction with RIP-relative addressing
-			// 48 8D 0D xx xx xx xx - LEA rcx, [rip+offset]
-			// 4C 8D 05 xx xx xx xx - LEA r8, [rip+offset]
-			if ((p[0] == 0x48 || p[0] == 0x4C) && p[1] == 0x8D)
-			{
-				UCHAR modRM = p[2];
-				// Check if it's RIP-relative addressing (mod=00, r/m=101)
-				if ((modRM & 0x07) == 0x05)
-				{
-					// Calculate the target address
-					INT offset = *(INT*)(p + 3);
-					PVOID targetAddr = (PVOID)(p + 7 + offset);
-
-					// Verify the target address is within fltmgr.sys data section
-					if (targetAddr > fltmgrBase && targetAddr < (PVOID)(searchBase + fltmgrSize))
-					{
-						// Check if this looks like FltGlobals by examining the structure
-						// FltGlobals.FrameList should be a valid LIST_ENTRY
-						PLIST_ENTRY frameList = (PLIST_ENTRY)((PUCHAR)targetAddr + FLTGLOBALS_FRAMELIST_OFFSET);
-
-						if (MmIsAddressValid(frameList) &&
-							MmIsAddressValid(frameList->Flink) &&
-							MmIsAddressValid(frameList->Blink))
-						{
-							// Verify it's a valid circular list
-							if (frameList->Flink->Blink == frameList &&
-								frameList->Blink->Flink == frameList)
-							{
-								KdPrint((DRIVER_PREFIX "Potential FltGlobals found at: %p\n", targetAddr));
-								return targetAddr;
-							}
-						}
-					}
-				}
-			}
-		}
-		__except (EXCEPTION_EXECUTE_HANDLER)
-		{
-			continue;
-		}
-	}
-
-	KdPrint((DRIVER_PREFIX "FltGlobals not found via pattern scan\n"));
-	return NULL;
-}
-
-// Resolve export from a module by parsing its PE export table
-PVOID GetModuleExport(PVOID moduleBase, PCSTR exportName)
-{
-	if (!moduleBase || !exportName)
-		return NULL;
-
-	__try
-	{
-		PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)moduleBase;
-		if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE)
-			return NULL;
-
-		PIMAGE_NT_HEADERS64 ntHeaders = (PIMAGE_NT_HEADERS64)((PUCHAR)moduleBase + dosHeader->e_lfanew);
-		if (ntHeaders->Signature != IMAGE_NT_SIGNATURE)
-			return NULL;
-
-		ULONG exportDirRva = ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
-		if (exportDirRva == 0)
-			return NULL;
-
-		PIMAGE_EXPORT_DIRECTORY exportDir = (PIMAGE_EXPORT_DIRECTORY)((PUCHAR)moduleBase + exportDirRva);
-		PULONG nameRvas = (PULONG)((PUCHAR)moduleBase + exportDir->AddressOfNames);
-		PUSHORT ordinals = (PUSHORT)((PUCHAR)moduleBase + exportDir->AddressOfNameOrdinals);
-		PULONG funcRvas = (PULONG)((PUCHAR)moduleBase + exportDir->AddressOfFunctions);
-
-		for (ULONG i = 0; i < exportDir->NumberOfNames; i++)
-		{
-			PCSTR name = (PCSTR)((PUCHAR)moduleBase + nameRvas[i]);
-			if (strcmp(name, exportName) == 0)
-			{
-				USHORT ordinal = ordinals[i];
-				ULONG funcRva = funcRvas[ordinal];
-				return (PVOID)((PUCHAR)moduleBase + funcRva);
-			}
-		}
-	}
-	__except (EXCEPTION_EXECUTE_HANDLER)
-	{
-		KdPrint((DRIVER_PREFIX "Exception in GetModuleExport\n"));
-	}
-
-	return NULL;
-}
-
-// Alternative: Use FltEnumerateFilters if available (documented API approach)
-// This is safer but requires linking to fltmgr.lib
-typedef NTSTATUS(*FltEnumerateFiltersFunc)(
-	_Out_writes_bytes_to_opt_(FilterListSize, *NumberFiltersReturned * sizeof(PFLT_FILTER)) PFLT_FILTER* FilterList,
-	_In_ ULONG FilterListSize,
-	_Out_ PULONG NumberFiltersReturned
+typedef NTSTATUS(*PROTOTYPE_ZWQUERYSYSTEMINFORMATION)(
+	SYSTEM_INFORMATION_CLASS_MM SystemInformationClass,
+	PVOID SystemInformation,
+	ULONG SystemInformationLength,
+	PULONG ReturnLength
 );
 
-// Get filter information using FltMgr APIs (if resolvable)
-BOOLEAN EnumerateMinifiltersViaApi(MinifilterInfo* entries, ULONG* count, ULONG maxEntries)
+// ZwQuerySystemInformation function pointer (resolved dynamically)
+static PROTOTYPE_ZWQUERYSYSTEMINFORMATION g_pZwQuerySystemInformation = NULL;
+static BOOLEAN g_ZwQueryResolved = FALSE;
+
+// Resolve ZwQuerySystemInformation (needed for unlink)
+static BOOLEAN ResolveZwQuerySystemInformation()
 {
-	// First try MmGetSystemRoutineAddress (works on some systems)
+	if (g_ZwQueryResolved)
+		return TRUE;
+
 	UNICODE_STRING funcName;
-	RtlInitUnicodeString(&funcName, L"FltEnumerateFilters");
-	FltEnumerateFiltersFunc pFltEnumerateFilters = (FltEnumerateFiltersFunc)MmGetSystemRoutineAddress(&funcName);
+	RtlInitUnicodeString(&funcName, L"ZwQuerySystemInformation");
+	g_pZwQuerySystemInformation = (PROTOTYPE_ZWQUERYSYSTEMINFORMATION)MmGetSystemRoutineAddress(&funcName);
 
-	// If not found, resolve from fltmgr.sys export table
-	if (!pFltEnumerateFilters)
+	if (g_pZwQuerySystemInformation)
 	{
-		KdPrint((DRIVER_PREFIX "FltEnumerateFilters not in ntoskrnl, trying fltmgr.sys exports...\n"));
+		g_ZwQueryResolved = TRUE;
+		return TRUE;
+	}
 
-		ULONG fltmgrSize = 0;
-		PVOID fltmgrBase = GetFltMgrBaseAddress(&fltmgrSize);
-		if (fltmgrBase)
+	return FALSE;
+}
+
+// Safely read kernel memory by mapping physical address
+static BOOLEAN ReadMemorySafe(PVOID TargetAddress, PVOID AllocatedBuffer, SIZE_T LengthToRead)
+{
+	PHYSICAL_ADDRESS PhysicalAddr = MmGetPhysicalAddress(TargetAddress);
+
+	if (PhysicalAddr.QuadPart)
+	{
+		PVOID NewVirtualAddr = MmMapIoSpace(PhysicalAddr, LengthToRead, MmNonCached);
+		if (NewVirtualAddr)
 		{
-			pFltEnumerateFilters = (FltEnumerateFiltersFunc)GetModuleExport(fltmgrBase, "FltEnumerateFilters");
-			if (pFltEnumerateFilters)
+			for (SIZE_T i = 0; i < LengthToRead; i++)
 			{
-				KdPrint((DRIVER_PREFIX "Found FltEnumerateFilters at %p\n", pFltEnumerateFilters));
+				*(PUCHAR)((ULONG_PTR)AllocatedBuffer + i) = *(PUCHAR)((ULONG_PTR)NewVirtualAddr + i);
 			}
+			MmUnmapIoSpace(NewVirtualAddr, LengthToRead);
+			return TRUE;
 		}
 	}
 
-	if (!pFltEnumerateFilters)
-	{
-		KdPrint((DRIVER_PREFIX "FltEnumerateFilters not found\n"));
+	return FALSE;
+}
+
+// Validate if a callback node belongs to a specific filter instance and driver
+static BOOLEAN ValidatePotentialCallbackNode(PCALLBACK_NODE PotentialNode, PFLT_INSTANCE FltInstance, ULONG_PTR DriverStartAddr, ULONG DriverSize)
+{
+	if (PotentialNode->Instance != FltInstance)
 		return FALSE;
+
+	if (PotentialNode->PreOperation)
+	{
+		if (!((ULONG_PTR)PotentialNode->PreOperation > DriverStartAddr &&
+		      (ULONG_PTR)PotentialNode->PreOperation < (DriverStartAddr + DriverSize)))
+		{
+			return FALSE;
+		}
 	}
 
-	// Note: FltGetFilterInformation could be used for additional info, but we read structures directly
+	if (PotentialNode->PostOperation)
+	{
+		if (!((ULONG_PTR)PotentialNode->PostOperation > DriverStartAddr &&
+		      (ULONG_PTR)PotentialNode->PostOperation < (DriverStartAddr + DriverSize)))
+		{
+			return FALSE;
+		}
+	}
 
-	// First call to get count
-	ULONG numFilters = 0;
-	NTSTATUS status = pFltEnumerateFilters(NULL, 0, &numFilters);
-	if (status != STATUS_BUFFER_TOO_SMALL || numFilters == 0)
+	if (!PotentialNode->PreOperation && !PotentialNode->PostOperation)
+		return FALSE;
+
+	return TRUE;
+}
+
+// Enumerate minifilters using Filter Manager APIs (linked against fltMgr.lib)
+BOOLEAN EnumerateMinifiltersViaApi(MinifilterInfo* entries, ULONG* count, ULONG maxEntries)
+{
+	PFLT_FILTER* filterList = NULL;
+	ULONG filterCount = 0;
+	ULONG bufferSize = 0;
+
+	// Get filter count
+	NTSTATUS status = FltEnumerateFilters(NULL, 0, &filterCount);
+	if (status != STATUS_BUFFER_TOO_SMALL || filterCount == 0)
 	{
 		KdPrint((DRIVER_PREFIX "No minifilters registered or error: 0x%08X\n", status));
 		return FALSE;
 	}
 
-	KdPrint((DRIVER_PREFIX "Found %u minifilters\n", numFilters));
+	KdPrint((DRIVER_PREFIX "Found %u minifilters\n", filterCount));
 
-	// Allocate buffer for filter pointers
-	ULONG filterListSize = numFilters * sizeof(PFLT_FILTER);
-	PFLT_FILTER* filterList = (PFLT_FILTER*)ExAllocatePool2(POOL_FLAG_NON_PAGED, filterListSize, DRIVER_TAG);
+	// Allocate filter list
+	bufferSize = filterCount * sizeof(PFLT_FILTER);
+	filterList = (PFLT_FILTER*)ExAllocatePool2(POOL_FLAG_NON_PAGED, bufferSize, DRIVER_TAG);
 	if (!filterList)
 	{
 		KdPrint((DRIVER_PREFIX "Failed to allocate filter list\n"));
 		return FALSE;
 	}
 
-	status = pFltEnumerateFilters(filterList, filterListSize, &numFilters);
+	status = FltEnumerateFilters(filterList, bufferSize, &filterCount);
 	if (!NT_SUCCESS(status))
 	{
 		KdPrint((DRIVER_PREFIX "FltEnumerateFilters failed: 0x%08X\n", status));
@@ -231,161 +162,333 @@ BOOLEAN EnumerateMinifiltersViaApi(MinifilterInfo* entries, ULONG* count, ULONG 
 	}
 
 	*count = 0;
-	for (ULONG i = 0; i < numFilters && *count < maxEntries; i++)
+	for (ULONG i = 0; i < filterCount && *count < maxEntries; i++)
 	{
 		PFLT_FILTER filter = filterList[i];
-		if (!filter || !MmIsAddressValid(filter))
+		PFILTER_AGGREGATE_BASIC_INFORMATION filterInfo = NULL;
+		ULONG filterInfoSize = 0;
+		ULONG filterInfoBufferSize = 0;
+
+		// Get required buffer size
+		status = FltGetFilterInformation(filter, FilterAggregateBasicInformation, NULL, 0, &filterInfoBufferSize);
+		if (status != STATUS_BUFFER_TOO_SMALL)
+		{
 			continue;
+		}
+
+		// Allocate filter info buffer
+		filterInfo = (PFILTER_AGGREGATE_BASIC_INFORMATION)ExAllocatePool2(POOL_FLAG_NON_PAGED, filterInfoBufferSize, DRIVER_TAG);
+		if (!filterInfo)
+		{
+			continue;
+		}
+
+		// Get filter information
+		status = FltGetFilterInformation(filter, FilterAggregateBasicInformation, filterInfo, filterInfoBufferSize, &filterInfoSize);
+		if (!NT_SUCCESS(status))
+		{
+			ExFreePoolWithTag(filterInfo, DRIVER_TAG);
+			continue;
+		}
 
 		MinifilterInfo* info = &entries[*count];
 		RtlZeroMemory(info, sizeof(MinifilterInfo));
 		info->Index = *count;
 		info->FilterAddress = (ULONG64)filter;
 
-		__try
-		{
-			// Debug: Scan for UNICODE_STRING pattern (look for valid Length/MaxLength/Buffer)
-			// A valid UNICODE_STRING has: Length <= MaxLength, both even, Buffer is valid kernel address
-			KdPrint((DRIVER_PREFIX "Filter[%u] at %p - scanning for Name UNICODE_STRING...\n", i, filter));
+		// Extract filter name
+		PWCHAR filterNameAddr = (PWCHAR)((PCHAR)filterInfo + filterInfo->Type.MiniFilter.FilterNameBufferOffset);
+		ULONG nameLen = filterInfo->Type.MiniFilter.FilterNameLength / sizeof(WCHAR);
+		if (nameLen > MAX_FILTER_NAME_LENGTH - 1)
+			nameLen = MAX_FILTER_NAME_LENGTH - 1;
 
-			// Try multiple offsets to find the Name field
-			BOOLEAN foundName = FALSE;
-			for (ULONG offset = 0x30; offset <= 0x60 && !foundName; offset += 0x08)
-			{
-				PUNICODE_STRING testStr = (PUNICODE_STRING)((PUCHAR)filter + offset);
-				if (MmIsAddressValid(testStr))
-				{
-					USHORT len = testStr->Length;
-					USHORT maxLen = testStr->MaximumLength;
-					PWCH buf = testStr->Buffer;
+		// Convert WCHAR name to ANSI
+		UNICODE_STRING unicodeName;
+		unicodeName.Buffer = filterNameAddr;
+		unicodeName.Length = (USHORT)filterInfo->Type.MiniFilter.FilterNameLength;
+		unicodeName.MaximumLength = unicodeName.Length;
 
-					// Check if this looks like a valid UNICODE_STRING
-					if (len > 0 && len <= maxLen && len < 256 && (len & 1) == 0 &&
-						buf != NULL && MmIsAddressValid(buf) && (ULONG64)buf > 0xFFFF000000000000ULL)
-					{
-						// Try to read first char
-						WCHAR firstChar = buf[0];
-						if (firstChar >= L'A' && firstChar <= L'z')
-						{
-							KdPrint((DRIVER_PREFIX "  Offset 0x%03X: Len=%u MaxLen=%u Buf=%p FirstChar='%C' <- LIKELY NAME\n",
-								offset, len, maxLen, buf, firstChar));
+		ANSI_STRING ansiName;
+		ansiName.Buffer = info->FilterName;
+		ansiName.Length = 0;
+		ansiName.MaximumLength = MAX_FILTER_NAME_LENGTH - 1;
+		RtlUnicodeStringToAnsiString(&ansiName, &unicodeName, FALSE);
 
-							// Use this offset
-							ANSI_STRING ansiName;
-							ansiName.Buffer = info->FilterName;
-							ansiName.Length = 0;
-							ansiName.MaximumLength = MAX_FILTER_NAME_LENGTH - 1;
-							RtlUnicodeStringToAnsiString(&ansiName, testStr, FALSE);
-							foundName = TRUE;
+		// Extract altitude
+		PWCHAR altitudeAddr = (PWCHAR)((PCHAR)filterInfo + filterInfo->Type.MiniFilter.FilterAltitudeBufferOffset);
+		ULONG altLen = filterInfo->Type.MiniFilter.FilterAltitudeLength / sizeof(WCHAR);
+		if (altLen > MAX_ALTITUDE_LENGTH - 1)
+			altLen = MAX_ALTITUDE_LENGTH - 1;
 
-							// Look for altitude at next UNICODE_STRING (typically +0x10)
-							PUNICODE_STRING altStr = (PUNICODE_STRING)((PUCHAR)filter + offset + 0x10);
-							if (MmIsAddressValid(altStr) && altStr->Length > 0 && altStr->Buffer && MmIsAddressValid(altStr->Buffer))
-							{
-								WCHAR altFirst = altStr->Buffer[0];
-								if (altFirst >= L'0' && altFirst <= L'9')
-								{
-									KdPrint((DRIVER_PREFIX "  Offset 0x%03X: Altitude found, FirstChar='%C'\n", offset + 0x10, altFirst));
-									ANSI_STRING ansiAlt;
-									ansiAlt.Buffer = info->Altitude;
-									ansiAlt.Length = 0;
-									ansiAlt.MaximumLength = MAX_ALTITUDE_LENGTH - 1;
-									RtlUnicodeStringToAnsiString(&ansiAlt, altStr, FALSE);
-								}
-							}
-						}
-					}
-				}
-			}
+		UNICODE_STRING unicodeAltitude;
+		unicodeAltitude.Buffer = altitudeAddr;
+		unicodeAltitude.Length = (USHORT)filterInfo->Type.MiniFilter.FilterAltitudeLength;
+		unicodeAltitude.MaximumLength = unicodeAltitude.Length;
 
-			if (!foundName)
-			{
-				KdPrint((DRIVER_PREFIX "  Could not find Name UNICODE_STRING\n"));
-			}
+		ANSI_STRING ansiAltitude;
+		ansiAltitude.Buffer = info->Altitude;
+		ansiAltitude.Length = 0;
+		ansiAltitude.MaximumLength = MAX_ALTITUDE_LENGTH - 1;
+		RtlUnicodeStringToAnsiString(&ansiAltitude, &unicodeAltitude, FALSE);
 
-			// Read flags
-			info->Flags = *(PULONG)((PUCHAR)filter + FLT_FILTER_FLAGS_OFFSET);
+		// Get frame ID
+		info->FrameId = filterInfo->Type.MiniFilter.FrameID;
+		info->NumberOfInstances = filterInfo->Type.MiniFilter.NumberOfInstances;
+		info->Flags = filterInfo->Flags;
 
-			// Read frame ID from frame pointer
-			PVOID framePtr = *(PVOID*)((PUCHAR)filter + FLT_FILTER_FRAME_OFFSET);
-			if (framePtr && MmIsAddressValid(framePtr))
-			{
-				info->FrameId = *(PULONG)((PUCHAR)framePtr + FLTP_FRAME_FRAMEID_OFFSET);
-			}
+		// Resolve owner module
+		CallbackInformation tempInfo = { 0 };
+		tempInfo.CallbackAddress = (ULONG64)filter;
+		SearchLoadedModules(&tempInfo);
+		RtlCopyMemory(info->OwnerModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
 
-			// Get number of instances by walking instance list
-			PLIST_ENTRY instanceListHead = (PLIST_ENTRY)((PUCHAR)filter + FLT_FILTER_INSTANCE_LIST_OFFSET);
-			if (MmIsAddressValid(instanceListHead))
-			{
-				ULONG numInstances = 0;
-				PLIST_ENTRY entry = instanceListHead->Flink;
-				while (entry != instanceListHead && MmIsAddressValid(entry) && numInstances < 100)
-				{
-					numInstances++;
-					entry = entry->Flink;
-				}
-				info->NumberOfInstances = numInstances;
-			}
+		KdPrint((DRIVER_PREFIX "Filter[%u]: %s (Alt: %s, Addr: 0x%llX, Instances: %u)\n",
+			*count, info->FilterName, info->Altitude, info->FilterAddress, info->NumberOfInstances));
 
-			// Read operation callbacks
-			PFLT_OPERATION_REGISTRATION_INTERNAL ops = *(PFLT_OPERATION_REGISTRATION_INTERNAL*)((PUCHAR)filter + FLT_FILTER_OPERATIONS_OFFSET);
-			if (ops && MmIsAddressValid(ops))
-			{
-				// Walk the operations array (terminated by IRP_MJ_OPERATION_END = 0x80)
-				for (int j = 0; j < 50; j++)  // Limit iterations
-				{
-					if (!MmIsAddressValid(&ops[j]))
-						break;
-					if (ops[j].MajorFunction == 0x80)  // IRP_MJ_OPERATION_END
-						break;
-
-					ULONG64 preOp = (ULONG64)ops[j].PreOperation;
-					ULONG64 postOp = (ULONG64)ops[j].PostOperation;
-
-					switch (ops[j].MajorFunction)
-					{
-					case 0:  // IRP_MJ_CREATE
-						info->Callbacks.PreCreate = preOp;
-						info->Callbacks.PostCreate = postOp;
-						break;
-					case 3:  // IRP_MJ_READ
-						info->Callbacks.PreRead = preOp;
-						info->Callbacks.PostRead = postOp;
-						break;
-					case 4:  // IRP_MJ_WRITE
-						info->Callbacks.PreWrite = preOp;
-						info->Callbacks.PostWrite = postOp;
-						break;
-					case 6:  // IRP_MJ_SET_INFORMATION
-						info->Callbacks.PreSetInfo = preOp;
-						info->Callbacks.PostSetInfo = postOp;
-						break;
-					case 18: // IRP_MJ_CLEANUP
-						info->Callbacks.PreCleanup = preOp;
-						info->Callbacks.PostCleanup = postOp;
-						break;
-					}
-				}
-			}
-
-			// Resolve owner module from filter address
-			CallbackInformation tempInfo = { 0 };
-			tempInfo.CallbackAddress = (ULONG64)filter;
-			SearchLoadedModules(&tempInfo);
-			RtlCopyMemory(info->OwnerModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
-
-			KdPrint((DRIVER_PREFIX "Filter[%u]: %s (Alt: %s, Addr: 0x%llX, Instances: %u)\n",
-				*count, info->FilterName, info->Altitude, info->FilterAddress, info->NumberOfInstances));
-
-			(*count)++;
-		}
-		__except (EXCEPTION_EXECUTE_HANDLER)
-		{
-			KdPrint((DRIVER_PREFIX "Exception reading filter %u\n", i));
-			continue;
-		}
+		ExFreePoolWithTag(filterInfo, DRIVER_TAG);
+		(*count)++;
 	}
 
 	ExFreePoolWithTag(filterList, DRIVER_TAG);
 	return TRUE;
+}
+
+// Unlink minifilter callbacks by filter name
+NTSTATUS UnlinkMinifilterCallbacks(const WCHAR* filterName)
+{
+	// Resolve ZwQuerySystemInformation for module enumeration
+	if (!ResolveZwQuerySystemInformation())
+	{
+		KdPrint((DRIVER_PREFIX "ZwQuerySystemInformation not available for unlink\n"));
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	PFLT_FILTER* filterList = NULL;
+	ULONG filterCount = 0;
+	ULONG bufferSize = 0;
+
+	KdPrint((DRIVER_PREFIX "Starting filter enumeration for unlink\n"));
+
+	// Get filter count
+	NTSTATUS status = FltEnumerateFilters(NULL, 0, &filterCount);
+	if (status != STATUS_BUFFER_TOO_SMALL)
+	{
+		KdPrint((DRIVER_PREFIX "FltEnumerateFilters failed: 0x%08X\n", status));
+		return status;
+	}
+
+	// Allocate filter list
+	bufferSize = filterCount * sizeof(PFLT_FILTER);
+	filterList = (PFLT_FILTER*)ExAllocatePool2(POOL_FLAG_NON_PAGED, bufferSize, DRIVER_TAG);
+	if (!filterList)
+	{
+		KdPrint((DRIVER_PREFIX "Memory allocation for filterList failed\n"));
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	status = FltEnumerateFilters(filterList, bufferSize, &filterCount);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "FltEnumerateFilters failed on second call: 0x%08X\n", status));
+		ExFreePoolWithTag(filterList, DRIVER_TAG);
+		return status;
+	}
+
+	// Find target filter
+	PFLT_FILTER targetFilter = NULL;
+
+	for (ULONG i = 0; i < filterCount; i++)
+	{
+		PFLT_FILTER filter = filterList[i];
+		PFILTER_AGGREGATE_BASIC_INFORMATION filterInfo = NULL;
+		ULONG filterInfoBufferSize = 0;
+
+		status = FltGetFilterInformation(filter, FilterAggregateBasicInformation, NULL, 0, &filterInfoBufferSize);
+		if (status != STATUS_BUFFER_TOO_SMALL)
+		{
+			continue;
+		}
+
+		filterInfo = (PFILTER_AGGREGATE_BASIC_INFORMATION)ExAllocatePool2(POOL_FLAG_NON_PAGED, filterInfoBufferSize, DRIVER_TAG);
+		if (!filterInfo)
+		{
+			continue;
+		}
+
+		ULONG filterInfoSize = 0;
+		status = FltGetFilterInformation(filter, FilterAggregateBasicInformation, filterInfo, filterInfoBufferSize, &filterInfoSize);
+		if (!NT_SUCCESS(status))
+		{
+			ExFreePoolWithTag(filterInfo, DRIVER_TAG);
+			continue;
+		}
+
+		// Extract and compare filter name
+		PWCHAR nameAddr = (PWCHAR)((PCHAR)filterInfo + filterInfo->Type.MiniFilter.FilterNameBufferOffset);
+		WCHAR baseFilterName[256] = { 0 };
+		ULONG nameLen = min(filterInfo->Type.MiniFilter.FilterNameLength / sizeof(WCHAR), 255);
+		wcsncpy(baseFilterName, nameAddr, nameLen);
+		baseFilterName[nameLen] = L'\0';
+
+		KdPrint((DRIVER_PREFIX "Comparing %ws with %ws\n", baseFilterName, filterName));
+		if (wcscmp(baseFilterName, filterName) == 0)
+		{
+			targetFilter = filter;
+		}
+
+		ExFreePoolWithTag(filterInfo, DRIVER_TAG);
+		if (targetFilter)
+		{
+			break;
+		}
+	}
+
+	if (!targetFilter)
+	{
+		KdPrint((DRIVER_PREFIX "Target filter not found: %ws\n", filterName));
+		ExFreePoolWithTag(filterList, DRIVER_TAG);
+		return STATUS_NOT_FOUND;
+	}
+
+	// Enumerate instances for target filter
+	PFLT_INSTANCE* instanceList = NULL;
+	ULONG instanceCount = 0;
+	bufferSize = 0;
+
+	KdPrint((DRIVER_PREFIX "Starting instance enumeration for filter: %ws\n", filterName));
+
+	status = FltEnumerateInstances(NULL, targetFilter, NULL, 0, &instanceCount);
+	if (status != STATUS_BUFFER_TOO_SMALL)
+	{
+		KdPrint((DRIVER_PREFIX "FltEnumerateInstances failed: 0x%08X\n", status));
+		ExFreePoolWithTag(filterList, DRIVER_TAG);
+		return status;
+	}
+
+	bufferSize = instanceCount * sizeof(PFLT_INSTANCE);
+	instanceList = (PFLT_INSTANCE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, bufferSize, DRIVER_TAG);
+	if (!instanceList)
+	{
+		KdPrint((DRIVER_PREFIX "Memory allocation for instanceList failed\n"));
+		ExFreePoolWithTag(filterList, DRIVER_TAG);
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	status = FltEnumerateInstances(NULL, targetFilter, instanceList, bufferSize, &instanceCount);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "FltEnumerateInstances failed on second call: 0x%08X\n", status));
+		ExFreePoolWithTag(filterList, DRIVER_TAG);
+		ExFreePoolWithTag(instanceList, DRIVER_TAG);
+		return status;
+	}
+
+	KdPrint((DRIVER_PREFIX "Found %lu instances for filter: %ws\n", instanceCount, filterName));
+
+	// Get system module information
+	PRTL_PROCESS_MODULES_MM moduleInformation = NULL;
+	ULONG sizeNeeded = 0;
+	SIZE_T infoRegionSize = 0;
+
+	status = g_pZwQuerySystemInformation(SystemModuleInformation, NULL, 0, &sizeNeeded);
+	if (status != STATUS_INFO_LENGTH_MISMATCH)
+	{
+		ExFreePoolWithTag(filterList, DRIVER_TAG);
+		ExFreePoolWithTag(instanceList, DRIVER_TAG);
+		KdPrint((DRIVER_PREFIX "ZwQuerySystemInformation failed to get size: 0x%08X\n", status));
+		return status;
+	}
+
+	infoRegionSize = sizeNeeded;
+	while (status == STATUS_INFO_LENGTH_MISMATCH)
+	{
+		infoRegionSize += 0x1000;
+		moduleInformation = (PRTL_PROCESS_MODULES_MM)ExAllocatePool2(POOL_FLAG_NON_PAGED_EXECUTE, infoRegionSize, DRIVER_TAG);
+		if (!moduleInformation)
+		{
+			ExFreePoolWithTag(filterList, DRIVER_TAG);
+			ExFreePoolWithTag(instanceList, DRIVER_TAG);
+			KdPrint((DRIVER_PREFIX "Memory allocation for moduleInformation failed\n"));
+			return STATUS_INSUFFICIENT_RESOURCES;
+		}
+
+		status = g_pZwQuerySystemInformation(SystemModuleInformation, moduleInformation, (ULONG)infoRegionSize, &sizeNeeded);
+		if (!NT_SUCCESS(status))
+		{
+			ExFreePoolWithTag(moduleInformation, DRIVER_TAG);
+			moduleInformation = NULL;
+		}
+	}
+
+	if (!NT_SUCCESS(status))
+	{
+		ExFreePoolWithTag(filterList, DRIVER_TAG);
+		ExFreePoolWithTag(instanceList, DRIVER_TAG);
+		KdPrint((DRIVER_PREFIX "ZwQuerySystemInformation failed: 0x%08X\n", status));
+		return status;
+	}
+
+	// Unlink callback nodes for each instance
+	ULONG unlinkedCount = 0;
+	for (ULONG i = 0; i < instanceCount; i++)
+	{
+		PFLT_INSTANCE currentInstance = instanceList[i];
+
+		// Allocate buffer for instance memory
+		PFLT_INSTANCE instanceVa = (PFLT_INSTANCE)ExAllocatePool2(POOL_FLAG_NON_PAGED, 0x230, DRIVER_TAG);
+		if (!instanceVa)
+		{
+			KdPrint((DRIVER_PREFIX "Memory allocation for instanceVa failed\n"));
+			continue;
+		}
+
+		// Safely read instance memory
+		if (!ReadMemorySafe((PVOID)currentInstance, (PVOID)instanceVa, 0x230))
+		{
+			KdPrint((DRIVER_PREFIX "ReadMemorySafe failed\n"));
+			ExFreePoolWithTag(instanceVa, DRIVER_TAG);
+			continue;
+		}
+
+		// Scan memory for potential callback nodes
+		for (ULONG x = 0; x < 0x230; x++)
+		{
+			ULONG_PTR potentialPointer = *(PULONG_PTR)((ULONG_PTR)instanceVa + x);
+			PCALLBACK_NODE potentialNode = (PCALLBACK_NODE)potentialPointer;
+
+			if (MmIsAddressValid(potentialNode))
+			{
+				// Validate against each loaded module
+				for (ULONG j = 0; j < moduleInformation->NumberOfModules; j++)
+				{
+					PRTL_PROCESS_MODULE_INFORMATION_MM driverModule = &moduleInformation->Modules[j];
+
+					if (ValidatePotentialCallbackNode(potentialNode, currentInstance, (ULONG_PTR)driverModule->ImageBase, driverModule->ImageSize))
+					{
+						KdPrint((DRIVER_PREFIX "Found callback node for filter: %ws\n", filterName));
+
+						// Unlink the callback node from the linked list
+						ULONG_PTR prevNodeAddress = *(PULONG_PTR)((ULONG_PTR)&potentialNode->CallbackLinks + FIELD_OFFSET(LIST_ENTRY, Blink));
+						ULONG_PTR nextNodeAddress = *(PULONG_PTR)((ULONG_PTR)&potentialNode->CallbackLinks + FIELD_OFFSET(LIST_ENTRY, Flink));
+						*(PULONG_PTR)(nextNodeAddress + FIELD_OFFSET(LIST_ENTRY, Blink)) = prevNodeAddress;
+						*(PULONG_PTR)(prevNodeAddress + FIELD_OFFSET(LIST_ENTRY, Flink)) = nextNodeAddress;
+
+						KdPrint((DRIVER_PREFIX "Successfully unlinked callback for filter: %ws\n", filterName));
+						unlinkedCount++;
+					}
+				}
+			}
+		}
+
+		ExFreePoolWithTag(instanceVa, DRIVER_TAG);
+	}
+
+	KdPrint((DRIVER_PREFIX "Unlinked %lu callbacks for filter: %ws\n", unlinkedCount, filterName));
+
+	// Cleanup
+	ExFreePoolWithTag(filterList, DRIVER_TAG);
+	ExFreePoolWithTag(instanceList, DRIVER_TAG);
+	ExFreePoolWithTag(moduleInformation, DRIVER_TAG);
+
+	return STATUS_SUCCESS;
 }

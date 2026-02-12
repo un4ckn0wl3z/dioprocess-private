@@ -72,6 +72,10 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleEnumMinifilters(Irp, irpSp, &info);
 		break;
 
+	case IOCTL_DIOPROCESS_UNLINK_MINIFILTER:
+		status = HandleUnlinkMinifilter(Irp, irpSp);
+		break;
+
 	case IOCTL_DIOPROCESS_ENUM_DRIVERS:
 		status = HandleEnumDrivers(Irp, irpSp, &info);
 		break;
@@ -2068,116 +2072,55 @@ NTSTATUS HandleEnumMinifilters(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR in
 
 	ULONG filterCount = 0;
 
-	// Try to enumerate using FltMgr APIs first (documented approach)
+	// Enumerate using Filter Manager APIs (documented approach)
 	BOOLEAN success = EnumerateMinifiltersViaApi(response->Entries, &filterCount, MAX_MINIFILTER_ENTRIES);
 
 	if (!success)
 	{
-		KdPrint((DRIVER_PREFIX "API enumeration failed, trying pattern scan...\n"));
-
-		// Fallback: Find fltmgr.sys and pattern scan for FltGlobals
-		ULONG fltmgrSize = 0;
-		PVOID fltmgrBase = GetFltMgrBaseAddress(&fltmgrSize);
-		if (fltmgrBase)
-		{
-			PVOID fltGlobals = FindFltGlobals(fltmgrBase, fltmgrSize);
-			if (fltGlobals)
-			{
-				__try
-				{
-					// Get FrameList from FltGlobals
-					PLIST_ENTRY frameListHead = (PLIST_ENTRY)((PUCHAR)fltGlobals + FLTGLOBALS_FRAMELIST_OFFSET);
-
-					if (MmIsAddressValid(frameListHead) && MmIsAddressValid(frameListHead->Flink))
-					{
-						// Walk frames
-						PLIST_ENTRY frameEntry = frameListHead->Flink;
-						while (frameEntry != frameListHead && MmIsAddressValid(frameEntry) && filterCount < MAX_MINIFILTER_ENTRIES)
-						{
-							// Get frame from Links entry
-							PUCHAR frame = (PUCHAR)frameEntry - FLTP_FRAME_LINKS_OFFSET;
-							if (!MmIsAddressValid(frame))
-							{
-								frameEntry = frameEntry->Flink;
-								continue;
-							}
-
-							ULONG frameId = *(PULONG)(frame + FLTP_FRAME_FRAMEID_OFFSET);
-							KdPrint((DRIVER_PREFIX "Frame ID: %u at %p\n", frameId, frame));
-
-							// Get filter list from frame
-							PLIST_ENTRY filterListHead = (PLIST_ENTRY)(frame + FLTP_FRAME_FILTERLIST_OFFSET);
-							if (MmIsAddressValid(filterListHead) && MmIsAddressValid(filterListHead->Flink))
-							{
-								PLIST_ENTRY filterEntry = filterListHead->Flink;
-								while (filterEntry != filterListHead && MmIsAddressValid(filterEntry) && filterCount < MAX_MINIFILTER_ENTRIES)
-								{
-									// Get FLT_FILTER from PrimaryLink (FLT_OBJECT.PrimaryLink at +0x10)
-									PUCHAR filter = (PUCHAR)filterEntry - FLT_FILTER_PRIMARYLINK_OFFSET;
-									if (!MmIsAddressValid(filter))
-									{
-										filterEntry = filterEntry->Flink;
-										continue;
-									}
-
-									MinifilterInfo* filterInfo = &response->Entries[filterCount];
-									filterInfo->Index = filterCount;
-									filterInfo->FilterAddress = (ULONG64)filter;
-									filterInfo->FrameId = frameId;
-									filterInfo->Flags = *(PULONG)(filter + FLT_FILTER_FLAGS_OFFSET);
-
-									// Read filter name
-									PUNICODE_STRING filterName = (PUNICODE_STRING)(filter + FLT_FILTER_NAME_OFFSET);
-									if (MmIsAddressValid(filterName) && filterName->Buffer && MmIsAddressValid(filterName->Buffer))
-									{
-										ANSI_STRING ansiName;
-										ansiName.Buffer = filterInfo->FilterName;
-										ansiName.Length = 0;
-										ansiName.MaximumLength = MAX_FILTER_NAME_LENGTH - 1;
-										RtlUnicodeStringToAnsiString(&ansiName, filterName, FALSE);
-									}
-
-									// Read altitude
-									PUNICODE_STRING altitude = (PUNICODE_STRING)(filter + FLT_FILTER_ALTITUDE_OFFSET);
-									if (MmIsAddressValid(altitude) && altitude->Buffer && MmIsAddressValid(altitude->Buffer))
-									{
-										ANSI_STRING ansiAlt;
-										ansiAlt.Buffer = filterInfo->Altitude;
-										ansiAlt.Length = 0;
-										ansiAlt.MaximumLength = MAX_ALTITUDE_LENGTH - 1;
-										RtlUnicodeStringToAnsiString(&ansiAlt, altitude, FALSE);
-									}
-
-									// Resolve owner module
-									CallbackInformation tempInfo = { 0 };
-									tempInfo.CallbackAddress = (ULONG64)filter;
-									SearchLoadedModules(&tempInfo);
-									RtlCopyMemory(filterInfo->OwnerModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
-
-									KdPrint((DRIVER_PREFIX "Filter[%u]: %s (Alt: %s)\n",
-										filterCount, filterInfo->FilterName, filterInfo->Altitude));
-
-									filterCount++;
-									filterEntry = filterEntry->Flink;
-								}
-							}
-
-							frameEntry = frameEntry->Flink;
-						}
-					}
-				}
-				__except (EXCEPTION_EXECUTE_HANDLER)
-				{
-					KdPrint((DRIVER_PREFIX "Exception during pattern-based minifilter enumeration\n"));
-				}
-			}
-		}
+		KdPrint((DRIVER_PREFIX "Minifilter enumeration failed - Filter Manager APIs unavailable\n"));
 	}
 
 	response->Count = filterCount;
 	KdPrint((DRIVER_PREFIX "Found %u total minifilters\n", filterCount));
 	*info = requiredSize;
 	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleUnlinkMinifilter(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "Unlink minifilter callbacks request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(UnlinkMinifilterRequest))
+	{
+		KdPrint((DRIVER_PREFIX "Buffer too small (need %u, got %u)\n",
+			(ULONG)sizeof(UnlinkMinifilterRequest), inputLen));
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (UnlinkMinifilterRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Ensure null-terminated
+	request->FilterName[MAX_FILTER_NAME_LENGTH - 1] = L'\0';
+
+	KdPrint((DRIVER_PREFIX "Unlinking callbacks for filter: %ws\n", request->FilterName));
+
+	NTSTATUS status = UnlinkMinifilterCallbacks(request->FilterName);
+
+	if (NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "Successfully unlinked minifilter callbacks\n"));
+	}
+	else
+	{
+		KdPrint((DRIVER_PREFIX "Failed to unlink minifilter callbacks: 0x%08X\n", status));
+	}
+
+	return status;
 }
 
 NTSTATUS HandleEnumDrivers(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
