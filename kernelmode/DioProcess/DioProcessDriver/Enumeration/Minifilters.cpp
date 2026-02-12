@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "DioProcessDriver.h"
 #include "DioProcessGlobals.h"
 #include <fltKernel.h>
 
@@ -127,6 +128,79 @@ static BOOLEAN ValidatePotentialCallbackNode(PCALLBACK_NODE PotentialNode, PFLT_
 	return TRUE;
 }
 
+// Helper to extract callbacks from FLT_FILTER's operations array
+static void ExtractFilterCallbacks(PFLT_FILTER filter, MinifilterCallbacks* callbacks)
+{
+	__try
+	{
+		// FLT_FILTER operations pointer is at offset 0x0D8
+		PVOID* pOperations = (PVOID*)((PUCHAR)filter + FLT_FILTER_OPERATIONS_OFFSET);
+
+		KdPrint((DRIVER_PREFIX "Filter: 0x%llX, pOperations addr: 0x%llX\n", (ULONG64)filter, (ULONG64)pOperations));
+
+		if (!MmIsAddressValid(pOperations))
+		{
+			KdPrint((DRIVER_PREFIX "pOperations address not valid\n"));
+			return;
+		}
+
+		PVOID opsPtr = *pOperations;
+		KdPrint((DRIVER_PREFIX "Operations pointer value: 0x%llX\n", (ULONG64)opsPtr));
+
+		if (!opsPtr || !MmIsAddressValid(opsPtr))
+		{
+			KdPrint((DRIVER_PREFIX "Operations pointer is NULL or invalid\n"));
+			return;
+		}
+
+		PFLT_OPERATION_REGISTRATION_INTERNAL ops = (PFLT_OPERATION_REGISTRATION_INTERNAL)opsPtr;
+
+		// Walk the operations array (terminated by IRP_MJ_OPERATION_END = 0x80)
+		for (ULONG i = 0; i < 50 && MmIsAddressValid(&ops[i]); i++)
+		{
+			UCHAR majorFunc = ops[i].MajorFunction;
+
+			KdPrint((DRIVER_PREFIX "  Op[%u]: MajorFunc=0x%02X, Pre=0x%llX, Post=0x%llX\n",
+				i, majorFunc, (ULONG64)ops[i].PreOperation, (ULONG64)ops[i].PostOperation));
+
+			// IRP_MJ_OPERATION_END marks end of array
+			if (majorFunc == 0x80)
+				break;
+
+			switch (majorFunc)
+			{
+			case IRP_MJ_CREATE: // 0
+				callbacks->PreCreate = (ULONG64)ops[i].PreOperation;
+				callbacks->PostCreate = (ULONG64)ops[i].PostOperation;
+				break;
+			case IRP_MJ_READ: // 3
+				callbacks->PreRead = (ULONG64)ops[i].PreOperation;
+				callbacks->PostRead = (ULONG64)ops[i].PostOperation;
+				break;
+			case IRP_MJ_WRITE: // 4
+				callbacks->PreWrite = (ULONG64)ops[i].PreOperation;
+				callbacks->PostWrite = (ULONG64)ops[i].PostOperation;
+				break;
+			case IRP_MJ_SET_INFORMATION: // 6
+				callbacks->PreSetInfo = (ULONG64)ops[i].PreOperation;
+				callbacks->PostSetInfo = (ULONG64)ops[i].PostOperation;
+				break;
+			case IRP_MJ_CLEANUP: // 18
+				callbacks->PreCleanup = (ULONG64)ops[i].PreOperation;
+				callbacks->PostCleanup = (ULONG64)ops[i].PostOperation;
+				break;
+			}
+		}
+
+		KdPrint((DRIVER_PREFIX "Final callbacks: PreCreate=0x%llX, PostCreate=0x%llX\n",
+			callbacks->PreCreate, callbacks->PostCreate));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Exception extracting filter callbacks\n"));
+	}
+}
+
 // Enumerate minifilters using Filter Manager APIs (linked against fltMgr.lib)
 BOOLEAN EnumerateMinifiltersViaApi(MinifilterInfo* entries, ULONG* count, ULONG maxEntries)
 {
@@ -236,14 +310,28 @@ BOOLEAN EnumerateMinifiltersViaApi(MinifilterInfo* entries, ULONG* count, ULONG 
 		info->NumberOfInstances = filterInfo->Type.MiniFilter.NumberOfInstances;
 		info->Flags = filterInfo->Flags;
 
-		// Resolve owner module
+		// Extract Pre/Post operation callbacks from FLT_FILTER structure
+		ExtractFilterCallbacks(filter, &info->Callbacks);
+
+		// Resolve owner module using one of the callback addresses (code address, not data)
 		CallbackInformation tempInfo = { 0 };
-		tempInfo.CallbackAddress = (ULONG64)filter;
+		// Try PreCreate first, then PostCreate, then other callbacks
+		if (info->Callbacks.PreCreate)
+			tempInfo.CallbackAddress = info->Callbacks.PreCreate;
+		else if (info->Callbacks.PostCreate)
+			tempInfo.CallbackAddress = info->Callbacks.PostCreate;
+		else if (info->Callbacks.PreRead)
+			tempInfo.CallbackAddress = info->Callbacks.PreRead;
+		else if (info->Callbacks.PreWrite)
+			tempInfo.CallbackAddress = info->Callbacks.PreWrite;
+		else
+			tempInfo.CallbackAddress = (ULONG64)filter; // Fallback to filter address
+
 		SearchLoadedModules(&tempInfo);
 		RtlCopyMemory(info->OwnerModuleName, tempInfo.ModuleName, MAX_MODULE_NAME_LENGTH);
 
-		KdPrint((DRIVER_PREFIX "Filter[%u]: %s (Alt: %s, Addr: 0x%llX, Instances: %u)\n",
-			*count, info->FilterName, info->Altitude, info->FilterAddress, info->NumberOfInstances));
+		KdPrint((DRIVER_PREFIX "Filter[%u]: %s (Alt: %s, Addr: 0x%llX, Instances: %u, PreCreate: 0x%llX)\n",
+			*count, info->FilterName, info->Altitude, info->FilterAddress, info->NumberOfInstances, info->Callbacks.PreCreate));
 
 		ExFreePoolWithTag(filterInfo, DRIVER_TAG);
 		(*count)++;
