@@ -655,3 +655,26 @@ struct EarlyInjectionStatusResponse
 	NTSTATUS LastStatus;                               // Status of last injection attempt
 	BOOLEAN OneShot;                                   // One-shot mode enabled
 };
+
+// ============== Kernel Memory Copy IOCTL (KsDumper-style) ==============
+// Copies virtual memory from target process using MmCopyVirtualMemory
+// Can read memory from protected processes (PPL, etc.)
+
+#define IOCTL_DIOPROCESS_COPY_MEMORY \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x860, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Request structure for kernel memory copy
+struct KernelCopyMemoryRequest
+{
+	ULONG TargetProcessId;                             // Target process PID
+	ULONG64 SourceAddress;                             // Address in target process to read from
+	ULONG64 DestinationAddress;                        // Address in caller's buffer to write to
+	ULONG Size;                                        // Number of bytes to copy
+};
+
+// Response structure for kernel memory copy
+struct KernelCopyMemoryResponse
+{
+	ULONG BytesCopied;                                 // Actual bytes copied
+	BOOLEAN Success;
+};

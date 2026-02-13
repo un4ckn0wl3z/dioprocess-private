@@ -507,6 +507,56 @@ Token privilege offset is **0x40** across all Windows 10/11 versions (very stabl
 Right-click process → Miscellaneous → **⚡ Enable All Privileges**
 (Button disabled/grayed when driver not loaded)
 
+### 4. Kernel Memory Dump (KsDumper-style)
+
+**Function:**
+- `callback::kernel_copy_memory(pid: u32, source_address: u64, buffer: &mut [u8]) -> Result<usize, CallbackError>` — Copy memory from target process via kernel
+
+**Implementation:**
+Located in `kernelmode/DioProcess/DioProcessDriver/IRP/DeviceControl.cpp` (IOCTL handler) and `crates/callback/src/driver.rs` (Rust binding).
+
+**Algorithm:**
+1. `PsLookupProcessByProcessId()` to get target `EPROCESS` pointer
+2. Call `MmCopyVirtualMemory()` to copy from target process to caller's buffer
+3. Return bytes copied
+
+**IOCTL:**
+```cpp
+IOCTL_DIOPROCESS_COPY_MEMORY  // 0x00222180
+```
+
+**Request/Response Structures:**
+```cpp
+struct KernelCopyMemoryRequest {
+    ULONG TargetProcessId;      // Target process PID
+    ULONG64 SourceAddress;      // Address in target to read from
+    ULONG64 DestinationAddress; // Address in caller's buffer
+    ULONG Size;                 // Bytes to copy (max 64MB)
+};
+
+struct KernelCopyMemoryResponse {
+    ULONG BytesCopied;
+    BOOLEAN Success;
+};
+```
+
+**Use Cases:**
+- Dump memory from protected processes (PPL, AV/EDR, etc.)
+- Read memory without triggering usermode hooks
+- Process memory forensics and analysis
+- PE dumping from running processes
+
+**UI Access:**
+Right-click process → Miscellaneous → Kernel (Ring 0) → **📦 Dump Process**
+(Button disabled/grayed when driver not loaded)
+
+The dump operation:
+1. Gets the main module base address and size via `get_process_modules()`
+2. Allocates a buffer and calls `kernel_copy_memory()` to read the entire main module
+3. Saves the dump to user-selected file location
+
+**Note:** The dumped PE may need IAT reconstruction for static analysis (imports are resolved to runtime addresses).
+
 ### Driver Communication
 
 **IOCTLs (defined in DioProcessCommon.h):**
@@ -568,7 +618,7 @@ DioProcess: Process PID 1234 protected successfully
 
 Use **DbgView** (SysInternals) to capture debug output for verification.
 
-### 4. Clear Debug Flags (Anti-Anti-Debugging)
+### 5. Clear Debug Flags (Anti-Anti-Debugging)
 
 **Function:**
 - `callback::clear_debug_flags(pid: u32) -> Result<(), CallbackError>` — Clear debugging indicators

@@ -4,13 +4,14 @@ use std::collections::{HashMap, HashSet};
 
 use callback::{
     clear_debug_flags, enable_all_privileges, hv_inject_dll, hv_inject_shellcode, hv_is_running,
-    hv_protect_process, hv_unprotect_process, is_driver_loaded, protect_process, unprotect_process,
+    hv_protect_process, hv_unprotect_process, is_driver_loaded, kernel_copy_memory, protect_process,
+    unprotect_process,
 };
 use dioxus::prelude::*;
 use misc::{hook_amsi, inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, inject_shellcode_classic, unhook_dll_remote_by_path, enumerate_process_modules};
 use process::{
-    get_processes, get_system_stats, kill_process, open_file_location, resume_process,
-    suspend_process, ProcessInfo,
+    get_process_modules, get_processes, get_system_stats, kill_process, open_file_location,
+    resume_process, suspend_process, ProcessInfo,
 };
 
 use super::{
@@ -1536,6 +1537,87 @@ pub fn ProcessTab() -> Element {
                                         },
                                         span { "💉" }
                                         span { "Inject DLL" }
+                                    }
+
+                                    // Dump Process button (kernel memory read)
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            if let Some(pid) = ctx_menu.pid {
+                                                let pid_for_spawn = pid;
+                                                let proc_name = processes.read()
+                                                    .iter()
+                                                    .find(|p| p.pid == pid)
+                                                    .map(|p| p.name.clone())
+                                                    .unwrap_or_else(|| format!("PID_{}", pid));
+                                                context_menu.set(ContextMenuState::default());
+                                                spawn(async move {
+                                                    // Get main module info
+                                                    let modules = get_process_modules(pid_for_spawn);
+                                                    if modules.is_empty() {
+                                                        status_message.set("✗ Failed to get process modules".to_string());
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                        return;
+                                                    }
+
+                                                    let main_module = &modules[0];
+                                                    let base_addr = main_module.base_address;
+                                                    let size = main_module.size as usize;
+
+                                                    // Show save dialog
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("Executable", &["exe", "dll", "bin"])
+                                                        .add_filter("All Files", &["*"])
+                                                        .set_file_name(&format!("{}_dump.exe", proc_name.replace(".exe", "")))
+                                                        .set_title("Save Process Dump")
+                                                        .save_file()
+                                                        .await;
+
+                                                    if let Some(file) = file {
+                                                        status_message.set(format!("Dumping {} bytes from 0x{:X}...", size, base_addr));
+
+                                                        // Read memory using kernel driver
+                                                        let mut buffer = vec![0u8; size];
+                                                        match kernel_copy_memory(pid_for_spawn, base_addr as u64, &mut buffer) {
+                                                            Ok(bytes_read) => {
+                                                                // Write to file
+                                                                match std::fs::write(file.path(), &buffer[..bytes_read]) {
+                                                                    Ok(()) => {
+                                                                        status_message.set(format!(
+                                                                            "✓ Process dumped: {} bytes written to {}",
+                                                                            bytes_read,
+                                                                            file.path().display()
+                                                                        ));
+                                                                    }
+                                                                    Err(e) => {
+                                                                        status_message.set(format!(
+                                                                            "✗ Failed to write dump file: {}",
+                                                                            e
+                                                                        ));
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!(
+                                                                    "✗ Kernel memory read failed: {}",
+                                                                    e
+                                                                ));
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        span { "📦" }
+                                        span { "Dump Process" }
                                     }
 
                                     div { class: "context-menu-separator" }

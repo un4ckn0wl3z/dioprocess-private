@@ -4,6 +4,9 @@
 #include "Hypervisor/HvProtection.h"
 #include "../Injection/EarlyInjection.h"
 
+// Forward declaration for HandleCopyMemory
+NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
 // ============== IOCTL Device Control Dispatcher ==============
 
 NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
@@ -223,6 +226,11 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_EARLY_INJECT_STATUS:
 		status = HandleEarlyInjectStatus(Irp, irpSp, &info);
+		break;
+
+	// Kernel Memory Copy IOCTL (KsDumper-style)
+	case IOCTL_DIOPROCESS_COPY_MEMORY:
+		status = HandleCopyMemory(Irp, irpSp, &info);
 		break;
 
 	default:
@@ -3288,4 +3296,100 @@ NTSTATUS HandleEarlyInjectStatus(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR 
 
 	*info = sizeof(EarlyInjectionStatusResponse);
 	return STATUS_SUCCESS;
+}
+
+// ============== Kernel Memory Copy (KsDumper-style) ==============
+
+// MmCopyVirtualMemory declaration (undocumented)
+extern "C" NTSTATUS NTAPI MmCopyVirtualMemory(
+	PEPROCESS SourceProcess,
+	PVOID SourceAddress,
+	PEPROCESS TargetProcess,
+	PVOID TargetAddress,
+	SIZE_T BufferSize,
+	KPROCESSOR_MODE PreviousMode,
+	PSIZE_T ReturnSize
+);
+
+NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "Kernel memory copy request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(KernelCopyMemoryRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	if (outputLen < sizeof(KernelCopyMemoryResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (KernelCopyMemoryRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	auto response = (KernelCopyMemoryResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+	// Validate input parameters
+	if (request->Size == 0 || request->Size > 64 * 1024 * 1024)  // Max 64MB per request
+	{
+		KdPrint((DRIVER_PREFIX "Invalid copy size: %u\n", request->Size));
+		response->BytesCopied = 0;
+		response->Success = FALSE;
+		*info = sizeof(KernelCopyMemoryResponse);
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Lookup target process
+	PEPROCESS targetProcess = NULL;
+	NTSTATUS status = PsLookupProcessByProcessId(
+		(HANDLE)(ULONG_PTR)request->TargetProcessId,
+		&targetProcess
+	);
+
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "Failed to lookup process %u: 0x%X\n", request->TargetProcessId, status));
+		response->BytesCopied = 0;
+		response->Success = FALSE;
+		*info = sizeof(KernelCopyMemoryResponse);
+		return status;
+	}
+
+	// Perform kernel memory copy using MmCopyVirtualMemory
+	SIZE_T bytesCopied = 0;
+	status = MmCopyVirtualMemory(
+		targetProcess,
+		(PVOID)request->SourceAddress,
+		PsGetCurrentProcess(),
+		(PVOID)request->DestinationAddress,
+		request->Size,
+		UserMode,
+		&bytesCopied
+	);
+
+	ObDereferenceObject(targetProcess);
+
+	if (NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "Memory copy successful: PID %u, Address 0x%llX, Size %u, Copied %llu\n",
+			request->TargetProcessId, request->SourceAddress, request->Size, bytesCopied));
+		response->BytesCopied = (ULONG)bytesCopied;
+		response->Success = TRUE;
+	}
+	else
+	{
+		KdPrint((DRIVER_PREFIX "Memory copy failed: 0x%X\n", status));
+		response->BytesCopied = 0;
+		response->Success = FALSE;
+	}
+
+	*info = sizeof(KernelCopyMemoryResponse);
+	return status;
 }

@@ -2370,3 +2370,84 @@ pub fn remove_registry_callback(index: u32) -> Result<(), CallbackError> {
 
     Ok(())
 }
+
+// ============== Kernel Memory Copy (KsDumper-style) ==============
+
+// IOCTL code for memory copy: CTL_CODE(0x22, 0x860, 0, 0)
+const IOCTL_DIOPROCESS_COPY_MEMORY: u32 = 0x00222180;
+
+/// Request structure for kernel memory copy
+#[repr(C)]
+struct KernelCopyMemoryRequest {
+    target_process_id: u32,
+    source_address: u64,
+    destination_address: u64,
+    size: u32,
+}
+
+/// Response structure for kernel memory copy
+#[repr(C)]
+struct KernelCopyMemoryResponse {
+    bytes_copied: u32,
+    success: u8,
+}
+
+/// Copy memory from a target process using kernel-level MmCopyVirtualMemory.
+/// This can read memory from protected processes (PPL, etc.).
+/// Requires the DioProcess kernel driver to be loaded.
+///
+/// # Arguments
+/// * `pid` - Target process ID
+/// * `source_address` - Address in target process to read from
+/// * `buffer` - Buffer to store the read data
+///
+/// # Returns
+/// * `Ok(bytes_copied)` on success
+/// * `Err(CallbackError)` on failure
+pub fn kernel_copy_memory(pid: u32, source_address: u64, buffer: &mut [u8]) -> Result<usize, CallbackError> {
+    if buffer.is_empty() || buffer.len() > 64 * 1024 * 1024 {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = KernelCopyMemoryRequest {
+            target_process_id: pid,
+            source_address,
+            destination_address: buffer.as_mut_ptr() as u64,
+            size: buffer.len() as u32,
+        };
+
+        let mut response = KernelCopyMemoryResponse {
+            bytes_copied: 0,
+            success: 0,
+        };
+
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_COPY_MEMORY,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<KernelCopyMemoryRequest>() as u32,
+            Some(&mut response as *mut _ as *mut _),
+            std::mem::size_of::<KernelCopyMemoryResponse>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+
+        if response.success != 0 {
+            Ok(response.bytes_copied as usize)
+        } else {
+            Err(CallbackError::IoctlFailed(0))
+        }
+    }
+}
