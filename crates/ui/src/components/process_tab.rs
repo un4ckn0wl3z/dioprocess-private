@@ -25,8 +25,9 @@ use crate::state::{
     ContextMenuState, ProcessViewMode, SortColumn, SortOrder, CREATE_PROCESS_WINDOW_STATE,
     EARLY_INJECTION_WINDOW_STATE, FUNCTION_STOMPING_WINDOW_STATE, GHOST_PROCESS_WINDOW_STATE,
     GRAPH_WINDOW_STATE, HANDLE_WINDOW_STATE, HOOK_SCAN_WINDOW_STATE, MEMORY_WINDOW_STATE,
-    MODULE_WINDOW_STATE, SHELLCODE_INJECT_WINDOW_STATE, STRING_SCAN_WINDOW_STATE,
-    THREAD_WINDOW_STATE, THREADLESS_INJECT_WINDOW_STATE, TOKEN_THIEF_WINDOW_STATE,
+    MODULE_WINDOW_STATE, PROCESS_SEARCH_QUERY, SHELLCODE_INJECT_WINDOW_STATE,
+    STRING_SCAN_WINDOW_STATE, THREAD_WINDOW_STATE, THREADLESS_INJECT_WINDOW_STATE,
+    TOKEN_THIEF_WINDOW_STATE,
 };
 
 /// A row in the tree view with metadata for rendering connectors
@@ -194,7 +195,6 @@ fn build_tree_rows(
 pub fn ProcessTab() -> Element {
     let mut processes = use_signal(|| get_processes());
     let mut system_stats = use_signal(|| get_system_stats());
-    let mut search_query = use_signal(|| String::new());
     let mut sort_column = use_signal(|| SortColumn::Memory);
     let mut sort_order = use_signal(|| SortOrder::Descending);
     let mut auto_refresh = use_signal(|| true);
@@ -256,7 +256,7 @@ pub fn ProcessTab() -> Element {
         .read()
         .iter()
         .filter(|p| {
-            let query = search_query.read().to_lowercase();
+            let query = PROCESS_SEARCH_QUERY.read().to_lowercase();
             if query.is_empty() {
                 true
             } else {
@@ -334,8 +334,8 @@ pub fn ProcessTab() -> Element {
                     class: "search-input",
                     r#type: "text",
                     placeholder: "Search by name, PID, or path...",
-                    value: "{search_query}",
-                    oninput: move |e| search_query.set(e.value().clone()),
+                    value: "{PROCESS_SEARCH_QUERY}",
+                    oninput: move |e| { *PROCESS_SEARCH_QUERY.write() = e.value().clone(); },
                 }
 
                 label { class: "checkbox-label",
@@ -572,7 +572,7 @@ pub fn ProcessTab() -> Element {
                             {
                                 let tree_rows = build_tree_rows(
                                     &processes.read(),
-                                    &search_query.read(),
+                                    &PROCESS_SEARCH_QUERY.read(),
                                     *sort_column.read(),
                                     *sort_order.read(),
                                     &expanded_pids.read(),

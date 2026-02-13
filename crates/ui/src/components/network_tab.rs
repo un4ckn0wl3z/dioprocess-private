@@ -5,6 +5,7 @@ use network::{get_network_connections, NetworkConnection, Protocol, TcpState};
 use process::{kill_process, open_file_location};
 
 use crate::helpers::copy_to_clipboard;
+use crate::state::NETWORK_SEARCH_QUERY;
 
 /// Network context menu state
 #[derive(Clone, Debug, Default)]
@@ -41,7 +42,6 @@ enum SortOrder {
 #[component]
 pub fn NetworkTab() -> Element {
     let mut connections = use_signal(|| get_network_connections());
-    let mut search_query = use_signal(|| String::new());
     let mut sort_column = use_signal(|| NetworkSortColumn::LocalPort);
     let mut sort_order = use_signal(|| SortOrder::Ascending);
     let mut auto_refresh = use_signal(|| true);
@@ -118,7 +118,7 @@ pub fn NetworkTab() -> Element {
             };
 
             // Search filter
-            let query = search_query.read().to_lowercase();
+            let query = NETWORK_SEARCH_QUERY.read().to_lowercase();
             let search_match = if query.is_empty() {
                 true
             } else {
@@ -204,8 +204,8 @@ pub fn NetworkTab() -> Element {
                     class: "search-input",
                     r#type: "text",
                     placeholder: "Search by address, port, process...",
-                    value: "{search_query}",
-                    oninput: move |e| search_query.set(e.value().clone()),
+                    value: "{NETWORK_SEARCH_QUERY}",
+                    oninput: move |e| { *NETWORK_SEARCH_QUERY.write() = e.value().clone(); },
                 }
 
                 select {

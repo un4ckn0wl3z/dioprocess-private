@@ -49,6 +49,34 @@ pub static GHOST_PROCESS_WINDOW_STATE: GlobalSignal<bool> = Signal::global(|| fa
 /// Early injection window state - controls visibility of early injection modal
 pub static EARLY_INJECTION_WINDOW_STATE: GlobalSignal<bool> = Signal::global(|| false);
 
+// ============================================================================
+// Tab Search Query Signals - persist search text across tab switches
+// ============================================================================
+
+/// Process tab search query
+pub static PROCESS_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
+
+/// Network tab search query
+pub static NETWORK_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
+
+/// Service tab search query
+pub static SERVICE_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
+
+/// System Events (callback) tab search query
+pub static CALLBACK_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
+
+/// PspCidTable tab search query
+pub static PSPCIDTABLE_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
+
+/// Callback enumeration tab search query
+pub static CALLBACK_ENUM_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
+
+/// Minifilters tab search query
+pub static MINIFILTERS_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
+
+/// Drivers tab search query
+pub static DRIVERS_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
+
 /// Process view mode - flat list or tree hierarchy
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ProcessViewMode {

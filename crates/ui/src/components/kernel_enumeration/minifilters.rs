@@ -6,6 +6,7 @@ use rfd::AsyncFileDialog;
 
 use super::SortOrder;
 use crate::helpers::copy_to_clipboard;
+use crate::state::MINIFILTERS_SEARCH_QUERY;
 
 /// Sort column for Minifilters
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -34,7 +35,6 @@ pub fn MinifiltersTab(driver_loaded: bool) -> Element {
     let mut minifilters = use_signal(|| Vec::<MinifilterInfo>::new());
     let mut status_message = use_signal(|| String::new());
     let mut is_enumerating = use_signal(|| false);
-    let mut search_query = use_signal(|| String::new());
     let mut sort_column = use_signal(|| MinifilterSortColumn::Altitude);
     let mut sort_order = use_signal(|| SortOrder::Descending); // Higher altitude = earlier in filter chain
     let mut context_menu = use_signal(|| MinifilterContextMenuState::default());
@@ -117,7 +117,7 @@ pub fn MinifiltersTab(driver_loaded: bool) -> Element {
 
     // Get all the data we need before rsx!
     let filter_list = minifilters.read().clone();
-    let query = search_query.read().to_lowercase();
+    let query = MINIFILTERS_SEARCH_QUERY.read().to_lowercase();
     let col = *sort_column.read();
     let order = *sort_order.read();
 
@@ -162,7 +162,7 @@ pub fn MinifiltersTab(driver_loaded: bool) -> Element {
 
     let is_running = *is_enumerating.read();
     let status_msg = status_message.read().clone();
-    let query_text = search_query.read().clone();
+    let query_text = MINIFILTERS_SEARCH_QUERY.read().clone();
     let ctx_menu = context_menu.read().clone();
     let has_data = !filter_list.is_empty();
 
@@ -227,7 +227,7 @@ pub fn MinifiltersTab(driver_loaded: bool) -> Element {
                     r#type: "text",
                     placeholder: "Search by name, altitude, owner...",
                     value: "{query_text}",
-                    oninput: move |e| search_query.set(e.value().clone()),
+                    oninput: move |e| { *MINIFILTERS_SEARCH_QUERY.write() = e.value().clone(); },
                 }
 
                 // Action buttons

@@ -9,6 +9,7 @@ use dioxus::prelude::*;
 use std::sync::Arc;
 
 use crate::helpers::copy_to_clipboard;
+use crate::state::CALLBACK_SEARCH_QUERY;
 
 /// Page size for database queries
 const PAGE_SIZE: usize = 500;
@@ -49,7 +50,6 @@ pub fn CallbackTab() -> Element {
 
     let mut events = use_signal(Vec::<CallbackEvent>::new);
     let mut total_count = use_signal(|| 0usize);
-    let mut search_query = use_signal(|| String::new());
     let mut sort_column = use_signal(|| CallbackSortColumn::Time);
     let mut sort_order = use_signal(|| SortOrder::Descending);
     let mut auto_refresh = use_signal(|| true);
@@ -104,7 +104,7 @@ pub fn CallbackTab() -> Element {
     use_effect(move || {
         let _ = *refresh_trigger.read(); // Subscribe to trigger
         let tf = type_filter.read().clone();
-        let sq = search_query.read().clone();
+        let sq = CALLBACK_SEARCH_QUERY.read().clone();
         let page = *current_page.read();
 
         if let Some(ref store) = *storage.read() {
@@ -295,8 +295,8 @@ pub fn CallbackTab() -> Element {
                     class: "search-input",
                     r#type: "text",
                     placeholder: "Search by PID, process name, command line...",
-                    value: "{search_query}",
-                    oninput: move |e| search_query.set(e.value().clone()),
+                    value: "{CALLBACK_SEARCH_QUERY}",
+                    oninput: move |e| { *CALLBACK_SEARCH_QUERY.write() = e.value().clone(); },
                 }
 
                 select {
@@ -746,7 +746,7 @@ pub fn CallbackTab() -> Element {
                             let pid = selected_event_pid;
                             move |_| {
                                 if let Some(p) = pid {
-                                    search_query.set(p.to_string());
+                                    { *CALLBACK_SEARCH_QUERY.write() = p.to_string(); };
                                 }
                                 context_menu.set(ContextMenuState::default());
                             }
@@ -760,7 +760,7 @@ pub fn CallbackTab() -> Element {
                             let name = selected_event_name.clone();
                             move |_| {
                                 if let Some(ref n) = name {
-                                    search_query.set(n.clone());
+                                    { *CALLBACK_SEARCH_QUERY.write() = n.clone(); };
                                 }
                                 context_menu.set(ContextMenuState::default());
                             }

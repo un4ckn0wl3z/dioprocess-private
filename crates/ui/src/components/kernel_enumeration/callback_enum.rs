@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 use super::SortOrder;
 use crate::helpers::copy_to_clipboard;
+use crate::state::CALLBACK_ENUM_SEARCH_QUERY;
 
 /// Callback type selector
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -63,7 +64,6 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
     let mut registry_callbacks = use_signal(Vec::<RegistryCallbackInfo>::new);
     let mut is_enumerating = use_signal(|| false);
     let mut status_message = use_signal(|| String::new());
-    let mut search_query = use_signal(|| String::new());
     let mut sort_column = use_signal(|| CallbackSortColumn::Index);
     let mut sort_order = use_signal(|| SortOrder::Ascending);
     let mut context_menu = use_signal(|| CallbackContextMenuState::default());
@@ -225,7 +225,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
     let callback_list = callbacks.read().clone();
     let object_callback_list = object_callbacks.read().clone();
     let registry_callback_list = registry_callbacks.read().clone();
-    let query = search_query.read().to_lowercase();
+    let query = CALLBACK_ENUM_SEARCH_QUERY.read().to_lowercase();
     let col = *sort_column.read();
     let order = *sort_order.read();
     let current_type = *callback_type.read();
@@ -335,7 +335,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
 
     let is_running = *is_enumerating.read();
     let status_msg = status_message.read().clone();
-    let query_text = search_query.read().clone();
+    let query_text = CALLBACK_ENUM_SEARCH_QUERY.read().clone();
     let ctx_menu = context_menu.read().clone();
     let is_object_type = current_type == CallbackType::Object;
     let is_registry_type = current_type == CallbackType::Registry;
@@ -677,7 +677,7 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                     r#type: "text",
                     placeholder: "Search callbacks...",
                     value: "{query_text}",
-                    oninput: move |e| search_query.set(e.value().clone()),
+                    oninput: move |e| { *CALLBACK_ENUM_SEARCH_QUERY.write() = e.value().clone(); },
                 }
 
                 // Action buttons

@@ -6,6 +6,7 @@ use rfd::AsyncFileDialog;
 
 use super::SortOrder;
 use crate::helpers::copy_to_clipboard;
+use crate::state::DRIVERS_SEARCH_QUERY;
 
 /// Sort column for driver table
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -34,7 +35,6 @@ pub fn DriversTab(driver_loaded: bool) -> Element {
     let mut drivers = use_signal(Vec::<KernelDriverInfo>::new);
     let mut is_enumerating = use_signal(|| false);
     let mut status_message = use_signal(|| String::new());
-    let mut search_query = use_signal(|| String::new());
     let mut sort_column = use_signal(|| DriverSortColumn::BaseAddress);
     let mut sort_order = use_signal(|| SortOrder::Ascending);
     let mut context_menu = use_signal(DriverContextMenuState::default);
@@ -109,7 +109,7 @@ pub fn DriversTab(driver_loaded: bool) -> Element {
 
     // Get data for rendering
     let driver_list = drivers.read().clone();
-    let query = search_query.read().to_lowercase();
+    let query = DRIVERS_SEARCH_QUERY.read().to_lowercase();
     let col = *sort_column.read();
     let order = *sort_order.read();
 
@@ -140,7 +140,7 @@ pub fn DriversTab(driver_loaded: bool) -> Element {
 
     let is_running = *is_enumerating.read();
     let status_msg = status_message.read().clone();
-    let query_text = search_query.read().clone();
+    let query_text = DRIVERS_SEARCH_QUERY.read().clone();
     let ctx_menu = context_menu.read().clone();
     let has_data = !driver_list.is_empty();
 
@@ -194,7 +194,7 @@ pub fn DriversTab(driver_loaded: bool) -> Element {
                     r#type: "text",
                     placeholder: "Search by name, address, path...",
                     value: "{query_text}",
-                    oninput: move |e| search_query.set(e.value().clone()),
+                    oninput: move |e| { *DRIVERS_SEARCH_QUERY.write() = e.value().clone(); },
                 }
 
                 button {

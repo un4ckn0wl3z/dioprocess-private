@@ -6,6 +6,7 @@ use rfd::AsyncFileDialog;
 
 use super::SortOrder;
 use crate::helpers::copy_to_clipboard;
+use crate::state::PSPCIDTABLE_SEARCH_QUERY;
 
 /// Sort column for PspCidTable
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -35,7 +36,6 @@ pub fn PspCidTableTab(driver_loaded: bool) -> Element {
     let mut cid_entries = use_signal(|| Vec::<CidEntry>::new());
     let mut cid_status = use_signal(|| String::new());
     let mut cid_is_enumerating = use_signal(|| false);
-    let mut search_query = use_signal(|| String::new());
     let mut sort_column = use_signal(|| CidSortColumn::Id);
     let mut sort_order = use_signal(|| SortOrder::Ascending);
     let mut context_menu = use_signal(|| CidContextMenuState::default());
@@ -108,7 +108,7 @@ pub fn PspCidTableTab(driver_loaded: bool) -> Element {
 
     // Get all the data we need before rsx!
     let cid_list = cid_entries.read().clone();
-    let query = search_query.read().to_lowercase();
+    let query = PSPCIDTABLE_SEARCH_QUERY.read().to_lowercase();
     let filter_type = type_filter.read().clone();
     let col = *sort_column.read();
     let order = *sort_order.read();
@@ -160,7 +160,7 @@ pub fn PspCidTableTab(driver_loaded: bool) -> Element {
 
     let cid_is_running = *cid_is_enumerating.read();
     let cid_status_msg = cid_status.read().clone();
-    let query_text = search_query.read().clone();
+    let query_text = PSPCIDTABLE_SEARCH_QUERY.read().clone();
     let ctx_menu = context_menu.read().clone();
     let filter = type_filter.read().clone();
 
@@ -226,7 +226,7 @@ pub fn PspCidTableTab(driver_loaded: bool) -> Element {
                     r#type: "text",
                     placeholder: "Search by name, ID, address...",
                     value: "{query_text}",
-                    oninput: move |e| search_query.set(e.value().clone()),
+                    oninput: move |e| { *PSPCIDTABLE_SEARCH_QUERY.write() = e.value().clone(); },
                 }
 
                 // Action buttons

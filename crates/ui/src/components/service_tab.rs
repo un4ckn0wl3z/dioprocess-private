@@ -7,6 +7,7 @@ use service::{
 };
 
 use crate::helpers::copy_to_clipboard;
+use crate::state::SERVICE_SEARCH_QUERY;
 
 /// Service context menu state
 #[derive(Clone, Debug, Default)]
@@ -53,7 +54,6 @@ struct CreateServiceForm {
 #[component]
 pub fn ServiceTab() -> Element {
     let mut services = use_signal(|| get_services());
-    let mut search_query = use_signal(|| String::new());
     let mut sort_column = use_signal(|| ServiceSortColumn::Name);
     let mut sort_order = use_signal(|| SortOrder::Ascending);
     let mut auto_refresh = use_signal(|| true);
@@ -135,7 +135,7 @@ pub fn ServiceTab() -> Element {
             };
 
             // Search filter
-            let query = search_query.read().to_lowercase();
+            let query = SERVICE_SEARCH_QUERY.read().to_lowercase();
             let search_match = if query.is_empty() {
                 true
             } else {
@@ -239,8 +239,8 @@ pub fn ServiceTab() -> Element {
                     class: "search-input",
                     r#type: "text",
                     placeholder: "Search by name, description, path...",
-                    value: "{search_query}",
-                    oninput: move |e| search_query.set(e.value().clone()),
+                    value: "{SERVICE_SEARCH_QUERY}",
+                    oninput: move |e| { *SERVICE_SEARCH_QUERY.write() = e.value().clone(); },
                 }
 
                 select {
