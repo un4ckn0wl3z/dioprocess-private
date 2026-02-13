@@ -49,6 +49,7 @@ pub enum MiscError {
     HerpaderpFailed(String),
     HerpaderpHollowFailed(String),
     IoctlError(String),
+    AmsiHookFailed(String),
 }
 
 impl fmt::Display for MiscError {
@@ -110,6 +111,7 @@ impl fmt::Display for MiscError {
             MiscError::HerpaderpFailed(msg) => write!(f, "Process herpaderping failed: {}", msg),
             MiscError::HerpaderpHollowFailed(msg) => write!(f, "Herpaderping hollowing failed: {}", msg),
             MiscError::IoctlError(msg) => write!(f, "Kernel driver IOCTL error: {}", msg),
+            MiscError::AmsiHookFailed(msg) => write!(f, "AMSI hook failed: {}", msg),
         }
     }
 }

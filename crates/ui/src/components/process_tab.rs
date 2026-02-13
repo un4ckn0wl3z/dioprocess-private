@@ -7,7 +7,7 @@ use callback::{
     hv_protect_process, hv_unprotect_process, is_driver_loaded, protect_process, unprotect_process,
 };
 use dioxus::prelude::*;
-use misc::{inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, inject_shellcode_classic, unhook_dll_remote_by_path, enumerate_process_modules};
+use misc::{hook_amsi, inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, inject_shellcode_classic, unhook_dll_remote_by_path, enumerate_process_modules};
 use process::{
     get_processes, get_system_stats, kill_process, open_file_location, resume_process,
     suspend_process, ProcessInfo,
@@ -1398,6 +1398,38 @@ pub fn ProcessTab() -> Element {
                                 },
                                 span { "🔑" }
                                 span { "Steal Token" }
+                            }
+
+                            // AMSI Hook button
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    let target_pid = ctx_menu.pid;
+                                    context_menu.set(ContextMenuState::default());
+
+                                    if let Some(pid) = target_pid {
+                                        match hook_amsi(pid) {
+                                            Ok(()) => {
+                                                status_message.set(format!(
+                                                    "✓ AMSI hooked in process {} — AmsiScanBuffer bypassed",
+                                                    pid
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                status_message.set(format!(
+                                                    "✗ AMSI hook failed: {}",
+                                                    e
+                                                ));
+                                            }
+                                        }
+                                        spawn(async move {
+                                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                            status_message.set(String::new());
+                                        });
+                                    }
+                                },
+                                span { "🛡️" }
+                                span { "AMSI Hook" }
                             }
 
                             div { class: "context-menu-separator" }

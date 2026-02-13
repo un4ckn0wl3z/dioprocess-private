@@ -250,6 +250,38 @@ Located in `crates/misc/src/token.rs`:
 
 `steal_token(pid, exe_path, args)` — Open target process with `PROCESS_QUERY_LIMITED_INFORMATION`, obtain its primary token via `OpenProcessToken`, duplicate as a primary token with `DuplicateTokenEx(SecurityAnonymous, TokenPrimary)`, enable `SeAssignPrimaryTokenPrivilege` via `AdjustTokenPrivileges`, impersonate with `ImpersonateLoggedOnUser`, spawn a new process under that token via `CreateProcessAsUserW`, then `RevertToSelf`. Access via right-click context menu > Miscellaneous > Steal Token.
 
+## AMSI Hooking (misc crate)
+
+Located in `crates/misc/src/amsi.rs`:
+
+`hook_amsi(pid)` — Patches `AmsiScanBuffer` in a remote process to bypass AMSI (Antimalware Scan Interface) scanning. The hook makes the function always return `S_OK` with `AMSI_RESULT_CLEAN` (0), allowing any payload to execute without AMSI inspection.
+
+**Algorithm:**
+1. Open target process with `PROCESS_VM_READ | PROCESS_VM_OPERATION | PROCESS_VM_WRITE`
+2. Load `amsi.dll` locally with `DONT_RESOLVE_DLL_REFERENCES` (same base address in target due to ASLR)
+3. Get `AmsiScanBuffer` address via `GetProcAddress`
+4. Verify code cave before function contains `0xCC` (INT3 padding)
+5. Write 13-byte hook shellcode to code cave + function prolog:
+   ```asm
+   xor eax, eax              ; Return S_OK
+   mov r11, [rsp+0x30]       ; Get AMSI_RESULT* (6th param)
+   mov [r11], eax            ; *result = AMSI_RESULT_CLEAN
+   ret
+   ; <- AmsiScanBuffer entry
+   jmp short -13             ; Jump to shellcode
+   ```
+6. Flush instruction cache
+
+**Use Cases:**
+- Bypass AMSI scanning in PowerShell, .NET, VBScript, JScript processes
+- Security research and red team testing
+- Execute scripts that would otherwise be flagged by AMSI
+
+**UI Access:**
+Right-click process → Miscellaneous → **AMSI Hook**
+
+**Note:** Target process must have `amsi.dll` loaded (e.g., powershell.exe, pwsh.exe, .NET processes).
+
 ## Security Research Features (callback crate + kernel driver)
 
 **Requires DioProcess kernel driver to be loaded.** Three offensive capabilities via direct kernel structure manipulation:

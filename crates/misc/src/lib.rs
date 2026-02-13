@@ -1,5 +1,6 @@
 //! Miscellaneous process utilities
 
+mod amsi;
 mod error;
 mod hook_scanner;
 mod injection;
@@ -11,6 +12,7 @@ mod process;
 mod token;
 mod unhook;
 
+pub use amsi::*;
 pub use error::MiscError;
 pub use hook_scanner::*;
 pub use injection::*;
