@@ -325,12 +325,7 @@ pub fn MemoryTranslateTab() -> Element {
                 }
             }
 
-            // Hex dump of physical page
-            if !page_data.is_empty() {
-                {render_hex_dump(page_data.clone(), base, current_hex_page, hex_page)}
-            }
-
-            // Write bar
+            // Write bar (above hex dump for easy access)
             if base != 0 {
                 div { class: "controls",
                     div { style: "display: flex; gap: 8px; align-items: center; flex-wrap: wrap;",
@@ -398,6 +393,11 @@ pub fn MemoryTranslateTab() -> Element {
                         }
                     }
                 }
+            }
+
+            // Hex dump of physical page
+            if !page_data.is_empty() {
+                {render_hex_dump(page_data.clone(), base, current_hex_page, hex_page)}
             }
 
             } // end scrollable content area
