@@ -1079,6 +1079,10 @@ const BASE_STYLES: &str = r#"
     .handle-filter-input::placeholder {
         color: #6b7280;
     }
+    select.handle-filter-input option {
+        background: #1e293b;
+        color: white;
+    }
     .cell-handle {
         font-family: monospace;
         color: #facc15;
