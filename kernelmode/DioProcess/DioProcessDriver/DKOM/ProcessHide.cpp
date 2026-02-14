@@ -114,31 +114,45 @@ VOID ProcessHide_Cleanup()
 
 		__try
 		{
-			if (current->ProcessListEntry && MmIsAddressValid(current->ProcessListEntry) && aplOffset != 0)
+			// Check if the process is still alive before re-linking
+			PEPROCESS targetProcess = NULL;
+			NTSTATUS lookupStatus = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &targetProcess);
+
+			if (NT_SUCCESS(lookupStatus) && targetProcess != NULL)
 			{
-				PEPROCESS currentProcess = PsGetCurrentProcess();
-				PLIST_ENTRY head = (PLIST_ENTRY)((PUCHAR)currentProcess + aplOffset);
+				ObDereferenceObject(targetProcess);
 
-				if (MmIsAddressValid(head) && MmIsAddressValid(head->Flink))
+				if (current->ProcessListEntry && MmIsAddressValid(current->ProcessListEntry) && aplOffset != 0)
 				{
-					// Use DPC synchronization for safe re-link
-					DKOM_DPC_CONTEXT dpcCtx = { 0 };
-					dpcCtx.Operation = DKOM_RELINK;
-					dpcCtx.TargetEntry = current->ProcessListEntry;
-					dpcCtx.InsertAfter = head;
-					dpcCtx.WorkDone = 0;
-					KeGenericCallDpc(DkomDpcRoutine, &dpcCtx);
+					PEPROCESS currentProcess = PsGetCurrentProcess();
+					PLIST_ENTRY head = (PLIST_ENTRY)((PUCHAR)currentProcess + aplOffset);
 
-					KdPrint((DRIVER_PREFIX "ProcessHide cleanup: restored PID %lu\n", pid));
+					if (MmIsAddressValid(head) && MmIsAddressValid(head->Flink))
+					{
+						// Use DPC synchronization for safe re-link
+						DKOM_DPC_CONTEXT dpcCtx = { 0 };
+						dpcCtx.Operation = DKOM_RELINK;
+						dpcCtx.TargetEntry = current->ProcessListEntry;
+						dpcCtx.InsertAfter = head;
+						dpcCtx.WorkDone = 0;
+						KeGenericCallDpc(DkomDpcRoutine, &dpcCtx);
+
+						KdPrint((DRIVER_PREFIX "ProcessHide cleanup: restored PID %lu\n", pid));
+					}
+					else
+					{
+						KdPrint((DRIVER_PREFIX "ProcessHide cleanup: list head invalid, skipping PID %lu\n", pid));
+					}
 				}
 				else
 				{
-					KdPrint((DRIVER_PREFIX "ProcessHide cleanup: list head invalid, skipping PID %lu\n", pid));
+					KdPrint((DRIVER_PREFIX "ProcessHide cleanup: skipping PID %lu (invalid pointers)\n", pid));
 				}
 			}
 			else
 			{
-				KdPrint((DRIVER_PREFIX "ProcessHide cleanup: skipping PID %lu (invalid pointers)\n", pid));
+				// Process already exited — EPROCESS is freed, do NOT re-link
+				KdPrint((DRIVER_PREFIX "ProcessHide cleanup: PID %lu already exited, skipping re-link\n", pid));
 			}
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER)
@@ -298,6 +312,31 @@ NTSTATUS ProcessHide_Hide(ULONG Pid)
 	return status;
 }
 
+// ============== Helper: remove entry from tracking list ==============
+
+static VOID RemoveTrackingEntry(PHIDDEN_PROCESS_ENTRY target)
+{
+	PHIDDEN_PROCESS_ENTRY prev = NULL;
+	PHIDDEN_PROCESS_ENTRY current = g_ProcessHideListHead;
+
+	while (current)
+	{
+		if (current == target)
+		{
+			if (prev)
+				prev->Next = current->Next;
+			else
+				g_ProcessHideListHead = current->Next;
+
+			g_ProcessHideCount--;
+			ExFreePoolWithTag(current, DKOM_POOL_TAG);
+			return;
+		}
+		prev = current;
+		current = current->Next;
+	}
+}
+
 // ============== Unhide ==============
 
 NTSTATUS ProcessHide_Unhide(ULONG Pid)
@@ -322,11 +361,27 @@ NTSTATUS ProcessHide_Unhide(ULONG Pid)
 		{
 			if (current->Pid == Pid)
 			{
+				// Validate the process is still alive via PsLookupProcessByProcessId.
+				// If the process exited while hidden, the EPROCESS is freed — we must NOT
+				// re-link it. Just remove the tracking entry.
+				PEPROCESS targetProcess = NULL;
+				NTSTATUS lookupStatus = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)Pid, &targetProcess);
+
+				if (!NT_SUCCESS(lookupStatus) || targetProcess == NULL)
+				{
+					KdPrint((DRIVER_PREFIX "ProcessHide: PID %lu no longer exists (0x%X), removing tracking entry\n", Pid, lookupStatus));
+					RemoveTrackingEntry(current);
+					return STATUS_SUCCESS;  // Tracking entry cleaned up — operation succeeded
+				}
+
+				// Process is alive — dereference the ref we just took
+				ObDereferenceObject(targetProcess);
+
 				if (!current->ProcessListEntry || !MmIsAddressValid(current->ProcessListEntry))
 				{
 					KdPrint((DRIVER_PREFIX "ProcessHide: ProcessListEntry invalid for PID %lu\n", Pid));
-					status = STATUS_INVALID_ADDRESS;
-					break;
+					RemoveTrackingEntry(current);
+					return STATUS_INVALID_ADDRESS;
 				}
 
 				// Insert after current process's list head (always valid)
@@ -348,17 +403,10 @@ NTSTATUS ProcessHide_Unhide(ULONG Pid)
 				dpcCtx.WorkDone = 0;
 				KeGenericCallDpc(DkomDpcRoutine, &dpcCtx);
 
-				// Remove from tracking list
-				if (prev)
-					prev->Next = current->Next;
-				else
-					g_ProcessHideListHead = current->Next;
-
-				g_ProcessHideCount--;
-
 				KdPrint((DRIVER_PREFIX "ProcessHide: PID %lu (%s) restored via DPC sync\n", Pid, current->ImageFileName));
 
-				ExFreePoolWithTag(current, DKOM_POOL_TAG);
+				// Remove from tracking list
+				RemoveTrackingEntry(current);
 				return STATUS_SUCCESS;
 			}
 

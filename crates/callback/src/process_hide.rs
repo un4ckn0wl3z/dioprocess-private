@@ -71,7 +71,8 @@ pub fn process_hide_add(pid: u32) -> Result<(), CallbackError> {
     }
 }
 
-/// Unhide a previously hidden process
+/// Unhide a previously hidden process.
+/// Returns Ok(()) even if the process already exited (tracking entry is cleaned up either way).
 pub fn process_hide_remove(pid: u32) -> Result<(), CallbackError> {
     let handle = open_device()?;
 
