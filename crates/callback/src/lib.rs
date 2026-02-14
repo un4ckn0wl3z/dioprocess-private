@@ -14,6 +14,7 @@ mod early_injection;
 mod error;
 mod filehide;
 mod hypervisor;
+mod physical_memory;
 mod process_hide;
 mod pspcidtable;
 pub mod storage;
@@ -45,6 +46,10 @@ pub use early_injection::{
 };
 pub use filehide::{filehide_add, filehide_list, filehide_remove, HiddenFileInfo};
 pub use process_hide::{process_hide_add, process_hide_list, process_hide_remove, HiddenProcessInfo};
+pub use physical_memory::{
+    read_physical_memory, translate_virtual_address, write_physical_memory, PageTableEntry,
+    PageTableWalkResult,
+};
 pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
 pub use storage::{EventFilter, EventStorage};
 pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};

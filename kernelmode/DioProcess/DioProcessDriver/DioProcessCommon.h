@@ -735,3 +735,64 @@ struct ProcessHideListResponse
 	ULONG Count;
 	HiddenProcessEntry Entries[MAX_DKOM_HIDDEN_PROCESSES];
 };
+
+// ============== Physical Memory Translation IOCTLs ==============
+// Virtual address translation via 4-level page table walk + physical memory R/W
+
+#define IOCTL_DIOPROCESS_TRANSLATE_VA \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x890, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_READ_PHYSICAL \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x891, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_WRITE_PHYSICAL \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x892, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// ============== Physical Memory Translation Structures ==============
+
+struct TranslateVaRequest
+{
+	ULONG ProcessId;
+	ULONG64 VirtualAddress;
+};
+
+struct PageTableEntryResult
+{
+	ULONG64 VirtualAddress;      // Address of this entry in the table
+	ULONG64 PhysicalAddress;     // Physical address this entry points to
+	ULONG64 RawValue;            // Raw 8-byte PTE value
+	UCHAR Present;
+	UCHAR ReadWrite;
+	UCHAR UserSupervisor;
+	UCHAR WriteThrough;
+	UCHAR CacheDisable;
+	UCHAR Accessed;
+	UCHAR Dirty;
+	UCHAR LargePage;
+	UCHAR Global;
+	UCHAR NoExecute;
+};
+
+struct TranslateVaResponse
+{
+	ULONG64 Cr3;
+	PageTableEntryResult Pml4e;
+	PageTableEntryResult Pdpte;
+	PageTableEntryResult Pde;
+	PageTableEntryResult Pte;        // Zeroed if large page
+	ULONG64 PhysicalAddress;         // Final translated address
+	ULONG PageSize;                  // 4096 / 0x200000 / 0x40000000
+	UCHAR WalkDepth;                 // 4=normal, 3=2MB, 2=1GB
+	UCHAR Success;
+};
+
+struct PhysicalMemoryRequest
+{
+	ULONG64 PhysicalAddress;
+	ULONG64 BufferAddress;           // Usermode buffer
+	ULONG Size;                      // Max 4096 bytes
+};
+
+struct PhysicalMemoryResponse
+{
+	ULONG BytesTransferred;
+	UCHAR Success;
+};

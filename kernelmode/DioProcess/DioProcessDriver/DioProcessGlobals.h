@@ -216,3 +216,8 @@ NTSTATUS HandleEarlyInjectStatus(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR 
 NTSTATUS HandleProcessHide(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandleProcessUnhide(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandleProcessHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// Physical Memory Handlers
+NTSTATUS HandleTranslateVA(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleReadPhysical(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleWritePhysical(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);

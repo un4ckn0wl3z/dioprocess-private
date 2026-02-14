@@ -2390,4 +2390,58 @@ const BASE_STYLES: &str = r#"
         transform: translateX(2px);
     }
 
+    /* Page Table Walk Visualization */
+    .pte-box {
+        border: 1px solid var(--border-secondary);
+        border-radius: 6px;
+        padding: 8px 10px;
+        background: var(--bg-card);
+        min-width: 140px;
+        font-family: 'Consolas', 'Courier New', monospace;
+        font-size: 11px;
+    }
+    .pte-box-title {
+        font-weight: 600;
+        font-size: 12px;
+        color: var(--text-accent);
+        margin-bottom: 4px;
+    }
+    .pte-box-flags {
+        color: var(--text-secondary);
+        font-size: 10px;
+        line-height: 1.5;
+    }
+    .pte-box-pfn {
+        color: var(--text-primary);
+        font-size: 11px;
+        margin-top: 3px;
+    }
+    .pte-box-raw {
+        color: var(--text-muted);
+        font-size: 9px;
+        margin-top: 2px;
+        word-break: break-all;
+    }
+    .pte-box-value {
+        color: var(--text-primary);
+        font-family: 'Consolas', monospace;
+        font-size: 12px;
+    }
+    .pte-arrow {
+        color: var(--text-muted);
+        font-size: 18px;
+        align-self: center;
+        padding: 0 2px;
+    }
+    .pte-arrow-label {
+        color: #fbbf24;
+        font-size: 12px;
+        font-weight: 600;
+        align-self: center;
+        padding: 2px 8px;
+        background: rgba(251, 191, 36, 0.1);
+        border-radius: 4px;
+        border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+
 "#;

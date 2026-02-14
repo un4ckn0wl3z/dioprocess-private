@@ -5,6 +5,7 @@
 #include "../Injection/EarlyInjection.h"
 #include "../FileHide/FileHide.h"
 #include "../DKOM/ProcessHide.h"
+#include "../Memory/PhysicalMemory.h"
 
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
@@ -259,6 +260,19 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_PROCESS_HIDE_LIST:
 		status = HandleProcessHideList(Irp, irpSp, &info);
+		break;
+
+	// Physical Memory IOCTLs
+	case IOCTL_DIOPROCESS_TRANSLATE_VA:
+		status = HandleTranslateVA(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_READ_PHYSICAL:
+		status = HandleReadPhysical(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_WRITE_PHYSICAL:
+		status = HandleWritePhysical(Irp, irpSp, &info);
 		break;
 
 	default:
@@ -3548,4 +3562,158 @@ NTSTATUS HandleProcessHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR in
 	}
 
 	return status;
+}
+
+// ============== Physical Memory Handlers ==============
+
+NTSTATUS HandleTranslateVA(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint(("DioProcess: TranslateVA request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(TranslateVaRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (outputLen < sizeof(TranslateVaResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (TranslateVaRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	ULONG64 cr3 = PhysMemGetProcessCR3(request->ProcessId);
+	if (!cr3)
+		return STATUS_NOT_FOUND;
+
+	auto response = (TranslateVaResponse*)Irp->AssociatedIrp.SystemBuffer;
+	NTSTATUS status = PhysMemTranslateVA(cr3, request->VirtualAddress, response);
+
+	if (NT_SUCCESS(status))
+	{
+		*info = sizeof(TranslateVaResponse);
+	}
+
+	return status;
+}
+
+NTSTATUS HandleReadPhysical(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint(("DioProcess: ReadPhysical request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(PhysicalMemoryRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (outputLen < sizeof(PhysicalMemoryResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (PhysicalMemoryRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	if (request->Size == 0 || request->Size > 4096)
+		return STATUS_INVALID_PARAMETER;
+
+	if (!request->BufferAddress)
+		return STATUS_INVALID_PARAMETER;
+
+	// Allocate kernel buffer for the read
+	PVOID kernelBuf = ExAllocatePoolWithTag(NonPagedPool, request->Size, 'rPhM');
+	if (!kernelBuf)
+		return STATUS_INSUFFICIENT_RESOURCES;
+
+	SIZE_T bytesRead = 0;
+	NTSTATUS status = PhysMemReadPhysical(request->PhysicalAddress, kernelBuf, request->Size, &bytesRead);
+
+	auto response = (PhysicalMemoryResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+	if (NT_SUCCESS(status))
+	{
+		// Copy to usermode buffer
+		__try
+		{
+			ProbeForWrite((PVOID)request->BufferAddress, request->Size, 1);
+			RtlCopyMemory((PVOID)request->BufferAddress, kernelBuf, bytesRead);
+			response->BytesTransferred = (ULONG)bytesRead;
+			response->Success = 1;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			response->BytesTransferred = 0;
+			response->Success = 0;
+			status = GetExceptionCode();
+		}
+	}
+	else
+	{
+		response->BytesTransferred = 0;
+		response->Success = 0;
+	}
+
+	ExFreePoolWithTag(kernelBuf, 'rPhM');
+	*info = sizeof(PhysicalMemoryResponse);
+	return STATUS_SUCCESS; // Always return success so response is delivered
+}
+
+NTSTATUS HandleWritePhysical(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint(("DioProcess: WritePhysical request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(PhysicalMemoryRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (outputLen < sizeof(PhysicalMemoryResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (PhysicalMemoryRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	if (request->Size == 0 || request->Size > 4096)
+		return STATUS_INVALID_PARAMETER;
+
+	if (!request->BufferAddress)
+		return STATUS_INVALID_PARAMETER;
+
+	// Copy from usermode buffer to kernel buffer first
+	PVOID kernelBuf = ExAllocatePoolWithTag(NonPagedPool, request->Size, 'wPhM');
+	if (!kernelBuf)
+		return STATUS_INSUFFICIENT_RESOURCES;
+
+	__try
+	{
+		ProbeForRead((PVOID)request->BufferAddress, request->Size, 1);
+		RtlCopyMemory(kernelBuf, (PVOID)request->BufferAddress, request->Size);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		ExFreePoolWithTag(kernelBuf, 'wPhM');
+		return GetExceptionCode();
+	}
+
+	SIZE_T bytesWritten = 0;
+	NTSTATUS status = PhysMemWritePhysical(request->PhysicalAddress, kernelBuf, request->Size, &bytesWritten);
+
+	auto response = (PhysicalMemoryResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (NT_SUCCESS(status))
+	{
+		response->BytesTransferred = (ULONG)bytesWritten;
+		response->Success = 1;
+	}
+	else
+	{
+		response->BytesTransferred = 0;
+		response->Success = 0;
+	}
+
+	ExFreePoolWithTag(kernelBuf, 'wPhM');
+	*info = sizeof(PhysicalMemoryResponse);
+	return STATUS_SUCCESS;
 }

@@ -101,6 +101,7 @@ pub fn Layout() -> Element {
     let is_utilities_tab = matches!(route, Route::UtilitiesTab {});
     let is_kernel_utilities_tab = matches!(route, Route::KernelUtilitiesTab {});
     let is_hypervisor_tab = matches!(route, Route::HypervisorTab {});
+    let is_memory_translate_tab = matches!(route, Route::MemoryTranslateTab {});
     let is_uefi_tab = matches!(route, Route::UefiTab {});
     let is_callback_tab = matches!(route, Route::CallbackTab {});
 
@@ -685,6 +686,12 @@ pub fn Layout() -> Element {
                         class: if is_hypervisor_tab { "tab-item tab-active" } else { "tab-item" },
                         "Hypervisor"
                         span { class: "experimental-badge", style: "background: #dc2626;", "Ring -1" }
+                    }
+                    Link {
+                        to: Route::MemoryTranslateTab {},
+                        class: if is_memory_translate_tab { "tab-item tab-active" } else { "tab-item" },
+                        "Physical Memory"
+                        span { class: "experimental-badge", style: "background: #7c3aed;", "Physical" }
                     }
                     Link {
                         to: Route::UefiTab {},
