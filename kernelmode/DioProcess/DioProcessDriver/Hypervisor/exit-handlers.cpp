@@ -555,7 +555,15 @@ void handle_ept_violation(vcpu* const cpu) {
 
   auto const pte = get_ept_pte(cpu->ept, physical_address);
 
-  for (auto const& entry : cpu->ept.mmr) {
+  // only scan MMR entries if any are active
+  if (cpu->ept.mmr_active_count > 0)
+  for (size_t mmr_idx = 0; mmr_idx < ept_mmr_count; ++mmr_idx) {
+    auto const& entry = cpu->ept.mmr[mmr_idx];
+
+    // skip unused entries
+    if (entry.size == 0)
+      continue;
+
     // ignore pages that aren't being monitored
     if (physical_address < (entry.start & ~0xFFFull))
       continue;
@@ -683,7 +691,10 @@ void handle_monitor_trap_flag(vcpu* const cpu) {
 
     pte = nullptr;
 
-    vmx_invept(invept_all_context, {});
+    // use single-context INVEPT to only flush this VCPU's EPT
+    invept_descriptor desc = {};
+    desc.ept_pointer = vmx_vmread(VMCS_CTRL_EPT_POINTER);
+    vmx_invept(invept_single_context, desc);
   }
 
   disable_monitor_trap_flag();

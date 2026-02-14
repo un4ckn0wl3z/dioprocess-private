@@ -17,14 +17,18 @@ void prepare_ept(vcpu_ept_data& ept) {
   for (size_t i = 0; i < ept_free_page_count; ++i)
     ept.free_page_pfns[i] = MmGetPhysicalAddress(&ept.free_pages[i]).QuadPart >> 12;
 
-  ept.hooks.active_list_head = nullptr;
-  ept.hooks.free_list_head   = &ept.hooks.buffer[0];
+  // initialize hash table buckets
+  for (size_t i = 0; i < ept.hooks.bucket_count; ++i)
+    ept.hooks.buckets[i] = nullptr;
 
-  for (size_t i = 0; i < ept.hooks.capacity - 1; ++i)
-    ept.hooks.buffer[i].next = &ept.hooks.buffer[i + 1];
+  ept.hooks.active_count   = 0;
+  ept.hooks.free_list_head = &ept.hooks.buffer[0];
 
-  // the last node points to NULL
-  ept.hooks.buffer[ept.hooks.capacity - 1].next = nullptr;
+  for (size_t i = 0; i < ept.hooks.capacity; ++i) {
+    ept.hooks.buffer[i].in_use = false;
+    ept.hooks.buffer[i].next   = (i + 1 < ept.hooks.capacity)
+      ? &ept.hooks.buffer[i + 1] : nullptr;
+  }
 
   // setup the first PML4E so that it points to our PDPT
   auto& pml4e             = ept.pml4[0];
@@ -86,9 +90,11 @@ void update_ept_memory_type(vcpu_ept_data& ept) {
 
       // 2MB large page
       if (pde.large_page) {
-        // update the memory type for this PDE
-        pde.memory_type = calc_mtrr_mem_type(mtrrs,
+        auto const new_type = calc_mtrr_mem_type(mtrrs,
           pde.page_frame_number << 21, 0x1000 << 9);
+        // only write if changed to avoid unnecessary cache line dirtying
+        if (pde.memory_type != new_type)
+          pde.memory_type = new_type;
       }
       // PDE points to a PT
       else {
@@ -97,8 +103,10 @@ void update_ept_memory_type(vcpu_ept_data& ept) {
 
         // update the memory type for every PTE
         for (size_t k = 0; k < 512; ++k) {
-          pt[k].memory_type = calc_mtrr_mem_type(mtrrs,
+          auto const new_type = calc_mtrr_mem_type(mtrrs,
             pt[k].page_frame_number << 12, 0x1000);
+          if (pt[k].memory_type != new_type)
+            pt[k].memory_type = new_type;
         }
       }
     }
@@ -246,13 +254,16 @@ bool install_ept_hook(vcpu_ept_data& ept,
   auto const hook_node = ept.hooks.free_list_head;
   ept.hooks.free_list_head = hook_node->next;
 
-  // insert the hook node into the active list
-  hook_node->next = ept.hooks.active_list_head;
-  ept.hooks.active_list_head = hook_node;
-
   // initialize the hook node
   hook_node->orig_pfn = static_cast<uint32_t>(original_page_pfn);
   hook_node->exec_pfn = static_cast<uint32_t>(executable_page_pfn);
+  hook_node->in_use   = true;
+
+  // insert into hash table bucket
+  auto const bucket = original_page_pfn & vcpu_ept_hooks::bucket_mask;
+  hook_node->next = ept.hooks.buckets[bucket];
+  ept.hooks.buckets[bucket] = hook_node;
+  ++ept.hooks.active_count;
 
   // an instruction fetch to this physical address will now trigger
   // an ept-violation vm-exit where the real "meat" of the ept hook is
@@ -265,41 +276,26 @@ bool install_ept_hook(vcpu_ept_data& ept,
 
 // remove an EPT hook that was installed with install_ept_hook()
 void remove_ept_hook(vcpu_ept_data& ept, uint64_t const original_page_pfn) {
-  if (!ept.hooks.active_list_head)
+  if (ept.hooks.active_count == 0)
     return;
 
-  // the head is the target node
-  if (ept.hooks.active_list_head->orig_pfn == original_page_pfn) {
-    auto const new_head = ept.hooks.active_list_head->next;
+  auto const bucket = original_page_pfn & vcpu_ept_hooks::bucket_mask;
+  auto* prev_ptr = &ept.hooks.buckets[bucket];
 
-    // add to the free list
-    ept.hooks.active_list_head->next = ept.hooks.free_list_head;
-    ept.hooks.free_list_head = ept.hooks.active_list_head;
+  while (*prev_ptr) {
+    auto* node = *prev_ptr;
+    if (node->orig_pfn == original_page_pfn) {
+      // unlink from bucket chain
+      *prev_ptr = node->next;
 
-    // remove from the active list
-    ept.hooks.active_list_head = new_head;
-  } else {
-    auto prev = ept.hooks.active_list_head;
-
-    // search for the node BEFORE the target node (prev if this was doubly)
-    while (prev->next) {
-      if (prev->next->orig_pfn == original_page_pfn)
-        break;
-
-      prev = prev->next;
+      // return to free list
+      node->in_use = false;
+      node->next = ept.hooks.free_list_head;
+      ept.hooks.free_list_head = node;
+      --ept.hooks.active_count;
+      break;
     }
-
-    if (!prev->next)
-      return;
-
-    auto const new_next = prev->next->next;
-
-    // add to the free list
-    prev->next->next = ept.hooks.free_list_head;
-    ept.hooks.free_list_head = prev->next;
-
-    // remove from the active list
-    prev->next = new_next;
+    prev_ptr = &node->next;
   }
 
   auto const pte = get_ept_pte(ept, original_page_pfn << 12, false);
@@ -317,15 +313,12 @@ void remove_ept_hook(vcpu_ept_data& ept, uint64_t const original_page_pfn) {
   vmx_invept(invept_all_context, {});
 }
 
-// find the EPT hook for the specified PFN
+// find the EPT hook for the specified PFN (O(1) average via hash table)
 vcpu_ept_hook_node* find_ept_hook(vcpu_ept_data& ept,
     uint64_t const original_page_pfn) {
-  // TODO:
-  //   maybe use a more optimal data structure to handle a large
-  //   amount of EPT hooks?
+  auto const bucket = original_page_pfn & vcpu_ept_hooks::bucket_mask;
 
-  // linear search through the active hook list
-  for (auto curr = ept.hooks.active_list_head; curr; curr = curr->next) {
+  for (auto curr = ept.hooks.buckets[bucket]; curr; curr = curr->next) {
     if (curr->orig_pfn == original_page_pfn)
       return curr;
   }

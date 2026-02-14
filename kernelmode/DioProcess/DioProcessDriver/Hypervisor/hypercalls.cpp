@@ -525,6 +525,7 @@ void install_mmr(vcpu* const cpu) {
   entry->mode  = mode;
   entry->start = phys;
   entry->size  = size;
+  ++cpu->ept.mmr_active_count;
 
   for (auto addr = phys; addr < phys + size; addr += 0x1000) {
     auto const pte = get_ept_pte(cpu->ept, addr, true);
@@ -567,6 +568,8 @@ void remove_mmr(vcpu* cpu) {
   }
 
   entry->size = 0;
+  if (cpu->ept.mmr_active_count > 0)
+    --cpu->ept.mmr_active_count;
   vmx_invept(invept_all_context, {});
 
   skip_instruction();
@@ -594,6 +597,7 @@ void remove_all_mmrs(vcpu* const cpu) {
     entry.size = 0;
   }
 
+  cpu->ept.mmr_active_count = 0;
   vmx_invept(invept_all_context, {});
   skip_instruction();
 }

@@ -25,10 +25,11 @@ void write_vmcs_ctrl_fields(vcpu* const cpu) {
   // 3.24.6.2
   ia32_vmx_procbased_ctls_register proc_based_ctrl;
   proc_based_ctrl.flags                       = 0;
-//#ifndef NDEBUG
-  proc_based_ctrl.cr3_load_exiting            = 1;
+  // CR3 load/store exiting disabled - causes a VM exit on every context
+  // switch (thousands/sec) which severely impacts system performance.
+  // Only enable for targeted debugging when specifically needed.
+  //proc_based_ctrl.cr3_load_exiting            = 1;
   //proc_based_ctrl.cr3_store_exiting           = 1;
-//#endif
   proc_based_ctrl.use_msr_bitmaps             = 1;
   proc_based_ctrl.use_tsc_offsetting          = 1;
   proc_based_ctrl.activate_secondary_controls = 1;
@@ -79,18 +80,13 @@ void write_vmcs_ctrl_fields(vcpu* const cpu) {
   vmx_vmwrite(VMCS_CTRL_TSC_OFFSET, 0);
 
   // 3.24.6.6
-#ifdef NDEBUG
-  // only vm-exit when guest tries to change a reserved bit
+  // only vm-exit when guest tries to change a reserved bit or CD/WP
+  // (intercepting ALL CR0/CR4 writes causes massive overhead)
   vmx_vmwrite(VMCS_CTRL_CR0_GUEST_HOST_MASK,
     cpu->cached.vmx_cr0_fixed0 | ~cpu->cached.vmx_cr0_fixed1 |
     CR0_CACHE_DISABLE_FLAG | CR0_WRITE_PROTECT_FLAG);
   vmx_vmwrite(VMCS_CTRL_CR4_GUEST_HOST_MASK,
     cpu->cached.vmx_cr4_fixed0 | ~cpu->cached.vmx_cr4_fixed1);
-#else
-  // vm-exit on every CR0/CR4 modification
-  vmx_vmwrite(VMCS_CTRL_CR0_GUEST_HOST_MASK, 0xFFFFFFFF'FFFFFFFF);
-  vmx_vmwrite(VMCS_CTRL_CR4_GUEST_HOST_MASK, 0xFFFFFFFF'FFFFFFFF);
-#endif
   vmx_vmwrite(VMCS_CTRL_CR0_READ_SHADOW, __readcr0());
   vmx_vmwrite(VMCS_CTRL_CR4_READ_SHADOW, __readcr4() & ~CR4_VMX_ENABLE_FLAG);
 

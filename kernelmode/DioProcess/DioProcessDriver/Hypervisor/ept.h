@@ -20,20 +20,29 @@ struct vcpu_ept_hook_node {
   // nobody is going to have more than 16,000 GB of physical memory
   uint32_t orig_pfn;
   uint32_t exec_pfn;
+
+  // marks whether this node is in use
+  bool in_use;
 };
 
-// TODO: refactor this to just use an array instead of a linked list
 struct vcpu_ept_hooks {
-  // buffer of nodes (there can be unused nodes in the middle
-  // of the buffer if a hook was removed for example)
   static constexpr size_t capacity = 64;
+
+  // hash table buckets (separate chaining) - must be power of 2
+  static constexpr size_t bucket_count = 64;
+  static constexpr size_t bucket_mask  = bucket_count - 1;
+
+  // node storage
   vcpu_ept_hook_node buffer[capacity];
 
-  // list of currently active EPT hooks
-  vcpu_ept_hook_node* active_list_head;
+  // hash table: bucket heads indexed by (pfn & bucket_mask)
+  vcpu_ept_hook_node* buckets[bucket_count];
 
   // list of unused nodes
   vcpu_ept_hook_node* free_list_head;
+
+  // number of active hooks
+  size_t active_count;
 };
 
 // TODO: make this a bitfield instead
@@ -87,6 +96,9 @@ struct vcpu_ept_data {
 
   // monitored memory ranges
   vcpu_ept_mmr_entry mmr[ept_mmr_count];
+
+  // number of active MMR entries (avoids scanning the full array)
+  size_t mmr_active_count;
 
   // PTE of the page that we should re-enable memory monitoring on
   ept_pte* mmr_mtf_pte;
