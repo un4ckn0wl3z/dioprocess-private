@@ -87,6 +87,7 @@ pub fn UefiTab() -> Element {
     rsx! {
         div {
             class: "service-tab",
+            style: "overflow-y: auto;",
             tabindex: "0",
             onkeydown: handle_keydown,
 
@@ -334,6 +335,9 @@ pub fn UefiTab() -> Element {
                     if *show_install_warning.read() {
                         div {
                             style: "background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px;",
+                            onmounted: move |e| {
+                                let _ = e.scroll_to(ScrollBehavior::Smooth);
+                            },
 
                             div {
                                 style: "display: flex; align-items: center; gap: 8px;",
