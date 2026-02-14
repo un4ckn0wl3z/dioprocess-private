@@ -708,3 +708,30 @@ struct FileHideListResponse
 	ULONG Count;                                       // Number of entries returned
 	HiddenFileEntry Entries[MAX_FILEHIDE_ENTRIES];     // Array of hidden file paths
 };
+
+// ============== DKOM Process Hiding IOCTLs ==============
+// Hide processes from enumeration via ActiveProcessLinks unlinking
+
+#define IOCTL_DIOPROCESS_PROCESS_HIDE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x880, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PROCESS_UNHIDE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x881, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PROCESS_HIDE_LIST \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x882, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Reuses TargetProcessRequest for hide/unhide
+
+// Response structure for listing hidden processes
+#define MAX_DKOM_HIDDEN_PROCESSES 64
+
+struct HiddenProcessEntry
+{
+	ULONG Pid;
+	CHAR ProcessName[16];
+};
+
+struct ProcessHideListResponse
+{
+	ULONG Count;
+	HiddenProcessEntry Entries[MAX_DKOM_HIDDEN_PROCESSES];
+};

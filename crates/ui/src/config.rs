@@ -106,6 +106,14 @@ impl ConfigStorage {
             [],
         )?;
 
+        // Create hidden_processes table for DKOM process hiding persistence
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS hidden_processes (
+                pid INTEGER PRIMARY KEY
+            )",
+            [],
+        )?;
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -216,6 +224,47 @@ impl ConfigStorage {
             Err(_) => Vec::new(),
         };
         result
+    }
+
+    /// Add a hidden process PID (DKOM persistence)
+    pub fn add_hidden_process(&self, pid: u32) -> SqlResult<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT OR IGNORE INTO hidden_processes (pid) VALUES (?)",
+            params![pid as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a hidden process PID
+    pub fn remove_hidden_process(&self, pid: u32) -> SqlResult<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "DELETE FROM hidden_processes WHERE pid = ?",
+            params![pid as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Load all hidden process PIDs
+    pub fn load_hidden_processes(&self) -> Vec<u32> {
+        let conn = self.conn.lock();
+        let mut stmt = match conn.prepare("SELECT pid FROM hidden_processes ORDER BY pid") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let result: Vec<u32> = match stmt.query_map([], |row| row.get::<_, i64>(0).map(|v| v as u32)) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        };
+        result
+    }
+
+    /// Clear all hidden process PIDs
+    pub fn clear_hidden_processes(&self) -> SqlResult<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM hidden_processes", [])?;
+        Ok(())
     }
 }
 

@@ -211,3 +211,8 @@ NTSTATUS HandleHvInjectDll(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleEarlyInjectArm(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandleEarlyInjectDisarm(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandleEarlyInjectStatus(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// DKOM Process Hiding Handlers
+NTSTATUS HandleProcessHide(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleProcessUnhide(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleProcessHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);

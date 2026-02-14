@@ -4,6 +4,7 @@
 #include "Hypervisor/HvProtection.h"
 #include "Injection/EarlyInjection.h"
 #include "FileHide/FileHide.h"
+#include "DKOM/ProcessHide.h"
 
 #pragma comment(lib, "aux_klib.lib")
 #pragma comment(lib, "fltMgr.lib")
@@ -81,6 +82,9 @@ void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 		HvStopHypervisor();
 	}
 	KdPrint((DRIVER_PREFIX "Hypervisor cleanup complete\n"));
+
+	// Clean up DKOM process hiding (unhide all before unload)
+	ProcessHide_Cleanup();
 
 	// Clean up file hiding minifilter
 	FileHide_Cleanup();
@@ -194,6 +198,9 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 
 	// Initialize early injection subsystem
 	EarlyInjectionInit();
+
+	// Initialize DKOM process hiding (non-fatal)
+	ProcessHide_Init();
 
 	// Initialize file hiding minifilter (non-fatal if it fails)
 	status = FileHide_Init(DriverObject, &g_RegistryPath);

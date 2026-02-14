@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 
 use callback::{
     clear_debug_flags, enable_all_privileges, hv_inject_dll, hv_inject_shellcode, hv_is_running,
-    hv_protect_process, hv_unprotect_process, is_driver_loaded, kernel_copy_memory, protect_process,
-    unprotect_process,
+    hv_protect_process, hv_unprotect_process, is_driver_loaded, kernel_copy_memory,
+    process_hide_add, process_hide_list, process_hide_remove, protect_process, unprotect_process,
 };
 use dioxus::prelude::*;
 use misc::{hook_amsi, inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, inject_shellcode_classic, unhook_dll_remote_by_path, enumerate_process_modules};
@@ -203,6 +203,21 @@ pub fn ProcessTab() -> Element {
     let mut context_menu = use_signal(|| ContextMenuState::default());
     let mut view_mode = use_signal(|| ProcessViewMode::Flat);
     let mut expanded_pids = use_signal(|| HashSet::<u32>::new());
+    let mut hidden_processes = use_signal(|| Vec::<(u32, String)>::new());
+    let mut show_hidden_panel = use_signal(|| false);
+
+    // Load hidden processes from driver on mount
+    use_future(move || async move {
+        if is_driver_loaded() {
+            if let Ok(list) = process_hide_list() {
+                let entries: Vec<(u32, String)> = list.iter().map(|e| (e.pid, e.name.clone())).collect();
+                if !entries.is_empty() {
+                    show_hidden_panel.set(true);
+                }
+                hidden_processes.set(entries);
+            }
+        }
+    });
 
     // Auto-refresh every 3 seconds
     use_future(move || async move {
@@ -477,6 +492,70 @@ pub fn ProcessTab() -> Element {
                             expanded_pids.set(HashSet::new());
                         },
                         "Collapse All"
+                    }
+                }
+            }
+
+            // Hidden Processes panel (DKOM)
+            if *show_hidden_panel.read() && !hidden_processes.read().is_empty() {
+                div {
+                    class: "hidden-processes-panel",
+                    style: "background: var(--bg-tertiary, #1a1a2e); border: 1px solid var(--accent-color, #8b5cf6); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px;",
+                    div {
+                        style: "display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;",
+                        span {
+                            style: "color: var(--accent-color, #8b5cf6); font-weight: bold; font-size: 12px;",
+                            "DKOM Hidden Processes ({hidden_processes.read().len()})"
+                        }
+                        button {
+                            class: "btn btn-secondary",
+                            style: "padding: 2px 8px; font-size: 11px;",
+                            onclick: move |_| {
+                                show_hidden_panel.set(false);
+                            },
+                            "Hide Panel"
+                        }
+                    }
+                    div {
+                        style: "display: flex; flex-wrap: wrap; gap: 6px;",
+                        for (pid, name) in hidden_processes.read().iter().cloned() {
+                            div {
+                                key: "{pid}",
+                                style: "display: flex; align-items: center; gap: 6px; background: var(--bg-secondary, #16162a); border-radius: 4px; padding: 4px 8px; font-size: 12px;",
+                                span {
+                                    style: "color: var(--text-secondary, #a0a0b0);",
+                                    "{name} ({pid})"
+                                }
+                                button {
+                                    class: "btn btn-secondary",
+                                    style: "padding: 1px 6px; font-size: 10px; color: #ef4444;",
+                                    onclick: move |_| {
+                                        let unhide_pid = pid;
+                                        spawn(async move {
+                                            match process_hide_remove(unhide_pid) {
+                                                Ok(()) => {
+                                                    let _ = crate::config::get_config_storage().remove_hidden_process(unhide_pid);
+                                                    // Refresh hidden list
+                                                    if let Ok(list) = process_hide_list() {
+                                                        let entries: Vec<(u32, String)> = list.iter().map(|e| (e.pid, e.name.clone())).collect();
+                                                        hidden_processes.set(entries);
+                                                    }
+                                                    status_message.set(format!("✓ Process {} unhidden", unhide_pid));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!("✗ Failed to unhide process: {}", e));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        });
+                                    },
+                                    "Unhide"
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1760,6 +1839,84 @@ pub fn ProcessTab() -> Element {
                                         },
                                         span { "🐛" }
                                         span { "Clear Debug Flags" }
+                                    }
+
+                                    div { class: "context-menu-separator" }
+
+                                    // Hide Process (DKOM) button
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match process_hide_add(pid) {
+                                                        Ok(()) => {
+                                                            // Persist to SQLite
+                                                            let _ = crate::config::get_config_storage().add_hidden_process(pid);
+                                                            // Refresh hidden panel
+                                                            if let Ok(list) = process_hide_list() {
+                                                                let entries: Vec<(u32, String)> = list.iter().map(|e| (e.pid, e.name.clone())).collect();
+                                                                hidden_processes.set(entries);
+                                                                show_hidden_panel.set(true);
+                                                            }
+                                                            status_message.set(format!(
+                                                                "✓ Process {} hidden via DKOM", pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ Failed to hide process: {}", e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "👻" }
+                                        span { "Hide Process (DKOM)" }
+                                    }
+
+                                    // Unhide Process (DKOM) button
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match process_hide_remove(pid) {
+                                                        Ok(()) => {
+                                                            // Remove from SQLite
+                                                            let _ = crate::config::get_config_storage().remove_hidden_process(pid);
+                                                            status_message.set(format!(
+                                                                "✓ Process {} unhidden", pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ Failed to unhide process: {}", e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "👁" }
+                                        span { "Unhide Process (DKOM)" }
                                     }
                                 }
                             }
