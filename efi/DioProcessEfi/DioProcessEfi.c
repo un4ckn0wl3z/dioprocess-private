@@ -82,7 +82,6 @@ DebugAppendHex(
     DebugAppend(Buf);
 }
 
-STATIC
 VOID
 DebugAppendDec(
     IN UINTN Value

