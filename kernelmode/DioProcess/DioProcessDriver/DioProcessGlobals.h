@@ -127,6 +127,17 @@ PVOID GetLoadLibraryWAddress(ULONG ProcessId, WINDOWS_VERSION WindowsVersion);
 NTSTATUS KernelInjectDll(ULONG ProcessId, PCWSTR DllPath, PVOID* AllocatedAddress, PVOID* LoadLibraryAddress);
 NTSTATUS KernelInjectShellcode(ULONG ProcessId, PVOID Shellcode, SIZE_T ShellcodeSize, PVOID* AllocatedAddress);
 
+// ============== Forward Declarations - FileHide ==============
+
+// Stored copy of RegistryPath for minifilter initialization
+extern UNICODE_STRING g_RegistryPath;
+extern WCHAR g_RegistryPathBuffer[512];
+extern BOOLEAN g_FileHideInitialized;
+
+NTSTATUS HandleFileHideHide(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleFileHideUnhide(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleFileHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
 // ============== Forward Declarations - IRP Handlers ==============
 
 NTSTATUS DioProcessCreateClose(PDEVICE_OBJECT, PIRP Irp);

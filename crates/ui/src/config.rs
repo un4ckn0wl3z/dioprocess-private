@@ -98,6 +98,14 @@ impl ConfigStorage {
             [],
         )?;
 
+        // Create hidden_files table for file hiding persistence
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS hidden_files (
+                path TEXT PRIMARY KEY
+            )",
+            [],
+        )?;
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -177,6 +185,37 @@ impl ConfigStorage {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM secrets WHERE key = 'pat'", [])?;
         Ok(())
+    }
+
+    /// Add a hidden file path
+    pub fn add_hidden_path(&self, path: &str) -> SqlResult<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT OR IGNORE INTO hidden_files (path) VALUES (?)",
+            params![path],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a hidden file path
+    pub fn remove_hidden_path(&self, path: &str) -> SqlResult<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM hidden_files WHERE path = ?", params![path])?;
+        Ok(())
+    }
+
+    /// Load all hidden file paths
+    pub fn load_hidden_paths(&self) -> Vec<String> {
+        let conn = self.conn.lock();
+        let mut stmt = match conn.prepare("SELECT path FROM hidden_files ORDER BY path") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let result: Vec<String> = match stmt.query_map([], |row| row.get::<_, String>(0)) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        };
+        result
     }
 }
 

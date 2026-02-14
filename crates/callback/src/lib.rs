@@ -12,6 +12,7 @@
 mod driver;
 mod early_injection;
 mod error;
+mod filehide;
 mod hypervisor;
 mod pspcidtable;
 pub mod storage;
@@ -41,6 +42,7 @@ pub use early_injection::{
     arm_early_injection, disarm_early_injection, get_early_injection_status,
     EarlyInjectionMethod, EarlyInjectionStatus,
 };
+pub use filehide::{filehide_add, filehide_list, filehide_remove, HiddenFileInfo};
 pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
 pub use storage::{EventFilter, EventStorage};
 pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};

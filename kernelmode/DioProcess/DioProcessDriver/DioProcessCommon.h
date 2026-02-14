@@ -678,3 +678,33 @@ struct KernelCopyMemoryResponse
 	ULONG BytesCopied;                                 // Actual bytes copied
 	BOOLEAN Success;
 };
+
+// ============== File Hiding IOCTLs (Minifilter) ==============
+// Hide files/folders from directory listings via minifilter
+
+#define IOCTL_DIOPROCESS_FILEHIDE_HIDE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x870, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_FILEHIDE_UNHIDE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x871, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_FILEHIDE_LIST \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x872, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Request structure for hiding/unhiding a file
+struct FileHideRequest
+{
+	WCHAR FilePath[260];                               // Full DOS path (e.g., "C:\\secret\\file.txt")
+};
+
+// Response structure for listing hidden files
+#define MAX_FILEHIDE_ENTRIES 128
+
+struct HiddenFileEntry
+{
+	WCHAR FilePath[260];                               // Full DOS path
+};
+
+struct FileHideListResponse
+{
+	ULONG Count;                                       // Number of entries returned
+	HiddenFileEntry Entries[MAX_FILEHIDE_ENTRIES];     // Array of hidden file paths
+};

@@ -3,8 +3,10 @@
 #include "Locker.h"
 #include "Hypervisor/HvProtection.h"
 #include "Injection/EarlyInjection.h"
+#include "FileHide/FileHide.h"
 
 #pragma comment(lib, "aux_klib.lib")
+#pragma comment(lib, "fltMgr.lib")
 
 // ============== Global Variable Definitions ==============
 
@@ -12,6 +14,10 @@ DioProcessState g_State;
 PVOID g_ObCallbackHandle = nullptr;
 LARGE_INTEGER g_RegistryCookie = { 0 };
 BOOLEAN g_CallbacksRegistered = FALSE;
+
+// Registry path storage for minifilter initialization
+UNICODE_STRING g_RegistryPath = { 0 };
+WCHAR g_RegistryPathBuffer[512] = { 0 };
 
 // Removed callback storage for restoration
 RemovedArrayCallback g_RemovedProcessCallbacks[MAX_REMOVED_CALLBACKS] = { 0 };
@@ -76,6 +82,9 @@ void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 	}
 	KdPrint((DRIVER_PREFIX "Hypervisor cleanup complete\n"));
 
+	// Clean up file hiding minifilter
+	FileHide_Cleanup();
+
 	// Unregister callbacks in reverse order if they were registered
 	if (g_CallbacksRegistered)
 	{
@@ -122,7 +131,10 @@ void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 extern "C"
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
-	UNREFERENCED_PARAMETER(RegistryPath);
+	// Save RegistryPath for minifilter initialization (it's only valid during DriverEntry)
+	g_RegistryPath.Buffer = g_RegistryPathBuffer;
+	g_RegistryPath.MaximumLength = sizeof(g_RegistryPathBuffer);
+	RtlCopyUnicodeString(&g_RegistryPath, RegistryPath);
 
 	NTSTATUS status;
 	PDEVICE_OBJECT devObj = nullptr;
@@ -182,6 +194,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 
 	// Initialize early injection subsystem
 	EarlyInjectionInit();
+
+	// Initialize file hiding minifilter (non-fatal if it fails)
+	status = FileHide_Init(DriverObject, &g_RegistryPath);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "FileHide initialization failed (0x%X) - file hiding unavailable\n", status));
+		// Continue loading - file hiding is optional
+	}
 
 	DriverObject->DriverUnload = DioProcessUnload;
 	DriverObject->MajorFunction[IRP_MJ_CREATE] = DriverObject->MajorFunction[IRP_MJ_CLOSE] = DioProcessCreateClose;

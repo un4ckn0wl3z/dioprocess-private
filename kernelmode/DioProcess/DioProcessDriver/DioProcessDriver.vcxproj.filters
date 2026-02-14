@@ -40,6 +40,9 @@
     <ClInclude Include="Injection\EarlyInjection.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="FileHide\FileHide.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="DioProcessDriver.cpp">
@@ -56,6 +59,9 @@
     </ClCompile>
     <ClCompile Include="Injection\KernelInject.cpp">
       <Filter>Source Files\Injection</Filter>
+    </ClCompile>
+    <ClCompile Include="FileHide\FileHide.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

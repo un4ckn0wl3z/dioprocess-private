@@ -59,7 +59,7 @@ pub fn is_driver_loaded() -> bool {
 }
 
 /// Open a handle to the driver device
-fn open_device() -> Result<HANDLE, CallbackError> {
+pub(crate) fn open_device() -> Result<HANDLE, CallbackError> {
     unsafe {
         let device_path: Vec<u16> = OsStr::new(DEVICE_PATH)
             .encode_wide()

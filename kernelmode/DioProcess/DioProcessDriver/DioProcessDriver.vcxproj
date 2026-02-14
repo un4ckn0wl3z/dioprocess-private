@@ -136,6 +136,7 @@
     <ClInclude Include="DioProcessCommon.h" />
     <ClInclude Include="DioProcessGlobals.h" />
     <ClInclude Include="Injection\EarlyInjection.h" />
+    <ClInclude Include="FileHide\FileHide.h" />
     <!-- Hypervisor Headers -->
     <ClInclude Include="Hypervisor\arch.h" />
     <ClInclude Include="Hypervisor\ept.h" />
@@ -192,6 +193,11 @@
     <!-- Injection -->
     <ClCompile Include="Injection\KernelInject.cpp" />
     <ClCompile Include="Injection\EarlyInjection.cpp" />
+
+    <!-- FileHide (Minifilter) -->
+    <ClCompile Include="FileHide\FileHide.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
 
     <!-- IRP Handlers -->
     <ClCompile Include="IRP\CreateClose.cpp" />

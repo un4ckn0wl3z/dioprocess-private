@@ -3,6 +3,7 @@
 #include "Locker.h"
 #include "Hypervisor/HvProtection.h"
 #include "../Injection/EarlyInjection.h"
+#include "../FileHide/FileHide.h"
 
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
@@ -231,6 +232,19 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 	// Kernel Memory Copy IOCTL (KsDumper-style)
 	case IOCTL_DIOPROCESS_COPY_MEMORY:
 		status = HandleCopyMemory(Irp, irpSp, &info);
+		break;
+
+	// File Hiding IOCTLs (Minifilter)
+	case IOCTL_DIOPROCESS_FILEHIDE_HIDE:
+		status = HandleFileHideHide(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_FILEHIDE_UNHIDE:
+		status = HandleFileHideUnhide(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_FILEHIDE_LIST:
+		status = HandleFileHideList(Irp, irpSp, &info);
 		break;
 
 	default:
@@ -3391,5 +3405,83 @@ NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
 	}
 
 	*info = sizeof(KernelCopyMemoryResponse);
+	return status;
+}
+
+// ============== File Hiding IOCTL Handlers ==============
+
+NTSTATUS HandleFileHideHide(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "FileHide: Hide request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(FileHideRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (FileHideRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Ensure null-terminated
+	request->FilePath[259] = L'\0';
+
+	return FileHide_AddPath(request->FilePath);
+}
+
+NTSTATUS HandleFileHideUnhide(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "FileHide: Unhide request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(FileHideRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (FileHideRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Ensure null-terminated
+	request->FilePath[259] = L'\0';
+
+	return FileHide_RemovePath(request->FilePath);
+}
+
+NTSTATUS HandleFileHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "FileHide: List request\n"));
+
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+	if (outputLen < sizeof(FileHideListResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto response = (FileHideListResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	RtlZeroMemory(response, sizeof(FileHideListResponse));
+
+	NTSTATUS status = FileHide_ListPaths(
+		(WCHAR(*)[260])response->Entries,
+		&response->Count,
+		MAX_FILEHIDE_ENTRIES
+	);
+
+	if (NT_SUCCESS(status))
+	{
+		*info = sizeof(FileHideListResponse);
+	}
+
 	return status;
 }

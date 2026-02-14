@@ -2,6 +2,7 @@
 
 mod callback_enum;
 mod drivers;
+mod filehide;
 mod hypervisor;
 mod minifilters;
 mod pspcidtable;
@@ -10,6 +11,7 @@ use dioxus::prelude::*;
 
 use callback_enum::CallbackEnumTab;
 use drivers::DriversTab;
+use filehide::FileHideTab;
 use minifilters::MinifiltersTab;
 use pspcidtable::PspCidTableTab;
 
@@ -23,6 +25,7 @@ enum KernelUtilityTab {
     PspCidTable,
     Minifilters,
     Drivers,
+    HideFiles,
 }
 
 /// Sort order (shared across sub-tabs)
@@ -86,6 +89,12 @@ pub fn KernelUtilitiesTab() -> Element {
                     onclick: move |_| active_tab.set(KernelUtilityTab::Drivers),
                     "Drivers Enumeration"
                 }
+
+                button {
+                    class: if *active_tab.read() == KernelUtilityTab::HideFiles { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| active_tab.set(KernelUtilityTab::HideFiles),
+                    "Hide Files"
+                }
             }
 
             // Tab content
@@ -94,6 +103,7 @@ pub fn KernelUtilitiesTab() -> Element {
                 KernelUtilityTab::PspCidTable => rsx! { PspCidTableTab { driver_loaded } },
                 KernelUtilityTab::Minifilters => rsx! { MinifiltersTab { driver_loaded } },
                 KernelUtilityTab::Drivers => rsx! { DriversTab { driver_loaded } },
+                KernelUtilityTab::HideFiles => rsx! { FileHideTab { driver_loaded } },
             }
         }
     }
