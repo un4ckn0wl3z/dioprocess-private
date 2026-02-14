@@ -1,0 +1,48 @@
+## @file
+#  DioProcess UEFI DXE Driver — Boot-time kernel patch engine.
+#
+#  Hooks ExitBootServices to apply DSE and PatchGuard bypasses before
+#  the Windows kernel takes control. Configuration read from NVRAM.
+#
+#  Copyright (c) 2024, DioProcess. All rights reserved.
+##
+
+[Defines]
+  INF_VERSION     = 0x00010005
+  BASE_NAME       = DioProcessEfi
+  FILE_GUID       = D100C0C5-1337-4242-BEEF-CAFEBABE0001
+  MODULE_TYPE     = UEFI_APPLICATION
+  VERSION_STRING  = 1.0
+  ENTRY_POINT     = DioProcessEfiEntry
+
+[Sources]
+  DioProcessEfi.c
+  Config.c
+  Config.h
+  PatchDse.c
+  PatchDse.h
+  PatchKpp.c
+  PatchKpp.h
+  PatternScan.c
+  PatternScan.h
+  PeUtils.c
+  PeUtils.h
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiLib
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  DevicePathLib
+
+[Protocols]
+  gEfiLoadedImageProtocolGuid          ## CONSUMES
+  gEfiSimpleFileSystemProtocolGuid     ## CONSUMES
+
+[Guids]
+  gEfiFileInfoGuid                     ## CONSUMES

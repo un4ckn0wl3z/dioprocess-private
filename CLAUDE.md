@@ -65,6 +65,12 @@ crates/
 │       │   ├── herpaderp.rs            # herpaderp_process()
 │       │   └── herpaderp_hollow.rs     # herpaderp_hollow_process()
 │       └── token.rs                    # steal_token()
+├── uefi/          # UEFI bootkit management (NVRAM config, ESP install/remove)
+│   └── src/
+│       ├── lib.rs          # Re-exports
+│       ├── error.rs        # UefiError enum
+│       ├── nvram.rs        # UEFI NVRAM variable read/write (DSE/KPP bypass toggles)
+│       └── esp.rs          # ESP mount/unmount, EFI file install/remove, boot entry management
 ├── ui/            # Dioxus components, routing, state, styles, config
 │   └── src/
 │       ├── components/
@@ -92,6 +98,7 @@ crates/
 │       │   ├── kernel_enumeration/
 │       │   │   ├── mod.rs               # Kernel enumeration sub-tabs
 │       │   │   └── hypervisor.rs        # Hypervisor tab (Ring -1) - standalone top-level tab
+│       │   ├── uefi_tab.rs             # UEFI Bootkit management tab
 │       │   └── callback_tab.rs          # System Events tab (Experimental)
 │       ├── config.rs             # Theme enum, AppConfig, SQLite config storage
 │       ├── routes.rs             # Tab routing definitions
@@ -113,6 +120,7 @@ UI Layer (ui crate — Dioxus components + signals)
     ├── network crate  → Windows API (IpHelper, WinSock)
     ├── service crate  → Windows API (Services / SCM)
     ├── callback crate → Kernel driver (\\.\DioProcess) + SQLite (%LOCALAPPDATA%\DioProcess\events.db)
+    ├── uefi crate     → UEFI NVRAM variables + ESP management (SetFirmwareEnvironmentVariableW, mountvol, bcdedit)
     └── misc crate     → Windows API (Memory, LibraryLoader, Debug, Security)
 ```
 
@@ -152,6 +160,8 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `HvInjectDllResult` | callback | module_base, path_address, success |
 | `EarlyInjectionMethod` | callback | ApcCallback (only method supported; Trampoline removed due to stability issues) |
 | `EarlyInjectionStatus` | callback | armed, target_process_name, dll_path, method, injection_count, last_injected_pid, last_status, one_shot |
+| `UefiConfig` | uefi-manager | dse_bypass, kpp_bypass |
+| `EfiInstallInfo` | uefi-manager | efi_path, boot_entry_id |
 
 ## Build & run
 
@@ -1171,6 +1181,86 @@ The Intel VT-x hypervisor is bundled into DioProcess.sys (single driver):
 sc create DioProcess type= kernel binPath= "C:\path\to\DioProcess.sys"
 sc start DioProcess
 ```
+
+## UEFI Bootkit (uefi-manager crate + EFI DXE driver)
+
+Boot-time kernel patching via a UEFI DXE driver, managed from the DioProcess UI.
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│  DioProcess UI (Dioxus) — UEFI Tab                   │
+│  [DSE: ON/OFF] [PatchGuard: ON/OFF]                  │
+│  [Install to ESP] [Remove from ESP] [Status]         │
+└──────────────────┬───────────────────────────────────┘
+                   │ Win32 API (SetFirmwareEnvironmentVariableW)
+                   │ + std::process::Command (mountvol, bcdedit)
+┌──────────────────▼───────────────────────────────────┐
+│  UEFI NVRAM Variables (persist across reboots)       │
+│  {D10PR0C5-1337-4242-BEEF-CAFEBABE0001}             │
+│  DioProcessDseBypass = 0 or 1                        │
+│  DioProcessKppBypass = 0 or 1                        │
+└──────────────────┬───────────────────────────────────┘
+                   │ Read at boot time
+┌──────────────────▼───────────────────────────────────┐
+│  DioProcessEfi.efi (UEFI DXE Driver — EDK2/C)       │
+│  1. Hook gBS->ExitBootServices                       │
+│  2. Read NVRAM config variables                      │
+│  3. If DseBypass=1: NOP g_CiOptions init in winload  │
+│  4. If KppBypass=1: RET PatchGuard init in ntoskrnl  │
+│  5. Restore original and call ExitBootServices       │
+└──────────────────────────────────────────────────────┘
+```
+
+### Rust crate: uefi-manager (crates/uefi/)
+
+**Functions:**
+- `read_uefi_config() -> Result<UefiConfig, UefiError>` — Read DSE/KPP bypass flags from NVRAM
+- `write_uefi_config(config) -> Result<(), UefiError>` — Write bypass flags to NVRAM (next reboot)
+- `is_uefi_system() -> bool` — Detect UEFI vs Legacy BIOS
+- `is_secure_boot_enabled() -> bool` — Read SecureBoot UEFI variable
+- `is_test_signing_enabled() -> bool` — Check bcdedit testsigning
+- `install_efi_driver(path) -> Result<(), UefiError>` — Mount ESP, copy .efi, create boot entry
+- `remove_efi_driver() -> Result<(), UefiError>` — Delete boot entry + ESP files
+- `is_efi_installed() -> Result<bool, UefiError>` — Check installation status
+
+**NVRAM access:** Uses `GetFirmwareEnvironmentVariableW` / `SetFirmwareEnvironmentVariableW` with `SeSystemEnvironmentPrivilege`.
+
+**ESP management:** Uses `mountvol /s` to mount, `bcdedit /copy {bootmgr}` + `/set path` to create boot entry.
+
+### UEFI DXE Driver: efi/DioProcessEfi/
+
+**Source files:**
+| File | Purpose |
+|------|---------|
+| `DioProcessEfi.c` | DXE entry point + ExitBootServices hook |
+| `Config.c/h` | NVRAM variable reader |
+| `PatchDse.c/h` | DSE bypass (NOP g_CiOptions MOV in winload.efi) |
+| `PatchKpp.c/h` | PatchGuard bypass (RET at KiFilterFiberContext + ExpLicenseWatchInitWorker) |
+| `PatternScan.c/h` | Wildcard byte pattern scanner |
+| `PeUtils.c/h` | PE32+ parsing utilities |
+| `DioProcessEfi.inf` | EDK2 module definition |
+| `DioProcessEfi.dsc` | EDK2 platform description |
+
+**Build (requires EDK2 toolchain):**
+```batch
+cd efi
+build -a X64 -t VS2022 -p DioProcessEfi/DioProcessEfi.dsc -b RELEASE
+```
+
+**DSE bypass strategy:** Scan winload.efi .text section for `MOV [rip+imm32], ecx` patterns that initialize `g_CiOptions`, NOP out the 6-byte instruction to leave g_CiOptions at 0.
+
+**KPP bypass strategy:** Scan ntoskrnl.exe .text section for `KiFilterFiberContext` and `ExpLicenseWatchInitWorker` function prologues, patch with `RET (0xC3)` to prevent PatchGuard initialization.
+
+### UI: UEFI Tab
+
+Access via "UEFI Bootkit" tab (marked with purple "EFI" badge). Three sections:
+1. **Boot Patches** — Toggle DSE/KPP bypass, save to NVRAM
+2. **EFI Driver Installation** — Browse .efi binary, install/remove from ESP
+3. **System Information** — Firmware type, Secure Boot status, test signing mode
+
+All controls disabled when system uses Legacy BIOS. Secure Boot warning shown when enabled.
 
 ## System Events - Experimental (callback crate)
 

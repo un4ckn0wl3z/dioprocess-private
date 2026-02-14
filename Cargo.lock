@@ -5135,6 +5135,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "uefi-manager"
+version = "2.3.2"
+dependencies = [
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "ui"
 version = "2.3.2"
 dependencies = [
@@ -5149,6 +5156,7 @@ dependencies = [
  "rusqlite",
  "service",
  "tokio",
+ "uefi-manager",
  "ureq",
  "zip",
 ]

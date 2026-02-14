@@ -11,6 +11,7 @@ network = { path = "../network" }
 service = { path = "../service" }
 misc = { path = "../misc" }
 callback = { path = "../callback" }
+uefi-manager = { path = "../uefi" }
 arboard = "3"
 rfd = "0.15"
 rusqlite = { version = "0.31", features = ["bundled"] }

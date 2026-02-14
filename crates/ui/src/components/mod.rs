@@ -21,6 +21,7 @@ mod shellcode_inject_window;
 mod thread_window;
 mod threadless_inject_window;
 mod token_thief_window;
+mod uefi_tab;
 mod utilities_tab;
 
 pub use app::{App, Layout};
@@ -44,4 +45,5 @@ pub use shellcode_inject_window::ShellcodeInjectWindow;
 pub use thread_window::ThreadWindow;
 pub use threadless_inject_window::ThreadlessInjectWindow;
 pub use token_thief_window::TokenThiefWindow;
+pub use uefi_tab::UefiTab;
 pub use utilities_tab::UtilitiesTab;
