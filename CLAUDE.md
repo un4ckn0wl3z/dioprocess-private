@@ -74,7 +74,7 @@ crates/
 ├── ui/            # Dioxus components, routing, state, styles, config
 │   └── src/
 │       ├── components/
-│       │   ├── app.rs            # Main app + router layout + theme selector
+│       │   ├── app.rs            # Main app + router layout + theme selector + driver/EFI install buttons + CLI flag guards
 │       │   ├── process_tab.rs    # Process monitoring tab
 │       │   ├── network_tab.rs    # Network connections tab
 │       │   ├── service_tab.rs    # Service management tab
@@ -98,11 +98,11 @@ crates/
 │       │   ├── kernel_enumeration/
 │       │   │   ├── mod.rs               # Kernel enumeration sub-tabs
 │       │   │   └── hypervisor.rs        # Hypervisor tab (Ring -1) - standalone top-level tab
-│       │   ├── uefi_tab.rs             # UEFI Bootkit management tab
+│       │   ├── uefi_tab.rs             # UEFI Bootkit management tab (boot patches, debug log, system info — EFI install moved to title bar)
 │       │   └── callback_tab.rs          # System Events tab (Experimental)
 │       ├── config.rs             # Theme enum, AppConfig, SQLite config storage
 │       ├── routes.rs             # Tab routing definitions
-│       ├── state.rs              # Global signal state types
+│       ├── state.rs              # Global signal state types + CLI flag statics (DEBUG_MODE, ALLDRV_MODE)
 │       ├── helpers.rs            # Clipboard utilities
 │       └── styles.rs             # CSS themes (Aura Glow, Cyber) with CSS variables
 └── dioprocess/    # Binary entry point, window config, manifest embedding
@@ -172,6 +172,26 @@ cargo build --release    # Release build
 ```
 
 The binary opens a 1100x700 borderless window with custom title bar and disabled context menu.
+
+## CLI flags
+
+| Flag | Description |
+|------|-------------|
+| `-debug` / `--debug` | Enables "Browse Local File" button in EFI install warning modal (install `.efi` from local disk instead of downloading from GitHub) |
+| `-alldrv` / `--alldrv` | Enables all 3 driver installation methods (Signed, KDU, KDMapper) in the driver install modal. Without this flag, only the signed driver method is available (no method selector shown) |
+
+**Implementation:**
+- Flags parsed in `crates/dioprocess/src/main.rs` before `dioxus::LaunchBuilder::desktop().launch(App)`
+- Stored in `AtomicBool` statics in `crates/ui/src/state.rs`: `DEBUG_MODE`, `ALLDRV_MODE`
+- Accessed via `is_debug_mode()` and `is_alldrv_mode()` functions
+- Values read once per render cycle as plain `let` bindings before `rsx!` block in `app.rs`
+
+```bash
+dioprocess.exe                    # Normal: signed driver only, EFI from GitHub
+dioprocess.exe -debug             # + local EFI file browse
+dioprocess.exe -alldrv            # + KDU/KDMapper driver methods
+dioprocess.exe -debug -alldrv     # Both enabled
+```
 
 ## Theme system
 
@@ -1257,8 +1277,10 @@ build -a X64 -t VS2022 -p DioProcessEfi/DioProcessEfi.dsc -b RELEASE
 
 Access via "UEFI Bootkit" tab (marked with purple "EFI" badge). Three sections:
 1. **Boot Patches** — Toggle DSE/KPP bypass, save to NVRAM
-2. **EFI Driver Installation** — Browse .efi binary, install/remove from ESP
+2. **Boot Debug Log** — Read/clear UEFI debug log from ESP
 3. **System Information** — Firmware type, Secure Boot status, test signing mode
+
+**Note:** EFI driver installation/removal is handled from the **title bar** "Install EFI" / "Uninstall EFI" buttons (not from this tab). The title bar downloads the EFI binary from the private GitHub repo; with `-debug` flag, a "Browse Local File" option is also available.
 
 All controls disabled when system uses Legacy BIOS. Secure Boot warning shown when enabled.
 

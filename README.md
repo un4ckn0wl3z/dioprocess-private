@@ -386,11 +386,16 @@ Real-time kernel event capture via WDM driver with 17 event types:
 ## UI & Interaction Highlights
 
 - Borderless window with custom title bar
+- **Title bar actions:**
+  - **Install/Uninstall Driver** — Download and install the kernel driver (signed method by default; KDU/KDMapper available with `-alldrv` flag)
+  - **Install/Uninstall EFI** — Download and install the UEFI bootkit EFI binary to ESP (with danger warning modal; local file browse available with `-debug` flag)
+  - **Theme selector** — Switch themes from dropdown
+  - **License key management** — Activate/revoke license for private repo access
 - **Theme System** — Two themes selectable from title bar dropdown:
   - **Aura Glow** (default) — Dark background with purple/violet accents and glowing white text
   - **Cyber** — Original cyan/teal accent theme
   - Theme preference persisted in SQLite (`%LOCALAPPDATA%\DioProcess\config.db`)
-- Tabs: **Processes** · **Network** · **Services** · **Usermode Utilities** · **Kernel Enumeration** · **Hypervisor** <sup style="color:red">Ring -1</sup> · **System Events**
+- Tabs: **Processes** · **Network** · **Services** · **Usermode Utilities** · **Kernel Enumeration** · **Hypervisor** <sup style="color:red">Ring -1</sup> · **UEFI Bootkit** · **System Events**
 - **Tree view** in Processes tab (DFS traversal, box-drawing connectors ├ │ └ ─, ancestor-inclusive search)
 - Modal inspectors: Threads · Handles · Modules · Memory · Performance graphs · String Scan
 - Real-time per-process CPU/memory graphs (60-second rolling history, SVG + fill)
@@ -418,6 +423,25 @@ cargo run
 cargo build --release
 .\target\release\dioprocess.exe
 ```
+
+## CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `-debug` / `--debug` | Enables local file browsing for EFI installation (bypass GitHub download) |
+| `-alldrv` / `--alldrv` | Enables all driver installation methods (KDU, KDMapper) in addition to the default signed driver |
+
+```bash
+# Normal launch — signed driver install only, EFI download from GitHub
+.\dioprocess.exe
+
+# Enable local EFI file install + all driver methods
+.\dioprocess.exe -debug -alldrv
+```
+
+**Without flags:** Driver install uses signed driver only (no method selection). EFI install downloads from private GitHub repo.
+**With `-alldrv`:** Driver install modal shows 3 methods — Signed (recommended), KDU, and KDMapper.
+**With `-debug`:** EFI install warning modal adds a "Browse Local File" button to install from a local `.efi` binary.
 
 ## Key Dependencies
 
