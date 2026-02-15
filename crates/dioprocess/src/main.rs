@@ -25,6 +25,12 @@ fn random_title() -> String {
 }
 
 fn main() {
+    // Check for -debug flag
+    let args: Vec<String> = env::args().collect();
+    if args.iter().any(|a| a == "-debug" || a == "--debug") {
+        ui::set_debug_mode(true);
+    }
+
     let user_data_dir = env::var("LOCALAPPDATA").expect("env var LOCALAPPDATA not found");
     dioxus::LaunchBuilder::desktop()
         .with_cfg(

@@ -28,12 +28,9 @@ pub fn UefiTab() -> Element {
     let mut firmware_info = use_signal(|| SystemFirmwareInfo::default());
     let mut status_message = use_signal(String::new);
     let mut is_error = use_signal(|| false);
-    let mut efi_binary_path = use_signal(String::new);
-    let mut installing = use_signal(|| false);
     let mut saving = use_signal(|| false);
     let mut debug_log = use_signal(|| Option::<String>::None);
     let mut reading_log = use_signal(|| false);
-    let mut show_install_warning = use_signal(|| false);
 
     // Refresh all state
     let mut refresh = move || {
@@ -225,201 +222,11 @@ pub fn UefiTab() -> Element {
                     }
                 }
 
-                // EFI Driver Installation Section
-                div {
-                    class: "controls",
-                    style: "flex-direction: column; align-items: stretch; gap: 16px;",
-
-                    // Section header
+                // Secure Boot warning
+                if fw.secure_boot {
                     div {
-                        style: "display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border-secondary); padding-bottom: 8px;",
-                        span { class: "control-label", style: "font-size: 14px; font-weight: bold;", "EFI Driver Installation" }
-                        span {
-                            class: if installed { "driver-status driver-status-loaded" } else { "driver-status driver-status-not-loaded" },
-                            if installed { "Installed" } else { "Not Installed" }
-                        }
-                    }
-
-                    // EFI binary path selector
-                    div {
-                        style: "display: flex; align-items: center; gap: 10px;",
-                        span { style: "color: var(--text-secondary); min-width: 100px;", "EFI Binary:" }
-
-                        input {
-                            class: "search-input",
-                            r#type: "text",
-                            placeholder: "Path to DioProcessEfi.efi...",
-                            value: "{efi_binary_path}",
-                            readonly: true,
-                            style: "flex: 1; font-size: 11px;",
-                        }
-
-                        button {
-                            class: "btn btn-secondary",
-                            disabled: *installing.read(),
-                            onclick: move |_| {
-                                spawn(async move {
-                                    let file = rfd::AsyncFileDialog::new()
-                                        .add_filter("EFI Binary", &["efi"])
-                                        .add_filter("All files", &["*"])
-                                        .set_title("Select DioProcessEfi.efi")
-                                        .pick_file()
-                                        .await;
-
-                                    if let Some(f) = file {
-                                        efi_binary_path.set(f.path().to_string_lossy().to_string());
-                                    }
-                                });
-                            },
-                            "Browse"
-                        }
-                    }
-
-                    // Install / Remove buttons
-                    div {
-                        style: "display: flex; align-items: center; gap: 10px;",
-
-                        button {
-                            class: "btn btn-primary",
-                            disabled: *installing.read() || efi_binary_path.read().is_empty() || installed,
-                            onclick: move |_| {
-                                show_install_warning.set(true);
-                            },
-                            if *installing.read() { "Installing..." } else { "Install to ESP" }
-                        }
-
-                        button {
-                            class: "btn btn-danger",
-                            disabled: *installing.read() || !installed,
-                            onclick: move |_| {
-                                installing.set(true);
-                                spawn(async move {
-                                    let result = tokio::task::spawn_blocking(|| {
-                                        uefi_manager::remove_efi_driver()
-                                    }).await;
-
-                                    match result {
-                                        Ok(Ok(())) => {
-                                            status_message.set("EFI driver removed from ESP".to_string());
-                                            is_error.set(false);
-                                            efi_installed.set(false);
-                                        }
-                                        Ok(Err(e)) => {
-                                            status_message.set(format!("Remove failed: {}", e));
-                                            is_error.set(true);
-                                        }
-                                        Err(e) => {
-                                            status_message.set(format!("Task error: {}", e));
-                                            is_error.set(true);
-                                        }
-                                    }
-                                    installing.set(false);
-
-                                    spawn(async move {
-                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                        status_message.set(String::new());
-                                    });
-                                });
-                            },
-                            if *installing.read() { "Removing..." } else { "Remove from ESP" }
-                        }
-
-                        button {
-                            class: "btn btn-secondary",
-                            onclick: move |_| refresh(),
-                            "Refresh"
-                        }
-                    }
-
-                    // Install warning confirmation
-                    if *show_install_warning.read() {
-                        div {
-                            style: "background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px;",
-                            onmounted: move |e| {
-                                let _ = e.scroll_to(ScrollBehavior::Smooth);
-                            },
-
-                            div {
-                                style: "display: flex; align-items: center; gap: 8px;",
-                                span { style: "font-size: 20px;", "!!" }
-                                span { style: "color: #ef4444; font-size: 15px; font-weight: bold;", "WARNING: Dangerous Operation" }
-                            }
-
-                            div {
-                                style: "color: #fbbf24; font-size: 13px; line-height: 1.6;",
-                                "Installing a UEFI bootkit modifies your system's boot chain at the firmware level. "
-                                "This is an extremely dangerous operation that can:"
-                            }
-
-                            ul {
-                                style: "color: #fca5a5; font-size: 12px; margin: 0; padding-left: 20px; line-height: 1.8;",
-                                li { "Render your system completely unbootable (brick your PC)" }
-                                li { "Cause infinite boot loops requiring BIOS recovery or OS reinstallation" }
-                                li { "Corrupt the EFI System Partition (ESP) and damage the boot configuration" }
-                                li { "Trigger BitLocker recovery if enabled, potentially causing data loss" }
-                                li { "Permanently damage firmware on some systems" }
-                            }
-
-                            div {
-                                style: "color: #fbbf24; font-size: 12px; font-weight: bold;",
-                                "Only proceed if you fully understand the risks and are using a test system or virtual machine. "
-                                "You are solely responsible for any damage to your system."
-                            }
-
-                            div {
-                                style: "display: flex; align-items: center; gap: 10px; margin-top: 4px;",
-
-                                button {
-                                    class: "btn btn-danger",
-                                    disabled: *installing.read(),
-                                    onclick: move |_| {
-                                        show_install_warning.set(false);
-                                        let path = efi_binary_path.read().clone();
-                                        installing.set(true);
-                                        spawn(async move {
-                                            let result = tokio::task::spawn_blocking(move || {
-                                                uefi_manager::install_efi_driver(std::path::Path::new(&path))
-                                            }).await;
-
-                                            match result {
-                                                Ok(Ok(())) => {
-                                                    status_message.set("EFI driver installed to ESP successfully".to_string());
-                                                    is_error.set(false);
-                                                    efi_installed.set(true);
-                                                }
-                                                Ok(Err(e)) => {
-                                                    status_message.set(format!("Install failed: {}", e));
-                                                    is_error.set(true);
-                                                }
-                                                Err(e) => {
-                                                    status_message.set(format!("Task error: {}", e));
-                                                    is_error.set(true);
-                                                }
-                                            }
-                                            installing.set(false);
-
-                                            spawn(async move {
-                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                status_message.set(String::new());
-                                            });
-                                        });
-                                    },
-                                    "I Understand the Risks - Install Anyway"
-                                }
-
-                                button {
-                                    class: "btn btn-secondary",
-                                    onclick: move |_| {
-                                        show_install_warning.set(false);
-                                    },
-                                    "Cancel"
-                                }
-                            }
-                        }
-                    }
-
-                    // Secure Boot warning
-                    if fw.secure_boot {
+                        class: "controls",
+                        style: "flex-direction: column; align-items: stretch; gap: 12px;",
                         div {
                             style: "background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; border-radius: 5px; padding: 12px;",
                             span {

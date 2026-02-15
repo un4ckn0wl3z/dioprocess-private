@@ -1,6 +1,18 @@
 //! State types and enums for the UI
 
 use dioxus::prelude::*;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Debug mode flag — set via `-debug` CLI flag, enables local file install for EFI
+static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_debug_mode(enabled: bool) {
+    DEBUG_MODE.store(enabled, Ordering::Relaxed);
+}
+
+pub fn is_debug_mode() -> bool {
+    DEBUG_MODE.load(Ordering::Relaxed)
+}
 
 /// Thread window state - stores PID and process name to open in new window
 pub static THREAD_WINDOW_STATE: GlobalSignal<Option<(u32, String)>> = Signal::global(|| None);

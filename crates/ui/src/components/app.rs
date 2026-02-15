@@ -4,8 +4,10 @@ use dioxus::prelude::*;
 use process::{format_uptime, get_system_stats};
 use callback::is_driver_loaded;
 use std::process::Command;
+use uefi_manager::{install_efi_driver, remove_efi_driver, is_efi_installed};
 
 use crate::config::{delete_pat, has_pat, load_pat, load_theme, save_pat, save_theme, Theme};
+use crate::state::is_debug_mode;
 use crate::routes::Route;
 use crate::styles::get_theme_css;
 
@@ -32,6 +34,9 @@ pub fn Layout() -> Element {
     let mut show_install_warning = use_signal(|| false);
     let mut license_validated = use_signal(|| false);
     let mut install_method = use_signal(|| "signed".to_string()); // "kdu", "kdmapper", "signed"
+    let mut show_efi_install_warning = use_signal(|| false);
+    let mut efi_installing = use_signal(|| false);
+    let mut efi_installed = use_signal(|| is_efi_installed().unwrap_or(false));
     let route: Route = use_route();
 
     // Validate license on startup
@@ -93,6 +98,7 @@ pub fn Layout() -> Element {
     let stats = system_stats.read().clone();
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     let theme_css = get_theme_css(*current_theme.read());
+    let debug_mode = is_debug_mode();
 
     // Determine active tab
     let is_process_tab = matches!(route, Route::ProcessTab {});
@@ -215,6 +221,58 @@ pub fn Layout() -> Element {
                                 "Uninstalling..."
                             } else {
                                 "Uninstall Driver"
+                            }
+                        }
+                    }
+
+                    // EFI Install/Uninstall Button
+                    if !*efi_installed.read() {
+                        button {
+                            class: if *efi_installing.read() { "driver-install-btn installing" } else { "driver-install-btn flashing" },
+                            disabled: *efi_installing.read(),
+                            onclick: move |_| {
+                                show_efi_install_warning.set(true);
+                            },
+                            if *efi_installing.read() {
+                                "Installing EFI..."
+                            } else {
+                                "Install EFI"
+                            }
+                        }
+                    } else {
+                        button {
+                            class: if *efi_installing.read() { "driver-uninstall-btn installing" } else { "driver-uninstall-btn" },
+                            disabled: *efi_installing.read(),
+                            onclick: move |_| {
+                                efi_installing.set(true);
+                                install_status.set(String::new());
+                                spawn(async move {
+                                    let result = tokio::task::spawn_blocking(move || {
+                                        remove_efi_driver()
+                                    }).await;
+
+                                    match result {
+                                        Ok(Ok(())) => {
+                                            install_status.set("EFI uninstalled!".to_string());
+                                            efi_installed.set(false);
+                                        }
+                                        Ok(Err(e)) => {
+                                            install_status.set(format!("EFI uninstall failed: {}", e));
+                                        }
+                                        Err(_) => {
+                                            install_status.set("EFI uninstall failed".to_string());
+                                        }
+                                    }
+                                    efi_installing.set(false);
+
+                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                    install_status.set(String::new());
+                                });
+                            },
+                            if *efi_installing.read() {
+                                "Uninstalling EFI..."
+                            } else {
+                                "Uninstall EFI"
                             }
                         }
                     }
@@ -613,6 +671,305 @@ pub fn Layout() -> Element {
                                             });
                                         },
                                         "Install Driver"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // EFI Install Warning Modal
+                if *show_efi_install_warning.read() {
+                    div {
+                        class: "about-modal-overlay",
+                        onclick: move |_| show_efi_install_warning.set(false),
+
+                        div {
+                            class: "about-modal",
+                            style: "max-width: 550px;",
+                            onclick: |e| e.stop_propagation(),
+
+                            div {
+                                class: "about-modal-header",
+
+                                h2 {
+                                    class: "about-modal-title",
+                                    "EFI Bootkit Installation"
+                                }
+
+                                button {
+                                    class: "about-modal-close",
+                                    onclick: move |_| show_efi_install_warning.set(false),
+                                    "✕"
+                                }
+                            }
+
+                            div {
+                                style: "padding: 20px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; max-height: calc(80vh - 70px);",
+
+                                div {
+                                    style: "background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; border-radius: 5px; padding: 15px;",
+                                    div {
+                                        style: "color: #ef4444; font-weight: bold; font-size: 14px; margin-bottom: 10px;",
+                                        "⚠️ DANGEROUS OPERATION - READ CAREFULLY"
+                                    }
+                                    div {
+                                        style: "color: #fca5a5; font-size: 13px; margin-bottom: 10px;",
+                                        "Installing the EFI bootkit modifies your system's boot chain. This can cause:"
+                                    }
+                                    ul {
+                                        style: "color: #fca5a5; margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.8;",
+                                        li { "System may become completely unbootable" }
+                                        li { "Infinite boot loops requiring recovery media" }
+                                        li { "Corrupt EFI System Partition" }
+                                        li { "BitLocker recovery trigger (all encrypted drives locked)" }
+                                        li { "Permanent firmware damage in rare cases" }
+                                    }
+                                }
+
+                                div {
+                                    style: "background: rgba(251, 191, 36, 0.15); border: 1px solid #fbbf24; border-radius: 5px; padding: 12px;",
+                                    span {
+                                        style: "color: #fbbf24; font-size: 13px;",
+                                        "⚠️ Only proceed on test/VM systems. You are solely responsible for any damage."
+                                    }
+                                }
+
+                                // Debug mode: local file install option
+                                if debug_mode {
+                                    div {
+                                        style: "background: rgba(139, 92, 246, 0.15); border: 1px solid #8b5cf6; border-radius: 5px; padding: 12px;",
+                                        span {
+                                            style: "color: #c4b5fd; font-size: 13px;",
+                                            "Debug mode: You can install from a local .efi file."
+                                        }
+                                    }
+                                }
+
+                                div {
+                                    style: "display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px;",
+
+                                    button {
+                                        class: "btn btn-secondary",
+                                        onclick: move |_| show_efi_install_warning.set(false),
+                                        "Cancel"
+                                    }
+
+                                    // Debug mode: browse local .efi file
+                                    if debug_mode {
+                                        button {
+                                            class: "btn btn-primary",
+                                            style: "background: #7c3aed; border-color: #7c3aed;",
+                                            onclick: move |_| {
+                                                show_efi_install_warning.set(false);
+                                                efi_installing.set(true);
+                                                install_status.set(String::new());
+                                                spawn(async move {
+                                                    let file_dialog = rfd::AsyncFileDialog::new()
+                                                        .set_title("Select EFI Binary")
+                                                        .add_filter("EFI Binary", &["efi"])
+                                                        .pick_file()
+                                                        .await;
+
+                                                    let picked_path = match file_dialog {
+                                                        Some(f) => f.path().to_path_buf(),
+                                                        None => {
+                                                            efi_installing.set(false);
+                                                            return;
+                                                        }
+                                                    };
+
+                                                    let result = tokio::task::spawn_blocking(move || {
+                                                        match install_efi_driver(&picked_path) {
+                                                            Ok(()) => Ok("EFI installed (local)!".to_string()),
+                                                            Err(e) => Err(format!("EFI install failed: {}", e)),
+                                                        }
+                                                    }).await;
+
+                                                    match result {
+                                                        Ok(Ok(msg)) => {
+                                                            install_status.set(msg);
+                                                            efi_installed.set(true);
+                                                        }
+                                                        Ok(Err(e)) => {
+                                                            install_status.set(e);
+                                                        }
+                                                        Err(_) => {
+                                                            install_status.set("Error: E2000".to_string());
+                                                        }
+                                                    }
+                                                    efi_installing.set(false);
+
+                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    install_status.set(String::new());
+                                                });
+                                            },
+                                            "Browse Local File"
+                                        }
+                                    }
+
+                                    button {
+                                        class: "btn btn-primary",
+                                        style: "background: #dc2626; border-color: #dc2626;",
+                                        onclick: move |_| {
+                                            show_efi_install_warning.set(false);
+
+                                            // Check if license key is configured
+                                            if !has_pat() {
+                                                show_license_modal.set(true);
+                                                return;
+                                            }
+
+                                            efi_installing.set(true);
+                                            install_status.set(String::new());
+                                            spawn(async move {
+                                                let result = tokio::task::spawn_blocking(move || {
+                                                    let pat = match load_pat() {
+                                                        Some(p) => p,
+                                                        None => return Err("Error: E2001".to_string()),
+                                                    };
+
+                                                    let appdata = match std::env::var("LOCALAPPDATA") {
+                                                        Ok(p) => std::path::PathBuf::from(p),
+                                                        Err(_) => return Err("Error: E2002".to_string()),
+                                                    };
+                                                    let dioprocess_dir = appdata.join("DioProcess");
+                                                    let zip_path = dioprocess_dir.join("dpdrv-efi.zip");
+
+                                                    let _ = std::fs::create_dir_all(&dioprocess_dir);
+
+                                                    // Clean up old files
+                                                    let _ = std::fs::remove_file(&zip_path);
+                                                    if let Ok(entries) = std::fs::read_dir(&dioprocess_dir) {
+                                                        for entry in entries.flatten() {
+                                                            let name = entry.file_name();
+                                                            let name_str = name.to_string_lossy();
+                                                            if name_str.starts_with("un4ckn0wl3z-dpdrv-prv-") {
+                                                                let _ = std::fs::remove_dir_all(entry.path());
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Download from GitHub
+                                                    let zip_url = "https://api.github.com/repos/un4ckn0wl3z/dpdrv-prv/zipball/main";
+
+                                                    let response = match ureq::get(zip_url)
+                                                        .set("Authorization", &format!("Bearer {}", pat))
+                                                        .set("User-Agent", "DioProcess")
+                                                        .set("Accept", "application/vnd.github+json")
+                                                        .call()
+                                                    {
+                                                        Ok(r) => r,
+                                                        Err(_) => return Err("Error: E2003".to_string()),
+                                                    };
+
+                                                    // Write zip
+                                                    let mut file = match std::fs::File::create(&zip_path) {
+                                                        Ok(f) => f,
+                                                        Err(_) => return Err("Error: E2004".to_string()),
+                                                    };
+
+                                                    if let Err(_) = std::io::copy(&mut response.into_reader(), &mut file) {
+                                                        return Err("Error: E2004".to_string());
+                                                    }
+
+                                                    if !zip_path.exists() {
+                                                        return Err("Error: E2003".to_string());
+                                                    }
+
+                                                    // Extract zip
+                                                    let zip_file = match std::fs::File::open(&zip_path) {
+                                                        Ok(f) => f,
+                                                        Err(_) => return Err("Error: E2005".to_string()),
+                                                    };
+
+                                                    let mut archive = match zip::ZipArchive::new(zip_file) {
+                                                        Ok(a) => a,
+                                                        Err(_) => return Err("Error: E2005".to_string()),
+                                                    };
+
+                                                    for i in 0..archive.len() {
+                                                        let mut file = match archive.by_index(i) {
+                                                            Ok(f) => f,
+                                                            Err(_) => continue,
+                                                        };
+
+                                                        let outpath = match file.enclosed_name() {
+                                                            Some(p) => dioprocess_dir.join(p),
+                                                            None => continue,
+                                                        };
+
+                                                        if file.name().ends_with('/') {
+                                                            let _ = std::fs::create_dir_all(&outpath);
+                                                        } else {
+                                                            if let Some(parent) = outpath.parent() {
+                                                                let _ = std::fs::create_dir_all(parent);
+                                                            }
+                                                            if let Ok(mut outfile) = std::fs::File::create(&outpath) {
+                                                                let _ = std::io::copy(&mut file, &mut outfile);
+                                                            }
+                                                        }
+                                                    }
+
+                                                    let _ = std::fs::remove_file(&zip_path);
+
+                                                    // Locate extracted directory
+                                                    let extract_dir = match std::fs::read_dir(&dioprocess_dir) {
+                                                        Ok(entries) => {
+                                                            let mut found = None;
+                                                            for entry in entries.flatten() {
+                                                                let name = entry.file_name();
+                                                                let name_str = name.to_string_lossy();
+                                                                if name_str.starts_with("un4ckn0wl3z-dpdrv-prv-") && entry.path().is_dir() {
+                                                                    found = Some(entry.path());
+                                                                    break;
+                                                                }
+                                                            }
+                                                            match found {
+                                                                Some(p) => p,
+                                                                None => return Err("Error: E2005".to_string()),
+                                                            }
+                                                        }
+                                                        Err(_) => return Err("Error: E2005".to_string()),
+                                                    };
+
+                                                    // Find DioProcessEfi.efi in root of extracted dir
+                                                    let efi_path = extract_dir.join("DioProcessEfi.efi");
+                                                    if !efi_path.exists() {
+                                                        let _ = std::fs::remove_dir_all(&extract_dir);
+                                                        return Err("Error: E2006 (EFI binary not found)".to_string());
+                                                    }
+
+                                                    // Install to ESP
+                                                    let install_result = install_efi_driver(&efi_path);
+
+                                                    let _ = std::fs::remove_dir_all(&extract_dir);
+
+                                                    match install_result {
+                                                        Ok(()) => Ok("EFI installed!".to_string()),
+                                                        Err(e) => Err(format!("EFI install failed: {}", e)),
+                                                    }
+                                                }).await;
+
+                                                match result {
+                                                    Ok(Ok(msg)) => {
+                                                        install_status.set(msg);
+                                                        efi_installed.set(true);
+                                                    }
+                                                    Ok(Err(e)) => {
+                                                        install_status.set(e);
+                                                    }
+                                                    Err(_) => {
+                                                        install_status.set("Error: E2000".to_string());
+                                                    }
+                                                }
+                                                efi_installing.set(false);
+
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                install_status.set(String::new());
+                                            });
+                                        },
+                                        "I Understand the Risks - Install"
                                     }
                                 }
                             }
