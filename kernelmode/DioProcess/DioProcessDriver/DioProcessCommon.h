@@ -817,6 +817,56 @@ struct PhysReadVmResponse
 	// Followed by BytesRead bytes of data in the output buffer
 };
 
+// ============== Usermode EPT Hook IOCTLs ==============
+// EPT split-page hooks on usermode process pages:
+// Read/write access sees original bytes (passes integrity checks)
+// Execute access routes to patched bytes (custom behavior)
+
+#define IOCTL_DIOPROCESS_EPT_HOOK_INSTALL \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8B0, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_EPT_HOOK_REMOVE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8B1, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_EPT_HOOK_LIST \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8B2, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// ============== Usermode EPT Hook Structures ==============
+
+struct EptHookInstallRequest
+{
+	ULONG ProcessId;
+	ULONG64 TargetVirtualAddress;
+	ULONG PatchSize;
+	UCHAR PatchBytes[256];  // Max 256 bytes of patch data
+};
+
+struct EptHookInstallResponse
+{
+	ULONG HookIndex;
+	BOOLEAN Success;
+};
+
+struct EptHookRemoveRequest
+{
+	ULONG HookIndex;
+};
+
+struct EptHookListEntry
+{
+	ULONG ProcessId;
+	ULONG64 TargetVirtualAddress;
+	ULONG PatchSize;
+	ULONG HookIndex;
+	BOOLEAN Active;
+};
+
+#define MAX_EPT_HOOK_LIST_ENTRIES 32
+
+struct EptHookListResponse
+{
+	ULONG Count;
+	EptHookListEntry Entries[MAX_EPT_HOOK_LIST_ENTRIES];
+};
+
 // ============== NSI Port Hiding IOCTLs ==============
 // Hide TCP connections by port via NSI (Network Store Interface) hook
 

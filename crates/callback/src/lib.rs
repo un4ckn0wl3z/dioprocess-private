@@ -11,6 +11,7 @@
 
 mod driver;
 mod early_injection;
+mod ept_hook;
 mod error;
 mod filehide;
 mod hypervisor;
@@ -42,6 +43,7 @@ pub use hypervisor::{
     hv_start, hv_stop, hv_unhide_driver, hv_unprotect_process, HvInjectDllResult, HvInjectResult,
     HvStatus,
 };
+pub use ept_hook::{install_ept_hook, list_ept_hooks, remove_ept_hook, EptHookInfo};
 pub use early_injection::{
     arm_early_injection, disarm_early_injection, get_early_injection_status,
     EarlyInjectionMethod, EarlyInjectionStatus,
@@ -55,8 +57,9 @@ pub use physical_memory::{
 };
 pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
 pub use scanner::{
-    first_scan, next_scan, parse_scan_value, phys_read_virtual_memory, write_scan_value,
-    format_bytes_as_value, ScanDataType, ScanRegion, ScanResult, ScanType,
+    first_scan, next_scan, parse_aob_pattern, parse_scan_value, phys_read_virtual_memory,
+    write_scan_value, format_bytes_as_value, AobPattern, ScanDataType, ScanRegion, ScanResult,
+    ScanType,
 };
 pub use storage::{EventFilter, EventStorage};
 pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};

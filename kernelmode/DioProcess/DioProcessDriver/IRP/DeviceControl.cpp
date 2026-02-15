@@ -7,9 +7,15 @@
 #include "../DKOM/ProcessHide.h"
 #include "../Memory/PhysicalMemory.h"
 #include "../NSI/PortHide.h"
+#include "../EptHook/UsermodeEptHook.h"
 
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// Forward declarations for EPT Hook handlers
+NTSTATUS HandleEptHookInstall(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleEptHookRemove(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleEptHookList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 
 // ============== IOCTL Device Control Dispatcher ==============
 
@@ -291,6 +297,19 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_PORT_HIDE_LIST:
 		status = HandlePortHideList(Irp, irpSp, &info);
+		break;
+
+	// Usermode EPT Hook IOCTLs
+	case IOCTL_DIOPROCESS_EPT_HOOK_INSTALL:
+		status = HandleEptHookInstall(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_EPT_HOOK_REMOVE:
+		status = HandleEptHookRemove(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_EPT_HOOK_LIST:
+		status = HandleEptHookList(Irp, irpSp, &info);
 		break;
 
 	default:
@@ -3876,4 +3895,100 @@ NTSTATUS HandlePortHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
 	}
 
 	return status;
+}
+
+// ============== Usermode EPT Hook Handlers ==============
+
+NTSTATUS HandleEptHookInstall(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "EPT Hook install request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(EptHookInstallRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (outputLen < sizeof(EptHookInstallResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (EptHookInstallRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->PatchSize == 0 || request->PatchSize > 256)
+		return STATUS_INVALID_PARAMETER;
+
+	ULONG hookIndex = 0;
+	NTSTATUS status = UsermodeEptHook_Install(
+		request->ProcessId,
+		request->TargetVirtualAddress,
+		(PVOID)request->PatchBytes,
+		request->PatchSize,
+		&hookIndex
+	);
+
+	auto response = (EptHookInstallResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+	if (NT_SUCCESS(status))
+	{
+		response->HookIndex = hookIndex;
+		response->Success = TRUE;
+	}
+	else
+	{
+		response->HookIndex = 0;
+		response->Success = FALSE;
+	}
+
+	*info = sizeof(EptHookInstallResponse);
+	return status;
+}
+
+NTSTATUS HandleEptHookRemove(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "EPT Hook remove request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+
+	if (inputLen < sizeof(EptHookRemoveRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (EptHookRemoveRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	return UsermodeEptHook_Remove(request->HookIndex);
+}
+
+NTSTATUS HandleEptHookList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (outputLen < sizeof(EptHookListResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto response = (EptHookListResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+		return STATUS_INVALID_PARAMETER;
+
+	RtlZeroMemory(response, sizeof(EptHookListResponse));
+
+	UsermodeEptHookEntry entries[MAX_EPT_HOOK_LIST_ENTRIES] = { 0 };
+	ULONG slotIndices[MAX_EPT_HOOK_LIST_ENTRIES] = { 0 };
+	ULONG count = 0;
+
+	NTSTATUS status = UsermodeEptHook_GetList(entries, slotIndices, &count, MAX_EPT_HOOK_LIST_ENTRIES);
+	if (!NT_SUCCESS(status))
+		return status;
+
+	response->Count = count;
+	for (ULONG i = 0; i < count; i++)
+	{
+		response->Entries[i].ProcessId = entries[i].ProcessId;
+		response->Entries[i].TargetVirtualAddress = entries[i].TargetVirtualAddress;
+		response->Entries[i].PatchSize = entries[i].PatchSize;
+		response->Entries[i].HookIndex = slotIndices[i];
+		response->Entries[i].Active = TRUE;
+	}
+
+	*info = sizeof(EptHookListResponse);
+	return STATUS_SUCCESS;
 }

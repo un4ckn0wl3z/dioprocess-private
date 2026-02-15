@@ -140,6 +140,7 @@
     <ClInclude Include="DKOM\ProcessHide.h" />
     <ClInclude Include="Memory\PhysicalMemory.h" />
     <ClInclude Include="NSI\PortHide.h" />
+    <ClInclude Include="EptHook\UsermodeEptHook.h" />
     <!-- Hypervisor Headers -->
     <ClInclude Include="Hypervisor\arch.h" />
     <ClInclude Include="Hypervisor\ept.h" />
@@ -214,6 +215,11 @@
 
     <!-- Physical Memory -->
     <ClCompile Include="Memory\PhysicalMemory.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+
+    <!-- EPT Hook -->
+    <ClCompile Include="EptHook\UsermodeEptHook.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
 

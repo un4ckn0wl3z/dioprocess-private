@@ -45,6 +45,8 @@ pub enum ScanDataType {
     I64,
     F32,
     F64,
+    /// Array of Bytes — variable length hex pattern with `??` wildcards
+    AOB,
 }
 
 impl ScanDataType {
@@ -56,7 +58,13 @@ impl ScanDataType {
             ScanDataType::U64 | ScanDataType::I64 => 8,
             ScanDataType::F32 => 4,
             ScanDataType::F64 => 8,
+            ScanDataType::AOB => 1, // AOB uses target length, not fixed size
         }
+    }
+
+    /// Whether this type is AOB (variable-length pattern)
+    pub fn is_aob(&self) -> bool {
+        matches!(self, ScanDataType::AOB)
     }
 
     pub fn label(&self) -> &'static str {
@@ -71,6 +79,7 @@ impl ScanDataType {
             ScanDataType::I64 => "8 Bytes (i64)",
             ScanDataType::F32 => "Float (f32)",
             ScanDataType::F64 => "Double (f64)",
+            ScanDataType::AOB => "Array of Bytes",
         }
     }
 
@@ -86,6 +95,7 @@ impl ScanDataType {
             ScanDataType::I64,
             ScanDataType::F32,
             ScanDataType::F64,
+            ScanDataType::AOB,
         ]
     }
 }
@@ -151,6 +161,63 @@ impl ScanType {
             ScanType::Exact | ScanType::GreaterThan | ScanType::LessThan | ScanType::Between
         )
     }
+}
+
+/// Parsed AOB pattern with wildcard support
+#[derive(Debug, Clone)]
+pub struct AobPattern {
+    /// The byte values (wildcard positions are 0)
+    pub bytes: Vec<u8>,
+    /// Mask: true = must match, false = wildcard
+    pub mask: Vec<bool>,
+}
+
+/// Parse an AOB pattern string like "48 8B ?? 04" or "488B??04"
+/// Returns pattern bytes and mask (true=match, false=wildcard)
+pub fn parse_aob_pattern(input: &str) -> Result<AobPattern, String> {
+    let cleaned = input.trim();
+    if cleaned.is_empty() {
+        return Err("Empty AOB pattern".to_string());
+    }
+
+    let mut bytes = Vec::new();
+    let mut mask = Vec::new();
+
+    // Split by spaces if present, otherwise parse as continuous hex pairs
+    let parts: Vec<&str> = if cleaned.contains(' ') {
+        cleaned.split_whitespace().collect()
+    } else {
+        // Split into 2-char chunks
+        let mut chunks = Vec::new();
+        let mut i = 0;
+        while i + 1 < cleaned.len() {
+            chunks.push(&cleaned[i..i + 2]);
+            i += 2;
+        }
+        if i < cleaned.len() {
+            return Err("AOB hex string must have even number of digits".to_string());
+        }
+        chunks
+    };
+
+    for part in &parts {
+        if *part == "??" || *part == "?" {
+            bytes.push(0);
+            mask.push(false);
+        } else {
+            let hex = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")).unwrap_or(part);
+            let val = u8::from_str_radix(hex, 16)
+                .map_err(|_| format!("Invalid AOB byte: '{}'", part))?;
+            bytes.push(val);
+            mask.push(true);
+        }
+    }
+
+    if bytes.is_empty() {
+        return Err("AOB pattern is empty".to_string());
+    }
+
+    Ok(AobPattern { bytes, mask })
 }
 
 /// A single scan result entry
@@ -251,6 +318,12 @@ pub fn parse_scan_value(input: &str, data_type: ScanDataType) -> Result<Vec<u8>,
             let v: f64 = s.parse().map_err(|e| format!("Invalid f64: {}", e))?;
             Ok(v.to_le_bytes().to_vec())
         }
+        ScanDataType::AOB => {
+            // For AOB, parse_scan_value returns just the bytes (wildcards as 0x00).
+            // The actual pattern+mask is parsed via parse_aob_pattern() separately.
+            let pattern = parse_aob_pattern(s)?;
+            Ok(pattern.bytes)
+        }
     }
 }
 
@@ -316,11 +389,25 @@ pub fn format_bytes_as_value(bytes: &[u8], data_type: ScanDataType) -> String {
             let v = f64::from_le_bytes(bytes[..8].try_into().unwrap());
             format!("{:.6}", v)
         }
+        ScanDataType::AOB => {
+            // Display as hex bytes
+            bytes
+                .iter()
+                .map(|b| format!("{:02X}", b))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
     }
 }
 
 /// Compare bytes as a typed value
 fn compare_bytes(bytes: &[u8], target: &[u8], data_type: ScanDataType, scan_type: ScanType) -> bool {
+    if data_type.is_aob() {
+        // AOB comparison is handled by compare_aob() with mask — not here.
+        // This function is called for non-AOB types only.
+        return false;
+    }
+
     let size = data_type.byte_size();
     if bytes.len() < size || (scan_type.needs_value() && target.len() < size) {
         return false;
@@ -333,6 +420,19 @@ fn compare_bytes(bytes: &[u8], target: &[u8], data_type: ScanDataType, scan_type
         ScanType::UnknownInitial => true,
         _ => false, // Changed/Unchanged/Increased/Decreased handled separately
     }
+}
+
+/// Compare a byte slice against an AOB pattern with wildcard mask
+fn compare_aob(bytes: &[u8], pattern: &AobPattern) -> bool {
+    if bytes.len() < pattern.bytes.len() {
+        return false;
+    }
+    for i in 0..pattern.bytes.len() {
+        if pattern.mask[i] && bytes[i] != pattern.bytes[i] {
+            return false;
+        }
+    }
+    true
 }
 
 /// Compare bytes as previous vs current (for next scans)
@@ -380,6 +480,7 @@ fn cmp_typed(a: &[u8], b: &[u8], dt: ScanDataType) -> std::cmp::Ordering {
         ScanDataType::I64 => cmp_as!(i64),
         ScanDataType::F32 => cmp_as!(f32),
         ScanDataType::F64 => cmp_as!(f64),
+        ScanDataType::AOB => std::cmp::Ordering::Equal, // AOB doesn't support ordered comparison
     }
 }
 
@@ -459,14 +560,22 @@ const PAGE_GUARD: u32 = 0x100;
 
 /// First scan: enumerate regions via process crate, read memory via CR3 walk, find matches.
 /// Returns (results, total_bytes_scanned).
+/// For AOB scans, pass `aob_pattern` with the parsed pattern (including wildcard mask).
 pub fn first_scan(
     pid: u32,
     regions: &[ScanRegion],
     target_value: &[u8],
     data_type: ScanDataType,
     scan_type: ScanType,
+    aob_pattern: Option<&AobPattern>,
 ) -> Result<Vec<ScanResult>, CallbackError> {
-    let value_size = data_type.byte_size();
+    let is_aob = data_type.is_aob();
+    let scan_len = if is_aob {
+        aob_pattern.map(|p| p.bytes.len()).unwrap_or(1)
+    } else {
+        data_type.byte_size()
+    };
+    let alignment = if is_aob { 1 } else { scan_len };
     let mut results = Vec::new();
 
     for region in regions {
@@ -496,12 +605,21 @@ pub fn first_scan(
             };
 
             // Scan the chunk for matches
-            if data.len() >= value_size {
-                let alignment = value_size; // scan on alignment boundaries
+            if data.len() >= scan_len {
                 let mut i = 0;
-                while i + value_size <= data.len() {
-                    let slice = &data[i..i + value_size];
-                    if compare_bytes(slice, target_value, data_type, scan_type) {
+                while i + scan_len <= data.len() {
+                    let matched = if is_aob {
+                        if let Some(pattern) = aob_pattern {
+                            compare_aob(&data[i..], pattern)
+                        } else {
+                            false
+                        }
+                    } else {
+                        compare_bytes(&data[i..i + scan_len], target_value, data_type, scan_type)
+                    };
+
+                    if matched {
+                        let slice = &data[i..i + scan_len];
                         results.push(ScanResult {
                             address: va + i as u64,
                             current_bytes: slice.to_vec(),
@@ -520,14 +638,21 @@ pub fn first_scan(
 }
 
 /// Next scan: re-read only the addresses from previous results and filter.
+/// For AOB scans, pass `aob_pattern` with the parsed pattern (including wildcard mask).
 pub fn next_scan(
     pid: u32,
     previous_results: &[ScanResult],
     target_value: &[u8],
     data_type: ScanDataType,
     scan_type: ScanType,
+    aob_pattern: Option<&AobPattern>,
 ) -> Result<Vec<ScanResult>, CallbackError> {
-    let value_size = data_type.byte_size();
+    let is_aob = data_type.is_aob();
+    let value_size = if is_aob {
+        aob_pattern.map(|p| p.bytes.len()).unwrap_or(1)
+    } else {
+        data_type.byte_size()
+    };
     let mut new_results = Vec::new();
 
     // Batch nearby addresses into chunks for efficiency
@@ -563,7 +688,24 @@ pub fn next_scan(
                         let current = &data[offset..offset + value_size];
                         let prev = &previous_results[idx].current_bytes;
 
-                        if compare_prev_current(prev, current, target_value, data_type, scan_type) {
+                        let matched = if is_aob {
+                            match scan_type {
+                                ScanType::Exact => {
+                                    if let Some(pattern) = aob_pattern {
+                                        compare_aob(current, pattern)
+                                    } else {
+                                        false
+                                    }
+                                }
+                                ScanType::Changed => current != prev.as_slice(),
+                                ScanType::Unchanged => current == prev.as_slice(),
+                                _ => false, // AOB doesn't support ordered comparisons
+                            }
+                        } else {
+                            compare_prev_current(prev, current, target_value, data_type, scan_type)
+                        };
+
+                        if matched {
                             new_results.push(ScanResult {
                                 address: addr,
                                 current_bytes: current.to_vec(),

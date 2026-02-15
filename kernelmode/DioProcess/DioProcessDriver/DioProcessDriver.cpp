@@ -6,6 +6,7 @@
 #include "FileHide/FileHide.h"
 #include "DKOM/ProcessHide.h"
 #include "NSI/PortHide.h"
+#include "EptHook/UsermodeEptHook.h"
 
 #pragma comment(lib, "aux_klib.lib")
 #pragma comment(lib, "fltMgr.lib")
@@ -68,6 +69,9 @@ NTSTATUS CompleteRequest(PIRP Irp, NTSTATUS status, ULONG_PTR info)
 void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 {
 	KdPrint((DRIVER_PREFIX "Unloading driver\n"));
+
+	// Clean up usermode EPT hooks BEFORE hypervisor shutdown (needs VMCALLs)
+	UsermodeEptHook_RemoveAll();
 
 	// CRITICAL: Clean up hypervisor FIRST before anything else
 	// This must happen before callback unregistration to prevent BSOD

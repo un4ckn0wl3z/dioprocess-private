@@ -1,17 +1,19 @@
 //! Memory Scanner tab — Cheat Engine-like memory scanner via physical memory (CR3 walk)
 
 use callback::{
-    first_scan, is_driver_loaded, next_scan, parse_scan_value,
-    write_scan_value, ScanDataType, ScanRegion, ScanResult, ScanType,
+    first_scan, hv_is_running, install_ept_hook, is_driver_loaded, list_ept_hooks, next_scan,
+    parse_aob_pattern, parse_scan_value, remove_ept_hook, write_scan_value, ScanDataType,
+    ScanRegion, ScanResult, ScanType,
 };
 use dioxus::prelude::*;
 
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
-    SCANNER_DATA_TYPE_IDX, SCANNER_EDIT_VALUE, SCANNER_EDITING_IDX, SCANNER_HAS_SCANNED,
-    SCANNER_IS_ERROR, SCANNER_IS_SCANNING, SCANNER_PAGE, SCANNER_PID, SCANNER_RESULTS,
-    SCANNER_SCAN_TYPE_IDX, SCANNER_SELECTED, SCANNER_STATUS, SCANNER_VALUE, SCANNER_VALUE2,
-    SCANNER_WRITE_VALUE,
+    EPT_HOOKS_LIST, EPT_HOOK_BYTES_INPUT, EPT_HOOK_IS_ERROR, EPT_HOOK_SHOW_MODAL,
+    EPT_HOOK_STATUS, EPT_HOOK_TARGET_ADDR, SCANNER_DATA_TYPE_IDX, SCANNER_EDIT_VALUE,
+    SCANNER_EDITING_IDX, SCANNER_HAS_SCANNED, SCANNER_IS_ERROR, SCANNER_IS_SCANNING,
+    SCANNER_PAGE, SCANNER_PID, SCANNER_RESULTS, SCANNER_SCAN_TYPE_IDX, SCANNER_SELECTED,
+    SCANNER_STATUS, SCANNER_VALUE, SCANNER_VALUE2, SCANNER_WRITE_VALUE,
 };
 
 const RESULTS_PER_PAGE: usize = 500;
@@ -34,6 +36,14 @@ pub fn MemoryScannerTab() -> Element {
     let mut context_menu = use_signal(|| None::<(i32, i32, usize)>); // transient, no need to persist
     let mut editing_idx = SCANNER_EDITING_IDX.signal();
     let mut edit_value_input = SCANNER_EDIT_VALUE.signal();
+
+    // EPT Hook state
+    let mut ept_hook_bytes = EPT_HOOK_BYTES_INPUT.signal();
+    let mut ept_hook_target = EPT_HOOK_TARGET_ADDR.signal();
+    let mut ept_hook_show_modal = EPT_HOOK_SHOW_MODAL.signal();
+    let mut ept_hooks_list = EPT_HOOKS_LIST.signal();
+    let mut ept_hook_status = EPT_HOOK_STATUS.signal();
+    let mut ept_hook_is_error = EPT_HOOK_IS_ERROR.signal();
 
     let driver_loaded = is_driver_loaded();
     let scanned = *has_scanned.read();
@@ -87,6 +97,20 @@ pub fn MemoryScannerTab() -> Element {
             vec![]
         };
 
+        // Parse AOB pattern with wildcard mask if AOB type
+        let aob_pat = if dt.is_aob() && st.needs_value() {
+            match parse_aob_pattern(&val_str) {
+                Ok(p) => Some(p),
+                Err(msg) => {
+                    status_message.set(msg);
+                    is_error.set(true);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
         is_scanning.set(true);
         status_message.set("Scanning...".to_string());
         is_error.set(false);
@@ -104,7 +128,7 @@ pub fn MemoryScannerTab() -> Element {
                     })
                     .collect();
 
-                first_scan(pid, &regions, &target_bytes, dt, st)
+                first_scan(pid, &regions, &target_bytes, dt, st, aob_pat.as_ref())
             })
             .await;
 
@@ -166,6 +190,20 @@ pub fn MemoryScannerTab() -> Element {
             vec![]
         };
 
+        // Parse AOB pattern with wildcard mask if AOB type
+        let aob_pat = if dt.is_aob() && st.needs_value() {
+            match parse_aob_pattern(&val_str) {
+                Ok(p) => Some(p),
+                Err(msg) => {
+                    status_message.set(msg);
+                    is_error.set(true);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
         let prev_results = scan_results.read().clone();
 
         is_scanning.set(true);
@@ -174,7 +212,7 @@ pub fn MemoryScannerTab() -> Element {
 
         spawn(async move {
             let result = tokio::task::spawn_blocking(move || {
-                next_scan(pid, &prev_results, &target_bytes, dt, st)
+                next_scan(pid, &prev_results, &target_bytes, dt, st, aob_pat.as_ref())
             })
             .await;
 
@@ -409,7 +447,7 @@ pub fn MemoryScannerTab() -> Element {
                         input {
                             class: "handle-filter-input",
                             r#type: "text",
-                            placeholder: if current_scan_type.needs_value() { "Search value" } else { "(not needed)" },
+                            placeholder: { let p: &str = if !current_scan_type.needs_value() { "(not needed)" } else if current_data_type.is_aob() { "48 8B ?? 04 ..." } else { "Search value" }; p },
                             style: "width: 160px; font-family: 'Consolas', monospace;",
                             value: "{value_input}",
                             disabled: scanning || !current_scan_type.needs_value(),
@@ -708,6 +746,97 @@ pub fn MemoryScannerTab() -> Element {
                         }
                     }
                 }
+
+                // ============== EPT Hooks Panel ==============
+                {
+                    let hooks = ept_hooks_list.read().clone();
+                    let has_hooks = !hooks.is_empty();
+                    rsx! {
+                        if has_hooks {
+                            div { class: "controls",
+                                style: "border-left: 3px solid #dc2626; margin-top: 4px;",
+                                div { style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;",
+                                    span { style: "color: var(--text-primary); font-weight: 600; font-size: 13px;",
+                                        "Active EPT Hooks ({hooks.len()})"
+                                    }
+                                    div { style: "display: flex; gap: 8px;",
+                                        button {
+                                            class: "btn",
+                                            style: "font-size: 11px; padding: 2px 8px;",
+                                            onclick: move |_| {
+                                                if let Ok(h) = list_ept_hooks() {
+                                                    ept_hooks_list.set(h);
+                                                }
+                                            },
+                                            "Refresh"
+                                        }
+                                        button {
+                                            class: "btn",
+                                            style: "font-size: 11px; padding: 2px 8px; color: #dc2626;",
+                                            onclick: move |_| {
+                                                let current = ept_hooks_list.read().clone();
+                                                for hook in &current {
+                                                    let _ = remove_ept_hook(hook.hook_index);
+                                                }
+                                                if let Ok(h) = list_ept_hooks() {
+                                                    ept_hooks_list.set(h);
+                                                }
+                                            },
+                                            "Remove All"
+                                        }
+                                    }
+                                }
+                                table { class: "process-table",
+                                    style: "font-size: 12px;",
+                                    thead { class: "table-header",
+                                        tr {
+                                            th { class: "th", style: "width: 50px;", "#" }
+                                            th { class: "th", style: "width: 80px;", "PID" }
+                                            th { class: "th", style: "width: 180px;", "Address" }
+                                            th { class: "th", style: "width: 80px;", "Patch Size" }
+                                            th { class: "th", style: "width: 80px;", "" }
+                                        }
+                                    }
+                                    tbody {
+                                        for hook in hooks.iter() {
+                                            {
+                                                let hook_idx = hook.hook_index;
+                                                let hook_addr = hook.target_address;
+                                                let hook_pid = hook.process_id;
+                                                let hook_size = hook.patch_size;
+                                                rsx! {
+                                                    tr { class: "process-row",
+                                                        td { class: "cell", style: "width: 50px;", "{hook_idx}" }
+                                                        td { class: "cell", style: "width: 80px;", "{hook_pid}" }
+                                                        td {
+                                                            class: "cell",
+                                                            style: "width: 180px; font-family: 'Consolas', monospace; color: var(--accent-primary);",
+                                                            "0x{hook_addr:X}"
+                                                        }
+                                                        td { class: "cell", style: "width: 80px;", "{hook_size}" }
+                                                        td { class: "cell", style: "width: 80px;",
+                                                            button {
+                                                                class: "btn",
+                                                                style: "font-size: 10px; padding: 1px 6px; color: #dc2626;",
+                                                                onclick: move |_| {
+                                                                    let _ = remove_ept_hook(hook_idx);
+                                                                    if let Ok(h) = list_ept_hooks() {
+                                                                        ept_hooks_list.set(h);
+                                                                    }
+                                                                },
+                                                                "Remove"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Context menu
@@ -786,10 +915,199 @@ pub fn MemoryScannerTab() -> Element {
                                 },
                                 span { "Copy Row" }
                             }
+
+                            div { class: "context-menu-separator" }
+
+                            // Install EPT Hook
+                            button {
+                                class: "context-menu-item",
+                                disabled: !driver_loaded || !hv_is_running(),
+                                onclick: move |_| {
+                                    ept_hook_target.set(Some(addr));
+                                    ept_hook_bytes.set(String::new());
+                                    ept_hook_show_modal.set(true);
+                                    ept_hook_status.set(String::new());
+                                    ept_hook_is_error.set(false);
+                                    context_menu.set(None);
+                                },
+                                span { "Install EPT Hook" }
+                                if !hv_is_running() {
+                                    span { style: "color: var(--text-secondary); font-size: 10px; margin-left: 4px;", "(HV off)" }
+                                }
+                            }
                         }
                     }
                 }
             }
+
+            // ============== EPT Hook Install Modal ==============
+            if *ept_hook_show_modal.read() {
+                {
+                    let target_addr = ept_hook_target.read().unwrap_or(0);
+                    let hook_status = ept_hook_status.read().clone();
+                    let hook_error = *ept_hook_is_error.read();
+                    rsx! {
+                        div {
+                            class: "modal-overlay",
+                            onclick: move |_| ept_hook_show_modal.set(false),
+                            div {
+                                class: "modal-content",
+                                style: "max-width: 500px;",
+                                onclick: move |e| e.stop_propagation(),
+
+                                h3 { style: "margin: 0 0 12px 0; color: var(--text-primary);",
+                                    "Install EPT Hook"
+                                }
+
+                                div { style: "margin-bottom: 12px; color: var(--text-secondary); font-size: 12px;",
+                                    "EPT split-page hook: reads see original bytes, execution uses patched bytes."
+                                }
+
+                                // Target address (read-only)
+                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 8px;",
+                                    label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Address:" }
+                                    span {
+                                        style: "font-family: 'Consolas', monospace; color: var(--accent-primary); font-size: 13px;",
+                                        "0x{target_addr:X}"
+                                    }
+                                }
+
+                                // Hook bytes input
+                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
+                                    label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Hook bytes:" }
+                                    input {
+                                        class: "handle-filter-input",
+                                        r#type: "text",
+                                        placeholder: "e.g. 90 90 90 or C3 or 48B8... (hex)",
+                                        style: "flex: 1; font-family: 'Consolas', monospace;",
+                                        value: "{ept_hook_bytes}",
+                                        oninput: move |e| ept_hook_bytes.set(e.value()),
+                                        onkeydown: {
+                                            move |e: KeyboardEvent| {
+                                                if e.key() == Key::Escape {
+                                                    ept_hook_show_modal.set(false);
+                                                }
+                                            }
+                                        },
+                                    }
+                                }
+
+                                div { style: "color: var(--text-secondary); font-size: 11px; margin-bottom: 12px;",
+                                    "Enter replacement bytes in hex (space-separated or continuous). Max 256 bytes."
+                                }
+
+                                if !hook_status.is_empty() {
+                                    div {
+                                        class: if hook_error { "status-message status-error" } else { "status-message" },
+                                        style: "margin-bottom: 8px;",
+                                        "{hook_status}"
+                                    }
+                                }
+
+                                // Buttons
+                                div { style: "display: flex; gap: 8px; justify-content: flex-end;",
+                                    button {
+                                        class: "btn",
+                                        onclick: move |_| ept_hook_show_modal.set(false),
+                                        "Cancel"
+                                    }
+                                    button {
+                                        class: "btn btn-primary",
+                                        disabled: !driver_loaded || !hv_is_running(),
+                                        onclick: {
+                                            move |_| {
+                                                let pid_str = pid_input.read().clone();
+                                                let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+                                                if pid == 0 {
+                                                    ept_hook_status.set("Invalid PID".to_string());
+                                                    ept_hook_is_error.set(true);
+                                                    return;
+                                                }
+
+                                                let addr = ept_hook_target.read().unwrap_or(0);
+                                                if addr == 0 {
+                                                    ept_hook_status.set("Invalid address".to_string());
+                                                    ept_hook_is_error.set(true);
+                                                    return;
+                                                }
+
+                                                let hex_str = ept_hook_bytes.read().clone();
+                                                let bytes = match parse_hex_bytes(&hex_str) {
+                                                    Ok(b) => b,
+                                                    Err(msg) => {
+                                                        ept_hook_status.set(msg);
+                                                        ept_hook_is_error.set(true);
+                                                        return;
+                                                    }
+                                                };
+
+                                                if bytes.is_empty() || bytes.len() > 256 {
+                                                    ept_hook_status.set("Patch bytes must be 1-256 bytes".to_string());
+                                                    ept_hook_is_error.set(true);
+                                                    return;
+                                                }
+
+                                                match install_ept_hook(pid, addr, &bytes) {
+                                                    Ok(idx) => {
+                                                        ept_hook_status.set(format!(
+                                                            "EPT hook #{} installed at 0x{:X} ({} bytes)",
+                                                            idx, addr, bytes.len()
+                                                        ));
+                                                        ept_hook_is_error.set(false);
+                                                        // Refresh hooks list
+                                                        if let Ok(hooks) = list_ept_hooks() {
+                                                            ept_hooks_list.set(hooks);
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        ept_hook_status.set(format!("Failed: {}", e));
+                                                        ept_hook_is_error.set(true);
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        "Install"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
         }
     }
+}
+
+/// Parse a hex byte string like "90 90 90", "909090", "0x90 0x90", etc.
+fn parse_hex_bytes(input: &str) -> Result<Vec<u8>, String> {
+    let cleaned = input.trim();
+    if cleaned.is_empty() {
+        return Err("No bytes provided".to_string());
+    }
+
+    let mut bytes = Vec::new();
+
+    // Try space-separated first
+    if cleaned.contains(' ') {
+        for part in cleaned.split_whitespace() {
+            let hex = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")).unwrap_or(part);
+            let val = u8::from_str_radix(hex, 16)
+                .map_err(|_| format!("Invalid hex byte: '{}'", part))?;
+            bytes.push(val);
+        }
+    } else {
+        // Continuous hex string
+        let hex = cleaned.strip_prefix("0x").or_else(|| cleaned.strip_prefix("0X")).unwrap_or(cleaned);
+        if hex.len() % 2 != 0 {
+            return Err("Hex string must have even number of digits".to_string());
+        }
+        for i in (0..hex.len()).step_by(2) {
+            let val = u8::from_str_radix(&hex[i..i + 2], 16)
+                .map_err(|_| format!("Invalid hex at position {}: '{}'", i, &hex[i..i + 2]))?;
+            bytes.push(val);
+        }
+    }
+
+    Ok(bytes)
 }

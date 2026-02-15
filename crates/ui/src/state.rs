@@ -139,6 +139,14 @@ pub static SCANNER_WRITE_VALUE: GlobalSignal<String> = Signal::global(|| String:
 pub static SCANNER_EDITING_IDX: GlobalSignal<Option<usize>> = Signal::global(|| None);
 pub static SCANNER_EDIT_VALUE: GlobalSignal<String> = Signal::global(|| String::new());
 
+// EPT Hook state
+pub static EPT_HOOK_BYTES_INPUT: GlobalSignal<String> = Signal::global(|| String::new());
+pub static EPT_HOOK_TARGET_ADDR: GlobalSignal<Option<u64>> = Signal::global(|| None);
+pub static EPT_HOOK_SHOW_MODAL: GlobalSignal<bool> = Signal::global(|| false);
+pub static EPT_HOOKS_LIST: GlobalSignal<Vec<callback::EptHookInfo>> = Signal::global(Vec::new);
+pub static EPT_HOOK_STATUS: GlobalSignal<String> = Signal::global(|| String::new());
+pub static EPT_HOOK_IS_ERROR: GlobalSignal<bool> = Signal::global(|| false);
+
 /// Process view mode - flat list or tree hierarchy
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ProcessViewMode {
