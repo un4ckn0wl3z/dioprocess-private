@@ -2,30 +2,35 @@
 
 use callback::{
     is_driver_loaded, read_physical_memory, translate_virtual_address, write_physical_memory,
-    PageTableEntry, PageTableWalkResult,
+    PageTableEntry,
 };
 use dioxus::prelude::*;
 
 use crate::helpers::copy_to_clipboard;
+use crate::state::{
+    PHYS_MEM_EXACT_PA, PHYS_MEM_HEX_PAGE, PHYS_MEM_IS_ERROR, PHYS_MEM_PAGE_BASE,
+    PHYS_MEM_PAGE_DATA, PHYS_MEM_PID, PHYS_MEM_READ_MODE, PHYS_MEM_STATUS, PHYS_MEM_VA,
+    PHYS_MEM_WALK_RESULT, PHYS_MEM_WRITE_OFFSET, PHYS_MEM_WRITE_TYPE, PHYS_MEM_WRITE_VALUE,
+};
 
 const HEX_PAGE_SIZE: usize = 4096;
 
 /// Physical Memory tab component
 #[component]
 pub fn MemoryTranslateTab() -> Element {
-    let mut pid_input = use_signal(|| String::new());
-    let mut va_input = use_signal(|| String::new());
-    let mut walk_result = use_signal(|| None::<PageTableWalkResult>);
-    let mut physical_page_data = use_signal(Vec::<u8>::new);
-    let mut page_base_address = use_signal(|| 0u64);
-    let mut read_mode = use_signal(|| "full".to_string()); // "full" or "offset"
-    let mut exact_phys_address = use_signal(|| 0u64); // exact translated PA
-    let mut write_offset_input = use_signal(|| String::new());
-    let mut write_value_input = use_signal(|| String::new());
-    let mut write_type = use_signal(|| "hex".to_string());
-    let mut status_message = use_signal(|| String::new());
-    let mut is_error = use_signal(|| false);
-    let mut hex_page = use_signal(|| 0usize);
+    let mut pid_input = PHYS_MEM_PID.signal();
+    let mut va_input = PHYS_MEM_VA.signal();
+    let mut walk_result = PHYS_MEM_WALK_RESULT.signal();
+    let mut physical_page_data = PHYS_MEM_PAGE_DATA.signal();
+    let mut page_base_address = PHYS_MEM_PAGE_BASE.signal();
+    let mut read_mode = PHYS_MEM_READ_MODE.signal();
+    let mut exact_phys_address = PHYS_MEM_EXACT_PA.signal();
+    let mut write_offset_input = PHYS_MEM_WRITE_OFFSET.signal();
+    let mut write_value_input = PHYS_MEM_WRITE_VALUE.signal();
+    let mut write_type = PHYS_MEM_WRITE_TYPE.signal();
+    let mut status_message = PHYS_MEM_STATUS.signal();
+    let mut is_error = PHYS_MEM_IS_ERROR.signal();
+    let mut hex_page = PHYS_MEM_HEX_PAGE.signal();
 
     let driver_loaded = is_driver_loaded();
 

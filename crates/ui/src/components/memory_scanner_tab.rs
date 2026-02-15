@@ -7,27 +7,33 @@ use callback::{
 use dioxus::prelude::*;
 
 use crate::helpers::copy_to_clipboard;
+use crate::state::{
+    SCANNER_DATA_TYPE_IDX, SCANNER_EDIT_VALUE, SCANNER_EDITING_IDX, SCANNER_HAS_SCANNED,
+    SCANNER_IS_ERROR, SCANNER_IS_SCANNING, SCANNER_PAGE, SCANNER_PID, SCANNER_RESULTS,
+    SCANNER_SCAN_TYPE_IDX, SCANNER_SELECTED, SCANNER_STATUS, SCANNER_VALUE, SCANNER_VALUE2,
+    SCANNER_WRITE_VALUE,
+};
 
 const RESULTS_PER_PAGE: usize = 500;
 
 #[component]
 pub fn MemoryScannerTab() -> Element {
-    let mut pid_input = use_signal(|| String::new());
-    let mut value_input = use_signal(|| String::new());
-    let mut value2_input = use_signal(|| String::new()); // for Between
-    let mut data_type_idx = use_signal(|| 4usize); // default U32
-    let mut scan_type_idx = use_signal(|| 0usize);
-    let mut scan_results = use_signal(Vec::<ScanResult>::new);
-    let mut has_scanned = use_signal(|| false);
-    let mut is_scanning = use_signal(|| false);
-    let mut status_message = use_signal(|| String::new());
-    let mut is_error = use_signal(|| false);
-    let mut result_page = use_signal(|| 0usize);
-    let mut selected_idx = use_signal(|| None::<usize>);
-    let mut write_value_input = use_signal(|| String::new());
-    let mut context_menu = use_signal(|| None::<(i32, i32, usize)>);
-    let mut editing_idx = use_signal(|| None::<usize>);
-    let mut edit_value_input = use_signal(|| String::new());
+    let mut pid_input = SCANNER_PID.signal();
+    let mut value_input = SCANNER_VALUE.signal();
+    let mut value2_input = SCANNER_VALUE2.signal();
+    let mut data_type_idx = SCANNER_DATA_TYPE_IDX.signal();
+    let mut scan_type_idx = SCANNER_SCAN_TYPE_IDX.signal();
+    let mut scan_results = SCANNER_RESULTS.signal();
+    let mut has_scanned = SCANNER_HAS_SCANNED.signal();
+    let mut is_scanning = SCANNER_IS_SCANNING.signal();
+    let mut status_message = SCANNER_STATUS.signal();
+    let mut is_error = SCANNER_IS_ERROR.signal();
+    let mut result_page = SCANNER_PAGE.signal();
+    let mut selected_idx = SCANNER_SELECTED.signal();
+    let mut write_value_input = SCANNER_WRITE_VALUE.signal();
+    let mut context_menu = use_signal(|| None::<(i32, i32, usize)>); // transient, no need to persist
+    let mut editing_idx = SCANNER_EDITING_IDX.signal();
+    let mut edit_value_input = SCANNER_EDIT_VALUE.signal();
 
     let driver_loaded = is_driver_loaded();
     let scanned = *has_scanned.read();

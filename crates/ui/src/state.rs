@@ -77,6 +77,45 @@ pub static MINIFILTERS_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| St
 /// Drivers tab search query
 pub static DRIVERS_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
 
+// ============================================================================
+// Physical Memory Tab State - persist across tab switches
+// ============================================================================
+
+pub static PHYS_MEM_PID: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PHYS_MEM_VA: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PHYS_MEM_WALK_RESULT: GlobalSignal<Option<callback::PageTableWalkResult>> =
+    Signal::global(|| None);
+pub static PHYS_MEM_PAGE_DATA: GlobalSignal<Vec<u8>> = Signal::global(Vec::new);
+pub static PHYS_MEM_PAGE_BASE: GlobalSignal<u64> = Signal::global(|| 0);
+pub static PHYS_MEM_READ_MODE: GlobalSignal<String> = Signal::global(|| "full".to_string());
+pub static PHYS_MEM_EXACT_PA: GlobalSignal<u64> = Signal::global(|| 0);
+pub static PHYS_MEM_WRITE_OFFSET: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PHYS_MEM_WRITE_VALUE: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PHYS_MEM_WRITE_TYPE: GlobalSignal<String> = Signal::global(|| "hex".to_string());
+pub static PHYS_MEM_STATUS: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PHYS_MEM_IS_ERROR: GlobalSignal<bool> = Signal::global(|| false);
+pub static PHYS_MEM_HEX_PAGE: GlobalSignal<usize> = Signal::global(|| 0);
+
+// ============================================================================
+// Memory Scanner Tab State - persist across tab switches
+// ============================================================================
+
+pub static SCANNER_PID: GlobalSignal<String> = Signal::global(|| String::new());
+pub static SCANNER_VALUE: GlobalSignal<String> = Signal::global(|| String::new());
+pub static SCANNER_VALUE2: GlobalSignal<String> = Signal::global(|| String::new());
+pub static SCANNER_DATA_TYPE_IDX: GlobalSignal<usize> = Signal::global(|| 4);
+pub static SCANNER_SCAN_TYPE_IDX: GlobalSignal<usize> = Signal::global(|| 0);
+pub static SCANNER_RESULTS: GlobalSignal<Vec<callback::ScanResult>> = Signal::global(Vec::new);
+pub static SCANNER_HAS_SCANNED: GlobalSignal<bool> = Signal::global(|| false);
+pub static SCANNER_IS_SCANNING: GlobalSignal<bool> = Signal::global(|| false);
+pub static SCANNER_STATUS: GlobalSignal<String> = Signal::global(|| String::new());
+pub static SCANNER_IS_ERROR: GlobalSignal<bool> = Signal::global(|| false);
+pub static SCANNER_PAGE: GlobalSignal<usize> = Signal::global(|| 0);
+pub static SCANNER_SELECTED: GlobalSignal<Option<usize>> = Signal::global(|| None);
+pub static SCANNER_WRITE_VALUE: GlobalSignal<String> = Signal::global(|| String::new());
+pub static SCANNER_EDITING_IDX: GlobalSignal<Option<usize>> = Signal::global(|| None);
+pub static SCANNER_EDIT_VALUE: GlobalSignal<String> = Signal::global(|| String::new());
+
 /// Process view mode - flat list or tree hierarchy
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ProcessViewMode {

