@@ -52,6 +52,8 @@ pub fn NetworkTab() -> Element {
     let mut state_filter = use_signal(|| String::new()); // "", "listen", "established", etc.
     let mut hidden_ports = use_signal(|| Vec::<callback::HiddenPortInfo>::new());
     let mut show_hidden_panel = use_signal(|| false);
+    let mut show_kpp_warning = use_signal(|| false);
+    let mut pending_hide_port = use_signal(|| 0u16);
 
     // Startup sync: load hidden ports from SQLite and re-arm in kernel
     use_future(move || async move {
@@ -699,30 +701,105 @@ pub fn NetworkTab() -> Element {
                             let hide_port = ctx_menu.port;
                             move |_| {
                                 if hide_port > 0 {
-                                    match callback::port_hide(hide_port) {
-                                        Ok(()) => {
-                                            let _ = get_config_storage().add_hidden_port(hide_port);
-                                            // Refresh hidden list from kernel
-                                            if let Ok(list) = callback::port_hide_list() {
-                                                hidden_ports.set(list);
-                                                show_hidden_panel.set(true);
-                                            }
-                                            status_message.set(format!("✓ Port {} hidden via NSI", hide_port));
-                                        }
-                                        Err(e) => {
-                                            status_message.set(format!("✗ Failed to hide port: {:?}", e));
-                                        }
-                                    }
-                                    spawn(async move {
-                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                        status_message.set(String::new());
-                                    });
+                                    pending_hide_port.set(hide_port);
+                                    show_kpp_warning.set(true);
                                 }
                                 context_menu.set(NetworkContextMenuState::default());
                             }
                         },
                         span { "🔒" }
                         span { "Hide Port {ctx_menu.port} (NSI)" }
+                    }
+                }
+            }
+
+            // KPP Warning Modal
+            if *show_kpp_warning.read() {
+                div {
+                    class: "about-modal-overlay",
+                    onclick: move |_| show_kpp_warning.set(false),
+
+                    div {
+                        class: "about-modal",
+                        style: "max-width: 500px;",
+                        onclick: |e| e.stop_propagation(),
+
+                        div {
+                            class: "about-modal-header",
+
+                            h2 {
+                                class: "about-modal-title",
+                                "⚠️ PatchGuard Warning"
+                            }
+
+                            button {
+                                class: "about-modal-close",
+                                onclick: move |_| show_kpp_warning.set(false),
+                                "✕"
+                            }
+                        }
+
+                        div {
+                            style: "padding: 20px; display: flex; flex-direction: column; gap: 15px;",
+
+                            div {
+                                style: "background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 6px; padding: 12px;",
+                                p {
+                                    style: "color: #fca5a5; font-size: 13px; margin: 0 0 8px 0; font-weight: bold;",
+                                    "NSI Port Hiding is NOT PatchGuard (KPP) safe!"
+                                }
+                                p {
+                                    style: "color: #d1d5db; font-size: 12px; margin: 0 0 8px 0;",
+                                    "This feature hooks the NSI driver's dispatch table, which PatchGuard monitors. Without KPP disabled, this will cause a BSOD (CRITICAL_STRUCTURE_CORRUPTION)."
+                                }
+                                p {
+                                    style: "color: #d1d5db; font-size: 12px; margin: 0;",
+                                    "Make sure KPP bypass is enabled via the UEFI Bootkit tab before proceeding."
+                                }
+                            }
+
+                            div {
+                                style: "display: flex; gap: 10px; justify-content: flex-end; margin-top: 5px;",
+
+                                button {
+                                    class: "btn btn-secondary",
+                                    onclick: move |_| {
+                                        show_kpp_warning.set(false);
+                                        pending_hide_port.set(0);
+                                    },
+                                    "Cancel"
+                                }
+
+                                button {
+                                    class: "btn btn-danger",
+                                    onclick: move |_| {
+                                        let port = *pending_hide_port.read();
+                                        if port > 0 {
+                                            match callback::port_hide(port) {
+                                                Ok(()) => {
+                                                    let _ = get_config_storage().add_hidden_port(port);
+                                                    if let Ok(list) = callback::port_hide_list() {
+                                                        hidden_ports.set(list);
+                                                        show_hidden_panel.set(true);
+                                                    }
+                                                    status_message.set(format!("✓ Port {} hidden via NSI", port));
+                                                }
+                                                Err(e) => {
+                                                    status_message.set(format!("✗ Failed to hide port: {:?}", e));
+                                                }
+                                            }
+                                            spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                status_message.set(String::new());
+                                            });
+                                        }
+                                        show_kpp_warning.set(false);
+                                        pending_hide_port.set(0);
+                                    },
+                                    "I understand, hide port"
+                                }
+                            }
+                        }
                     }
                 }
             }
