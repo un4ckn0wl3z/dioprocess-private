@@ -3,7 +3,7 @@
 use dioxus::prelude::*;
 use network::{get_network_connections, NetworkConnection, Protocol, TcpState};
 use process::{kill_process, open_file_location};
-
+use crate::config::get_config_storage;
 use crate::helpers::copy_to_clipboard;
 use crate::state::NETWORK_SEARCH_QUERY;
 
@@ -50,6 +50,24 @@ pub fn NetworkTab() -> Element {
     let mut context_menu = use_signal(|| NetworkContextMenuState::default());
     let mut protocol_filter = use_signal(|| String::new()); // "", "tcp", "udp"
     let mut state_filter = use_signal(|| String::new()); // "", "listen", "established", etc.
+    let mut hidden_ports = use_signal(|| Vec::<callback::HiddenPortInfo>::new());
+    let mut show_hidden_panel = use_signal(|| false);
+
+    // Startup sync: load hidden ports from SQLite and re-arm in kernel
+    use_future(move || async move {
+        if callback::is_driver_loaded() {
+            let saved_ports = get_config_storage().load_hidden_ports();
+            for port in &saved_ports {
+                let _ = callback::port_hide(*port);
+            }
+            if let Ok(list) = callback::port_hide_list() {
+                if !list.is_empty() {
+                    show_hidden_panel.set(true);
+                }
+                hidden_ports.set(list);
+            }
+        }
+    });
 
     // Auto-refresh every 3 seconds
     use_future(move || async move {
@@ -315,6 +333,82 @@ pub fn NetworkTab() -> Element {
                         }
                     },
                     "Export CSV"
+                }
+
+                if callback::is_driver_loaded() && !hidden_ports.read().is_empty() {
+                    button {
+                        class: "btn btn-secondary",
+                        onclick: move |_| {
+                            let current = *show_hidden_panel.read();
+                            show_hidden_panel.set(!current);
+                        },
+                        "🔒 Hidden Ports ({hidden_ports.read().len()})"
+                    }
+                }
+            }
+
+            // Hidden Ports panel (NSI)
+            if *show_hidden_panel.read() && !hidden_ports.read().is_empty() {
+                div {
+                    class: "hidden-processes-panel",
+                    style: "background: var(--bg-tertiary, #1a1a2e); border: 1px solid var(--accent-color, #8b5cf6); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px;",
+                    div {
+                        style: "display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;",
+                        span {
+                            style: "color: var(--accent-color, #8b5cf6); font-weight: bold; font-size: 12px;",
+                            "NSI Hidden Ports ({hidden_ports.read().len()})"
+                        }
+                        button {
+                            class: "btn btn-secondary",
+                            style: "padding: 2px 8px; font-size: 11px;",
+                            onclick: move |_| {
+                                show_hidden_panel.set(false);
+                            },
+                            "Hide Panel"
+                        }
+                    }
+                    div {
+                        style: "display: flex; flex-wrap: wrap; gap: 6px;",
+                        for entry in hidden_ports.read().iter() {
+                            {
+                                let entry_port = entry.port;
+                                let entry_index = entry.index;
+                                rsx! {
+                                    div {
+                                        key: "{entry_port}",
+                                        style: "display: flex; align-items: center; gap: 6px; background: var(--bg-secondary, #16162a); border-radius: 4px; padding: 4px 8px; font-size: 12px;",
+                                        span {
+                                            style: "color: var(--text-secondary, #a0a0b0);",
+                                            "Port {entry_port}"
+                                        }
+                                        button {
+                                            class: "btn btn-secondary",
+                                            style: "padding: 1px 6px; font-size: 10px; color: #ef4444;",
+                                            onclick: move |_| {
+                                                match callback::port_unhide(entry_index) {
+                                                    Ok(()) => {
+                                                        let _ = get_config_storage().remove_hidden_port(entry_port);
+                                                        if let Ok(list) = callback::port_hide_list() {
+                                                            hidden_ports.set(list);
+                                                        }
+                                                        status_message.set(format!("✓ Port {} unhidden", entry_port));
+                                                    }
+                                                    Err(e) => {
+                                                        status_message.set(format!("✗ Failed to unhide port: {:?}", e));
+                                                    }
+                                                }
+                                                spawn(async move {
+                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    status_message.set(String::new());
+                                                });
+                                            },
+                                            "Unhide"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -594,6 +688,41 @@ pub fn NetworkTab() -> Element {
                         },
                         span { "📝" }
                         span { "Copy Path" }
+                    }
+
+                    div { class: "context-menu-separator" }
+
+                    button {
+                        class: if callback::is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                        disabled: !callback::is_driver_loaded() || ctx_menu.port == 0,
+                        onclick: {
+                            let hide_port = ctx_menu.port;
+                            move |_| {
+                                if hide_port > 0 {
+                                    match callback::port_hide(hide_port) {
+                                        Ok(()) => {
+                                            let _ = get_config_storage().add_hidden_port(hide_port);
+                                            // Refresh hidden list from kernel
+                                            if let Ok(list) = callback::port_hide_list() {
+                                                hidden_ports.set(list);
+                                                show_hidden_panel.set(true);
+                                            }
+                                            status_message.set(format!("✓ Port {} hidden via NSI", hide_port));
+                                        }
+                                        Err(e) => {
+                                            status_message.set(format!("✗ Failed to hide port: {:?}", e));
+                                        }
+                                    }
+                                    spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                        status_message.set(String::new());
+                                    });
+                                }
+                                context_menu.set(NetworkContextMenuState::default());
+                            }
+                        },
+                        span { "🔒" }
+                        span { "Hide Port {ctx_menu.port} (NSI)" }
                     }
                 }
             }

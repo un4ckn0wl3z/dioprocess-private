@@ -14,6 +14,7 @@ mod early_injection;
 mod error;
 mod filehide;
 mod hypervisor;
+mod porthide;
 mod physical_memory;
 mod process_hide;
 pub mod scanner;
@@ -46,6 +47,7 @@ pub use early_injection::{
     EarlyInjectionMethod, EarlyInjectionStatus,
 };
 pub use filehide::{filehide_add, filehide_list, filehide_remove, HiddenFileInfo};
+pub use porthide::{port_hide, port_hide_list, port_unhide, HiddenPortInfo};
 pub use process_hide::{process_hide_add, process_hide_list, process_hide_remove, HiddenProcessInfo};
 pub use physical_memory::{
     read_physical_memory, translate_virtual_address, write_physical_memory, PageTableEntry,

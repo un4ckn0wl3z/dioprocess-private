@@ -816,3 +816,41 @@ struct PhysReadVmResponse
 	UCHAR Success;
 	// Followed by BytesRead bytes of data in the output buffer
 };
+
+// ============== NSI Port Hiding IOCTLs ==============
+// Hide TCP connections by port via NSI (Network Store Interface) hook
+
+#define IOCTL_DIOPROCESS_PORT_HIDE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8A0, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PORT_UNHIDE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8A1, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PORT_HIDE_LIST \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8A2, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Request structure for hiding a port
+struct PortHideRequest
+{
+	USHORT Port;
+};
+
+// Request structure for unhiding a port by index
+struct PortUnhideRequest
+{
+	ULONG Index;
+};
+
+// Single entry in list response
+struct HiddenPortEntry
+{
+	USHORT Port;
+	ULONG Index;
+};
+
+// Response structure for listing hidden ports
+#define MAX_PORTHIDE_ENTRIES 64
+
+struct PortHideListResponse
+{
+	ULONG Count;
+	HiddenPortEntry Entries[MAX_PORTHIDE_ENTRIES];
+};

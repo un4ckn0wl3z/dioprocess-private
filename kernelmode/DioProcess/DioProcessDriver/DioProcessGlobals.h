@@ -222,3 +222,8 @@ NTSTATUS HandleTranslateVA(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleReadPhysical(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleWritePhysical(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandlePhysReadVm(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// NSI Port Hiding Handlers
+NTSTATUS HandlePortHide(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandlePortUnhide(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandlePortHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);

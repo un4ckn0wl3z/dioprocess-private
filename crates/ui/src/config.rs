@@ -114,6 +114,14 @@ impl ConfigStorage {
             [],
         )?;
 
+        // Create hidden_ports table for NSI port hiding persistence
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS hidden_ports (
+                port INTEGER PRIMARY KEY
+            )",
+            [],
+        )?;
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -265,6 +273,40 @@ impl ConfigStorage {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM hidden_processes", [])?;
         Ok(())
+    }
+
+    /// Add a hidden port (NSI port hiding persistence)
+    pub fn add_hidden_port(&self, port: u16) -> SqlResult<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT OR IGNORE INTO hidden_ports (port) VALUES (?)",
+            params![port as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a hidden port
+    pub fn remove_hidden_port(&self, port: u16) -> SqlResult<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "DELETE FROM hidden_ports WHERE port = ?",
+            params![port as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Load all hidden ports
+    pub fn load_hidden_ports(&self) -> Vec<u16> {
+        let conn = self.conn.lock();
+        let mut stmt = match conn.prepare("SELECT port FROM hidden_ports ORDER BY port") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let result: Vec<u16> = match stmt.query_map([], |row| row.get::<_, i64>(0).map(|v| v as u16)) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        };
+        result
     }
 }
 

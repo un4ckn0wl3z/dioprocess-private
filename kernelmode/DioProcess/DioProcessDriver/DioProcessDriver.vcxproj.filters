@@ -49,6 +49,9 @@
     <ClInclude Include="Memory\PhysicalMemory.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="NSI\PortHide.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="DioProcessDriver.cpp">
@@ -70,6 +73,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="DKOM\ProcessHide.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="NSI\PortHide.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Memory\PhysicalMemory.cpp">

@@ -139,6 +139,7 @@
     <ClInclude Include="FileHide\FileHide.h" />
     <ClInclude Include="DKOM\ProcessHide.h" />
     <ClInclude Include="Memory\PhysicalMemory.h" />
+    <ClInclude Include="NSI\PortHide.h" />
     <!-- Hypervisor Headers -->
     <ClInclude Include="Hypervisor\arch.h" />
     <ClInclude Include="Hypervisor\ept.h" />
@@ -203,6 +204,11 @@
 
     <!-- FileHide (Minifilter) -->
     <ClCompile Include="FileHide\FileHide.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+
+    <!-- NSI Port Hiding -->
+    <ClCompile Include="NSI\PortHide.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
 

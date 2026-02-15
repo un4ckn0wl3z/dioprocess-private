@@ -6,6 +6,7 @@
 #include "../FileHide/FileHide.h"
 #include "../DKOM/ProcessHide.h"
 #include "../Memory/PhysicalMemory.h"
+#include "../NSI/PortHide.h"
 
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
@@ -277,6 +278,19 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_PHYS_READ_VM:
 		status = HandlePhysReadVm(Irp, irpSp, &info);
+		break;
+
+	// NSI Port Hiding IOCTLs
+	case IOCTL_DIOPROCESS_PORT_HIDE:
+		status = HandlePortHide(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PORT_UNHIDE:
+		status = HandlePortUnhide(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PORT_HIDE_LIST:
+		status = HandlePortHideList(Irp, irpSp, &info);
 		break;
 
 	default:
@@ -3785,4 +3799,81 @@ NTSTATUS HandlePhysReadVm(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
 
 	ExFreePoolWithTag(kernelBuf, 'rVmP');
 	return STATUS_SUCCESS;
+}
+
+// ============== NSI Port Hiding Handlers ==============
+
+NTSTATUS HandlePortHide(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "PortHide: Hide request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(PortHideRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (PortHideRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	if (request->Port == 0)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	return PortHide_AddPort(request->Port);
+}
+
+NTSTATUS HandlePortUnhide(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "PortHide: Unhide request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(PortUnhideRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (PortUnhideRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	return PortHide_RemovePort(request->Index);
+}
+
+NTSTATUS HandlePortHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "PortHide: List request\n"));
+
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+	if (outputLen < sizeof(PortHideListResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto response = (PortHideListResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	RtlZeroMemory(response, sizeof(PortHideListResponse));
+
+	NTSTATUS status = PortHide_GetList(
+		response->Entries,
+		&response->Count,
+		MAX_PORTHIDE_ENTRIES
+	);
+
+	if (NT_SUCCESS(status))
+	{
+		*info = sizeof(PortHideListResponse);
+	}
+
+	return status;
 }
