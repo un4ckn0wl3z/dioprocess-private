@@ -7,7 +7,7 @@ use std::process::Command;
 use uefi_manager::{install_efi_driver, remove_efi_driver, is_efi_installed};
 
 use crate::config::{delete_pat, has_pat, load_pat, load_theme, save_pat, save_theme, Theme};
-use crate::state::is_debug_mode;
+use crate::state::{is_debug_mode, is_alldrv_mode};
 use crate::routes::Route;
 use crate::styles::get_theme_css;
 
@@ -99,6 +99,7 @@ pub fn Layout() -> Element {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     let theme_css = get_theme_css(*current_theme.read());
     let debug_mode = is_debug_mode();
+    let alldrv_mode = is_alldrv_mode();
 
     // Determine active tab
     let is_process_tab = matches!(route, Route::ProcessTab {});
@@ -357,102 +358,113 @@ pub fn Layout() -> Element {
                             div {
                                 style: "padding: 20px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; max-height: calc(80vh - 70px);",
 
-                                div {
-                                    style: "color: #e5e7eb; font-weight: bold; font-size: 14px; margin-bottom: 5px;",
-                                    "Select Installation Method:"
-                                }
-
-                                // Radio button options
-                                div { class: "install-method-options",
-                                    // Signed Driver option (default, recommended)
-                                    label {
-                                        class: if *install_method.read() == "signed" { "install-method-option selected" } else { "install-method-option" },
-                                        onclick: move |_| install_method.set("signed".to_string()),
-                                        input {
-                                            r#type: "radio",
-                                            name: "install_method",
-                                            value: "signed",
-                                            checked: *install_method.read() == "signed",
-                                            onchange: move |_| install_method.set("signed".to_string()),
-                                        }
-                                        div { class: "install-method-content",
-                                            span { class: "install-method-label", "Signed Driver (Windows Service)" }
-                                            span { class: "install-method-badge recommended", "Recommended" }
-                                            span { class: "install-method-desc", "Full feature support - install signed driver as Windows kernel service" }
-                                        }
-                                    }
-
-                                    // KDU option
-                                    label {
-                                        class: if *install_method.read() == "kdu" { "install-method-option selected" } else { "install-method-option" },
-                                        onclick: move |_| install_method.set("kdu".to_string()),
-                                        input {
-                                            r#type: "radio",
-                                            name: "install_method",
-                                            value: "kdu",
-                                            checked: *install_method.read() == "kdu",
-                                            onchange: move |_| install_method.set("kdu".to_string()),
-                                        }
-                                        div { class: "install-method-content",
-                                            span { class: "install-method-label", "KDU (Kernel Driver Utility)" }
-                                            span { class: "install-method-desc", "Uses vulnerable driver to disable DSE (Driver Signature Enforcement)" }
-                                        }
-                                    }
-
-                                    // KDMapper option
-                                    label {
-                                        class: if *install_method.read() == "kdmapper" { "install-method-option selected" } else { "install-method-option" },
-                                        onclick: move |_| install_method.set("kdmapper".to_string()),
-                                        input {
-                                            r#type: "radio",
-                                            name: "install_method",
-                                            value: "kdmapper",
-                                            checked: *install_method.read() == "kdmapper",
-                                            onchange: move |_| install_method.set("kdmapper".to_string()),
-                                        }
-                                        div { class: "install-method-content",
-                                            span { class: "install-method-label", "KDMapper (Manual Map)" }
-                                            span { class: "install-method-badge warning", "Limited Features" }
-                                            span { class: "install-method-desc", "Uses vulnerable driver to manually map - kernel callback features NOT available" }
-                                        }
-                                    }
-                                }
-
-                                // Warning for KDU/KDMapper methods
-                                if *install_method.read() == "kdu" || *install_method.read() == "kdmapper" {
+                                if alldrv_mode {
                                     div {
-                                        style: "background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; border-radius: 5px; padding: 12px; margin-top: 10px;",
+                                        style: "color: #e5e7eb; font-weight: bold; font-size: 14px; margin-bottom: 5px;",
+                                        "Select Installation Method:"
+                                    }
+
+                                    // Radio button options
+                                    div { class: "install-method-options",
+                                        // Signed Driver option (default, recommended)
+                                        label {
+                                            class: if *install_method.read() == "signed" { "install-method-option selected" } else { "install-method-option" },
+                                            onclick: move |_| install_method.set("signed".to_string()),
+                                            input {
+                                                r#type: "radio",
+                                                name: "install_method",
+                                                value: "signed",
+                                                checked: *install_method.read() == "signed",
+                                                onchange: move |_| install_method.set("signed".to_string()),
+                                            }
+                                            div { class: "install-method-content",
+                                                span { class: "install-method-label", "Signed Driver (Windows Service)" }
+                                                span { class: "install-method-badge recommended", "Recommended" }
+                                                span { class: "install-method-desc", "Full feature support - install signed driver as Windows kernel service" }
+                                            }
+                                        }
+
+                                        // KDU option
+                                        label {
+                                            class: if *install_method.read() == "kdu" { "install-method-option selected" } else { "install-method-option" },
+                                            onclick: move |_| install_method.set("kdu".to_string()),
+                                            input {
+                                                r#type: "radio",
+                                                name: "install_method",
+                                                value: "kdu",
+                                                checked: *install_method.read() == "kdu",
+                                                onchange: move |_| install_method.set("kdu".to_string()),
+                                            }
+                                            div { class: "install-method-content",
+                                                span { class: "install-method-label", "KDU (Kernel Driver Utility)" }
+                                                span { class: "install-method-desc", "Uses vulnerable driver to disable DSE (Driver Signature Enforcement)" }
+                                            }
+                                        }
+
+                                        // KDMapper option
+                                        label {
+                                            class: if *install_method.read() == "kdmapper" { "install-method-option selected" } else { "install-method-option" },
+                                            onclick: move |_| install_method.set("kdmapper".to_string()),
+                                            input {
+                                                r#type: "radio",
+                                                name: "install_method",
+                                                value: "kdmapper",
+                                                checked: *install_method.read() == "kdmapper",
+                                                onchange: move |_| install_method.set("kdmapper".to_string()),
+                                            }
+                                            div { class: "install-method-content",
+                                                span { class: "install-method-label", "KDMapper (Manual Map)" }
+                                                span { class: "install-method-badge warning", "Limited Features" }
+                                                span { class: "install-method-desc", "Uses vulnerable driver to manually map - kernel callback features NOT available" }
+                                            }
+                                        }
+                                    }
+
+                                    // Warning for KDU/KDMapper methods
+                                    if *install_method.read() == "kdu" || *install_method.read() == "kdmapper" {
                                         div {
-                                            style: "color: #fbbf24; font-weight: bold; font-size: 13px; margin-bottom: 8px;",
-                                            "⚠️ Before installing, you MUST:"
-                                        }
-                                        ul {
-                                            style: "color: #e5e7eb; margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.6;",
-                                            li { "Disable Hyper-V: " code { style: "background: #374151; padding: 2px 6px; border-radius: 3px;", "bcdedit /set hypervisorlaunchtype off" } }
-                                            li { "Disable Secure Boot in BIOS/UEFI" }
-                                            li { "Disable Vulnerable Driver Blocklist" }
-                                        }
-                                    }
-                                }
-
-                                // Extra warning for KDMapper about limited features
-                                if *install_method.read() == "kdmapper" {
-                                    div {
-                                        style: "background: rgba(251, 191, 36, 0.15); border: 1px solid #fbbf24; border-radius: 5px; padding: 12px; margin-top: 10px;",
-                                        span {
-                                            style: "color: #fbbf24; font-size: 13px;",
-                                            "⚠️ KDMapper does NOT support kernel callback features (System Events tab will not work)."
+                                            style: "background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; border-radius: 5px; padding: 12px; margin-top: 10px;",
+                                            div {
+                                                style: "color: #fbbf24; font-weight: bold; font-size: 13px; margin-bottom: 8px;",
+                                                "⚠️ Before installing, you MUST:"
+                                            }
+                                            ul {
+                                                style: "color: #e5e7eb; margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.6;",
+                                                li { "Disable Hyper-V: " code { style: "background: #374151; padding: 2px 6px; border-radius: 3px;", "bcdedit /set hypervisorlaunchtype off" } }
+                                                li { "Disable Secure Boot in BIOS/UEFI" }
+                                                li { "Disable Vulnerable Driver Blocklist" }
+                                            }
                                         }
                                     }
-                                }
 
-                                // Info for Signed method
-                                if *install_method.read() == "signed" {
+                                    // Extra warning for KDMapper about limited features
+                                    if *install_method.read() == "kdmapper" {
+                                        div {
+                                            style: "background: rgba(251, 191, 36, 0.15); border: 1px solid #fbbf24; border-radius: 5px; padding: 12px; margin-top: 10px;",
+                                            span {
+                                                style: "color: #fbbf24; font-size: 13px;",
+                                                "⚠️ KDMapper does NOT support kernel callback features (System Events tab will not work)."
+                                            }
+                                        }
+                                    }
+
+                                    // Info for Signed method
+                                    if *install_method.read() == "signed" {
+                                        div {
+                                            style: "background: rgba(34, 197, 94, 0.15); border: 1px solid #22c55e; border-radius: 5px; padding: 12px; margin-top: 10px;",
+                                            span {
+                                                style: "color: #86efac; font-size: 13px;",
+                                                "✓ Signed driver - all features available, no special system configuration required."
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // No -alldrv flag: signed driver only, no method selection needed
                                     div {
-                                        style: "background: rgba(34, 197, 94, 0.15); border: 1px solid #22c55e; border-radius: 5px; padding: 12px; margin-top: 10px;",
+                                        style: "background: rgba(34, 197, 94, 0.15); border: 1px solid #22c55e; border-radius: 5px; padding: 12px;",
                                         span {
                                             style: "color: #86efac; font-size: 13px;",
-                                            "✓ Signed driver - all features available, no special system configuration required."
+                                            "✓ Signed driver will be installed as a Windows kernel service. All features available."
                                         }
                                     }
                                 }

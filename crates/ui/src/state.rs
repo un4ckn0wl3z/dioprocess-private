@@ -6,12 +6,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Debug mode flag — set via `-debug` CLI flag, enables local file install for EFI
 static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
 
+/// All driver methods flag — set via `-alldrv` CLI flag, enables KDU/KDMapper install methods
+static ALLDRV_MODE: AtomicBool = AtomicBool::new(false);
+
 pub fn set_debug_mode(enabled: bool) {
     DEBUG_MODE.store(enabled, Ordering::Relaxed);
 }
 
 pub fn is_debug_mode() -> bool {
     DEBUG_MODE.load(Ordering::Relaxed)
+}
+
+pub fn set_alldrv_mode(enabled: bool) {
+    ALLDRV_MODE.store(enabled, Ordering::Relaxed);
+}
+
+pub fn is_alldrv_mode() -> bool {
+    ALLDRV_MODE.load(Ordering::Relaxed)
 }
 
 /// Thread window state - stores PID and process name to open in new window
