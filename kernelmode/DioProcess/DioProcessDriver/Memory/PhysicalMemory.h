@@ -31,3 +31,8 @@ NTSTATUS PhysMemTranslateVA(ULONG64 Cr3, ULONG64 VirtualAddress, TranslateVaResp
 
 /* Decode PTE bits into PageTableEntryResult */
 void PhysMemDecodePte(ULONG64 RawPte, ULONG64 EntryVirtualAddr, PageTableEntryResult* Result);
+
+/* Bulk read virtual memory via CR3 page table walk.
+   Translates each page VA->PA and reads physical memory.
+   Handles page boundaries and unmapped pages (fills zeros). */
+NTSTATUS PhysMemReadVirtualMemory(ULONG ProcessId, ULONG64 VirtualAddress, PVOID Buffer, SIZE_T Size, PSIZE_T BytesRead);

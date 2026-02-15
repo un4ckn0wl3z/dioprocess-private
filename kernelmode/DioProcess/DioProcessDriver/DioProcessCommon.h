@@ -745,6 +745,8 @@ struct ProcessHideListResponse
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x891, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_DIOPROCESS_WRITE_PHYSICAL \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x892, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PHYS_READ_VM \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x893, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 // ============== Physical Memory Translation Structures ==============
 
@@ -795,4 +797,22 @@ struct PhysicalMemoryResponse
 {
 	ULONG BytesTransferred;
 	UCHAR Success;
+};
+
+// Bulk virtual memory read via CR3 page table walk
+// Reads up to 64KB of virtual memory from a target process using physical memory access
+#define PHYS_READ_VM_MAX_SIZE (64 * 1024)
+
+struct PhysReadVmRequest
+{
+	ULONG ProcessId;
+	ULONG64 VirtualAddress;
+	ULONG Size;                      // Max PHYS_READ_VM_MAX_SIZE (64KB)
+};
+
+struct PhysReadVmResponse
+{
+	ULONG BytesRead;
+	UCHAR Success;
+	// Followed by BytesRead bytes of data in the output buffer
 };

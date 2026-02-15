@@ -16,6 +16,7 @@ mod filehide;
 mod hypervisor;
 mod physical_memory;
 mod process_hide;
+pub mod scanner;
 mod pspcidtable;
 pub mod storage;
 mod types;
@@ -51,5 +52,9 @@ pub use physical_memory::{
     PageTableWalkResult,
 };
 pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
+pub use scanner::{
+    first_scan, next_scan, parse_scan_value, phys_read_virtual_memory, write_scan_value,
+    format_bytes_as_value, ScanDataType, ScanRegion, ScanResult, ScanType,
+};
 pub use storage::{EventFilter, EventStorage};
 pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};

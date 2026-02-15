@@ -212,3 +212,100 @@ NTSTATUS PhysMemTranslateVA(ULONG64 Cr3, ULONG64 VirtualAddress, TranslateVaResp
 
 	return STATUS_SUCCESS;
 }
+
+// ============== Bulk Virtual Memory Read via CR3 Walk ==============
+
+// Helper: translate a single VA to PA using CR3 (lightweight, no full response)
+static ULONG64 TranslateVaToPA(ULONG64 Cr3, ULONG64 VirtualAddress)
+{
+	ULONG64 pml4_idx = (VirtualAddress >> 39) & 0x1FF;
+	ULONG64 pdpt_idx = (VirtualAddress >> 30) & 0x1FF;
+	ULONG64 pd_idx = (VirtualAddress >> 21) & 0x1FF;
+	ULONG64 pt_idx = (VirtualAddress >> 12) & 0x1FF;
+	ULONG64 offset = VirtualAddress & 0xFFF;
+
+	ULONG64 pte = 0;
+	SIZE_T bytesRead = 0;
+
+	// PML4
+	ULONG64 addr = (Cr3 & PTE_PHYS_MASK) + pml4_idx * 8;
+	if (!NT_SUCCESS(PhysMemReadPhysical(addr, &pte, sizeof(pte), &bytesRead)) || !(pte & PTE_PRESENT))
+		return 0;
+
+	// PDPT
+	addr = (pte & PTE_PHYS_MASK) + pdpt_idx * 8;
+	if (!NT_SUCCESS(PhysMemReadPhysical(addr, &pte, sizeof(pte), &bytesRead)) || !(pte & PTE_PRESENT))
+		return 0;
+
+	if (pte & PTE_LARGE_PAGE) // 1GB page
+		return (pte & 0xFFFFC0000000ULL) + (VirtualAddress & 0x3FFFFFFFULL);
+
+	// PD
+	addr = (pte & PTE_PHYS_MASK) + pd_idx * 8;
+	if (!NT_SUCCESS(PhysMemReadPhysical(addr, &pte, sizeof(pte), &bytesRead)) || !(pte & PTE_PRESENT))
+		return 0;
+
+	if (pte & PTE_LARGE_PAGE) // 2MB page
+		return (pte & 0xFFFFFE00000ULL) + (VirtualAddress & 0x1FFFFFULL);
+
+	// PT
+	addr = (pte & PTE_PHYS_MASK) + pt_idx * 8;
+	if (!NT_SUCCESS(PhysMemReadPhysical(addr, &pte, sizeof(pte), &bytesRead)) || !(pte & PTE_PRESENT))
+		return 0;
+
+	return (pte & PTE_PHYS_MASK) + offset;
+}
+
+NTSTATUS PhysMemReadVirtualMemory(ULONG ProcessId, ULONG64 VirtualAddress, PVOID Buffer, SIZE_T Size, PSIZE_T BytesRead)
+{
+	if (!Buffer || !Size || !BytesRead)
+		return STATUS_INVALID_PARAMETER;
+
+	*BytesRead = 0;
+
+	ULONG64 cr3 = PhysMemGetProcessCR3(ProcessId);
+	if (!cr3)
+		return STATUS_NOT_FOUND;
+
+	PUCHAR outBuf = (PUCHAR)Buffer;
+	SIZE_T remaining = Size;
+	ULONG64 currentVA = VirtualAddress;
+
+	while (remaining > 0)
+	{
+		// Calculate how many bytes until the next page boundary
+		ULONG64 pageOffset = currentVA & 0xFFF;
+		SIZE_T chunkSize = min(remaining, 0x1000 - (SIZE_T)pageOffset);
+
+		ULONG64 pa = TranslateVaToPA(cr3, currentVA);
+		if (pa != 0)
+		{
+			SIZE_T chunkRead = 0;
+			NTSTATUS status = PhysMemReadPhysical(pa, outBuf, chunkSize, &chunkRead);
+			if (NT_SUCCESS(status))
+			{
+				outBuf += chunkRead;
+				*BytesRead += chunkRead;
+			}
+			else
+			{
+				// Fill zeros for unreadable pages
+				RtlZeroMemory(outBuf, chunkSize);
+				outBuf += chunkSize;
+				*BytesRead += chunkSize;
+			}
+		}
+		else
+		{
+			// Page not mapped - fill zeros
+			RtlZeroMemory(outBuf, chunkSize);
+			outBuf += chunkSize;
+			*BytesRead += chunkSize;
+		}
+
+		currentVA += chunkSize;
+		remaining -= chunkSize;
+	}
+
+	return STATUS_SUCCESS;
+}

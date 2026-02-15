@@ -275,6 +275,10 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleWritePhysical(Irp, irpSp, &info);
 		break;
 
+	case IOCTL_DIOPROCESS_PHYS_READ_VM:
+		status = HandlePhysReadVm(Irp, irpSp, &info);
+		break;
+
 	default:
 		status = STATUS_INVALID_DEVICE_REQUEST;
 		break;
@@ -3715,5 +3719,70 @@ NTSTATUS HandleWritePhysical(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info
 
 	ExFreePoolWithTag(kernelBuf, 'wPhM');
 	*info = sizeof(PhysicalMemoryResponse);
+	return STATUS_SUCCESS;
+}
+
+// ============== Bulk Virtual Memory Read via CR3 Walk ==============
+
+NTSTATUS HandlePhysReadVm(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint(("DioProcess: PhysReadVm request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(PhysReadVmRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (outputLen < sizeof(PhysReadVmResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (PhysReadVmRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	if (request->Size == 0 || request->Size > PHYS_READ_VM_MAX_SIZE)
+		return STATUS_INVALID_PARAMETER;
+
+	// Check output buffer can hold response header + data
+	ULONG requiredOutput = sizeof(PhysReadVmResponse) + request->Size;
+	if (outputLen < requiredOutput)
+		return STATUS_BUFFER_TOO_SMALL;
+
+	// Save request fields before overwriting SystemBuffer with response
+	ULONG pid = request->ProcessId;
+	ULONG64 va = request->VirtualAddress;
+	ULONG size = request->Size;
+
+	// Allocate kernel buffer for the read
+	PVOID kernelBuf = ExAllocatePoolWithTag(NonPagedPool, size, 'rVmP');
+	if (!kernelBuf)
+		return STATUS_INSUFFICIENT_RESOURCES;
+
+	SIZE_T bytesRead = 0;
+	NTSTATUS status = PhysMemReadVirtualMemory(pid, va, kernelBuf, size, &bytesRead);
+
+	// Write response header
+	auto response = (PhysReadVmResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+	if (NT_SUCCESS(status) && bytesRead > 0)
+	{
+		response->BytesRead = (ULONG)bytesRead;
+		response->Success = 1;
+
+		// Copy read data after response header
+		PUCHAR dataOutput = (PUCHAR)Irp->AssociatedIrp.SystemBuffer + sizeof(PhysReadVmResponse);
+		RtlCopyMemory(dataOutput, kernelBuf, bytesRead);
+
+		*info = sizeof(PhysReadVmResponse) + (ULONG)bytesRead;
+	}
+	else
+	{
+		response->BytesRead = 0;
+		response->Success = 0;
+		*info = sizeof(PhysReadVmResponse);
+	}
+
+	ExFreePoolWithTag(kernelBuf, 'rVmP');
 	return STATUS_SUCCESS;
 }
