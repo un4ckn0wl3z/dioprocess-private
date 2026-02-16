@@ -222,7 +222,7 @@ pub fn get_system_stats() -> SystemStats {
 }
 
 /// Get process architecture (x64 or x86)
-fn get_process_arch(pid: u32) -> ProcessArch {
+pub fn get_process_arch(pid: u32) -> ProcessArch {
     unsafe {
         let handle = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
             Ok(h) => h,

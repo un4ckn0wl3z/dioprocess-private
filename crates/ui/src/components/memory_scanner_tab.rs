@@ -1,19 +1,21 @@
 //! Memory Scanner tab — Cheat Engine-like memory scanner via physical memory (CR3 walk)
 
 use callback::{
-    first_scan, hv_is_running, install_ept_hook, is_driver_loaded, list_ept_hooks, next_scan,
-    parse_aob_pattern, parse_scan_value, remove_ept_hook, write_scan_value, ScanDataType,
-    ScanRegion, ScanResult, ScanType,
+    assemble, first_scan, format_bytes_hex, hv_is_running, install_ept_hook, is_driver_loaded,
+    list_ept_hooks, next_scan, parse_aob_pattern, parse_scan_value, remove_ept_hook,
+    write_scan_value, ScanDataType, ScanRegion, ScanResult, ScanType,
 };
 use dioxus::prelude::*;
+use process::{get_process_arch, ProcessArch};
 
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
-    EPT_HOOKS_LIST, EPT_HOOK_BYTES_INPUT, EPT_HOOK_IS_ERROR, EPT_HOOK_SHOW_MODAL,
-    EPT_HOOK_STATUS, EPT_HOOK_TARGET_ADDR, SCANNER_DATA_TYPE_IDX, SCANNER_EDIT_VALUE,
-    SCANNER_EDITING_IDX, SCANNER_HAS_SCANNED, SCANNER_IS_ERROR, SCANNER_IS_SCANNING,
-    SCANNER_PAGE, SCANNER_PID, SCANNER_RESULTS, SCANNER_SCAN_TYPE_IDX, SCANNER_SELECTED,
-    SCANNER_STATUS, SCANNER_VALUE, SCANNER_VALUE2, SCANNER_WRITE_VALUE,
+    EPT_HOOKS_LIST, EPT_HOOK_ASM_ERROR, EPT_HOOK_ASM_INPUT, EPT_HOOK_ASM_PREVIEW,
+    EPT_HOOK_BYTES_INPUT, EPT_HOOK_INPUT_MODE, EPT_HOOK_IS_ERROR, EPT_HOOK_SHOW_MODAL,
+    EPT_HOOK_STATUS, EPT_HOOK_TARGET_ADDR, EptHookInputMode, SCANNER_DATA_TYPE_IDX,
+    SCANNER_EDIT_VALUE, SCANNER_EDITING_IDX, SCANNER_HAS_SCANNED, SCANNER_IS_ERROR,
+    SCANNER_IS_SCANNING, SCANNER_PAGE, SCANNER_PID, SCANNER_RESULTS, SCANNER_SCAN_TYPE_IDX,
+    SCANNER_SELECTED, SCANNER_STATUS, SCANNER_VALUE, SCANNER_VALUE2, SCANNER_WRITE_VALUE,
 };
 
 const RESULTS_PER_PAGE: usize = 500;
@@ -44,6 +46,11 @@ pub fn MemoryScannerTab() -> Element {
     let mut ept_hooks_list = EPT_HOOKS_LIST.signal();
     let mut ept_hook_status = EPT_HOOK_STATUS.signal();
     let mut ept_hook_is_error = EPT_HOOK_IS_ERROR.signal();
+    // Assembly mode state
+    let mut ept_hook_input_mode = EPT_HOOK_INPUT_MODE.signal();
+    let mut ept_hook_asm_input = EPT_HOOK_ASM_INPUT.signal();
+    let mut ept_hook_asm_preview = EPT_HOOK_ASM_PREVIEW.signal();
+    let mut ept_hook_asm_error = EPT_HOOK_ASM_ERROR.signal();
 
     let driver_loaded = is_driver_loaded();
     let scanned = *has_scanned.read();
@@ -946,17 +953,44 @@ pub fn MemoryScannerTab() -> Element {
                     let target_addr = ept_hook_target.read().unwrap_or(0);
                     let hook_status = ept_hook_status.read().clone();
                     let hook_error = *ept_hook_is_error.read();
+                    let input_mode = *ept_hook_input_mode.read();
+                    let asm_preview = ept_hook_asm_preview.read().clone();
+                    let asm_error = ept_hook_asm_error.read().clone();
+                    
+                    // Get process architecture for assembly
+                    let pid_str = pid_input.read().clone();
+                    let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+                    let proc_arch = if pid > 0 { get_process_arch(pid) } else { ProcessArch::Unknown };
+                    let arch_label = match proc_arch {
+                        ProcessArch::X64 => "x64",
+                        ProcessArch::X86 => "x86",
+                        ProcessArch::Unknown => "?",
+                    };
+                    let arch_badge_style = match proc_arch {
+                        ProcessArch::X64 => "background: #22c55e;",
+                        ProcessArch::X86 => "background: #eab308;",
+                        ProcessArch::Unknown => "background: #6b7280;",
+                    };
+
                     rsx! {
                         div {
                             class: "modal-overlay",
                             onclick: move |_| ept_hook_show_modal.set(false),
                             div {
                                 class: "modal-content",
-                                style: "max-width: 500px;",
+                                style: "max-width: 600px; min-height: 400px;",
                                 onclick: move |e| e.stop_propagation(),
 
-                                h3 { style: "margin: 0 0 12px 0; color: var(--text-primary);",
-                                    "Install EPT Hook"
+                                // Header with title and arch badge
+                                div { style: "display: flex; align-items: center; gap: 8px; margin-bottom: 12px;",
+                                    h3 { style: "margin: 0; color: var(--text-primary);",
+                                        "Install EPT Hook"
+                                    }
+                                    span {
+                                        class: "experimental-badge",
+                                        style: "{arch_badge_style}",
+                                        "{arch_label}"
+                                    }
                                 }
 
                                 div { style: "margin-bottom: 12px; color: var(--text-secondary); font-size: 12px;",
@@ -964,7 +998,7 @@ pub fn MemoryScannerTab() -> Element {
                                 }
 
                                 // Target address (read-only)
-                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 8px;",
+                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
                                     label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Address:" }
                                     span {
                                         style: "font-family: 'Consolas', monospace; color: var(--accent-primary); font-size: 13px;",
@@ -972,28 +1006,182 @@ pub fn MemoryScannerTab() -> Element {
                                     }
                                 }
 
-                                // Hook bytes input
-                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
-                                    label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Hook bytes:" }
-                                    input {
-                                        class: "handle-filter-input",
-                                        r#type: "text",
-                                        placeholder: "e.g. 90 90 90 or C3 or 48B8... (hex)",
-                                        style: "flex: 1; font-family: 'Consolas', monospace;",
-                                        value: "{ept_hook_bytes}",
-                                        oninput: move |e| ept_hook_bytes.set(e.value()),
-                                        onkeydown: {
-                                            move |e: KeyboardEvent| {
-                                                if e.key() == Key::Escape {
-                                                    ept_hook_show_modal.set(false);
-                                                }
-                                            }
+                                // Input mode toggle
+                                div { style: "display: flex; gap: 4px; margin-bottom: 12px;",
+                                    button {
+                                        class: if input_mode == EptHookInputMode::Hex { "btn btn-primary" } else { "btn" },
+                                        style: "font-size: 12px; padding: 4px 12px;",
+                                        onclick: move |_| {
+                                            ept_hook_input_mode.set(EptHookInputMode::Hex);
+                                            ept_hook_asm_error.set(String::new());
                                         },
+                                        "Hex Bytes"
+                                    }
+                                    button {
+                                        class: if input_mode == EptHookInputMode::Assembly { "btn btn-primary" } else { "btn" },
+                                        style: "font-size: 12px; padding: 4px 12px;",
+                                        onclick: move |_| {
+                                            ept_hook_input_mode.set(EptHookInputMode::Assembly);
+                                            ept_hook_status.set(String::new());
+                                        },
+                                        "Assembly"
                                     }
                                 }
 
-                                div { style: "color: var(--text-secondary); font-size: 11px; margin-bottom: 12px;",
-                                    "Enter replacement bytes in hex (space-separated or continuous). Max 256 bytes."
+                                // Hex bytes input mode
+                                if input_mode == EptHookInputMode::Hex {
+                                    div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 8px;",
+                                        label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Hook bytes:" }
+                                        input {
+                                            class: "handle-filter-input",
+                                            r#type: "text",
+                                            placeholder: "e.g. 90 90 90 or C3 or 48B8... (hex)",
+                                            style: "flex: 1; font-family: 'Consolas', monospace;",
+                                            value: "{ept_hook_bytes}",
+                                            oninput: move |e| ept_hook_bytes.set(e.value()),
+                                            onkeydown: {
+                                                move |e: KeyboardEvent| {
+                                                    if e.key() == Key::Escape {
+                                                        ept_hook_show_modal.set(false);
+                                                    }
+                                                }
+                                            },
+                                        }
+                                    }
+                                    div { style: "color: var(--text-secondary); font-size: 11px; margin-bottom: 12px;",
+                                        "Enter replacement bytes in hex (space-separated or continuous). Max 256 bytes."
+                                    }
+                                }
+
+                                // Assembly input mode
+                                if input_mode == EptHookInputMode::Assembly {
+                                    div { style: "margin-bottom: 8px;",
+                                        label { style: "color: var(--text-secondary); font-size: 13px; display: block; margin-bottom: 4px;",
+                                            "Assembly code (Intel syntax):"
+                                        }
+                                        textarea {
+                                            class: "handle-filter-input",
+                                            placeholder: "nop\nmov rax, 0x1234\nret",
+                                            style: "width: 100%; height: 120px; font-family: 'Consolas', monospace; font-size: 13px; resize: vertical; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 8px;",
+                                            value: "{ept_hook_asm_input}",
+                                            oninput: {
+                                                move |e: Event<FormData>| {
+                                                    let code = e.value();
+                                                    ept_hook_asm_input.set(code.clone());
+                                                    
+                                                    // Live preview assembly
+                                                    if !code.trim().is_empty() && pid > 0 {
+                                                        match assemble(&code, proc_arch, target_addr) {
+                                                            Ok(bytes) => {
+                                                                ept_hook_asm_preview.set(format_bytes_hex(&bytes));
+                                                                ept_hook_asm_error.set(String::new());
+                                                            }
+                                                            Err(e) => {
+                                                                ept_hook_asm_preview.set(String::new());
+                                                                ept_hook_asm_error.set(e.to_string());
+                                                            }
+                                                        }
+                                                    } else {
+                                                        ept_hook_asm_preview.set(String::new());
+                                                        ept_hook_asm_error.set(String::new());
+                                                    }
+                                                }
+                                            },
+                                            onkeydown: {
+                                                move |e: KeyboardEvent| {
+                                                    if e.key() == Key::Escape {
+                                                        ept_hook_show_modal.set(false);
+                                                    }
+                                                }
+                                            },
+                                        }
+                                    }
+
+                                    // Assembly error display
+                                    if !asm_error.is_empty() {
+                                        div {
+                                            style: "color: #ef4444; font-size: 12px; font-family: 'Consolas', monospace; margin-bottom: 8px; padding: 6px; background: rgba(239, 68, 68, 0.1); border-radius: 4px;",
+                                            "⚠ {asm_error}"
+                                        }
+                                    }
+
+                                    // Assembled bytes preview
+                                    if !asm_preview.is_empty() {
+                                        div { style: "margin-bottom: 12px;",
+                                            label { style: "color: var(--text-secondary); font-size: 12px; display: block; margin-bottom: 4px;",
+                                                "Assembled bytes:"
+                                            }
+                                            div {
+                                                style: "font-family: 'Consolas', monospace; font-size: 13px; color: #22c55e; background: var(--bg-tertiary); padding: 8px; border-radius: 4px; word-break: break-all;",
+                                                "{asm_preview}"
+                                            }
+                                        }
+                                    }
+
+                                    div { style: "color: var(--text-secondary); font-size: 11px; margin-bottom: 8px;",
+                                        "Use Intel syntax. Separate instructions with newlines or semicolons."
+                                    }
+
+                                    // Save/Load buttons for .aa files
+                                    div { style: "display: flex; gap: 8px; margin-bottom: 12px;",
+                                        button {
+                                            class: "btn",
+                                            style: "font-size: 11px; padding: 3px 10px;",
+                                            onclick: {
+                                                move |_| {
+                                                    let code = ept_hook_asm_input.read().clone();
+                                                    spawn(async move {
+                                                        if let Some(file) = rfd::AsyncFileDialog::new()
+                                                            .add_filter("Auto Assemble Script", &["aa"])
+                                                            .set_file_name("hook.aa")
+                                                            .save_file()
+                                                            .await
+                                                        {
+                                                            let _ = std::fs::write(file.path(), code);
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            "Save .aa"
+                                        }
+                                        button {
+                                            class: "btn",
+                                            style: "font-size: 11px; padding: 3px 10px;",
+                                            onclick: {
+                                                move |_| {
+                                                    spawn(async move {
+                                                        if let Some(file) = rfd::AsyncFileDialog::new()
+                                                            .add_filter("Auto Assemble Script", &["aa"])
+                                                            .pick_file()
+                                                            .await
+                                                        {
+                                                            if let Ok(content) = std::fs::read_to_string(file.path()) {
+                                                                ept_hook_asm_input.set(content.clone());
+                                                                // Trigger preview update
+                                                                let pid_str = pid_input.read().clone();
+                                                                let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+                                                                let target_addr = ept_hook_target.read().unwrap_or(0);
+                                                                if pid > 0 {
+                                                                    let proc_arch = get_process_arch(pid);
+                                                                    match assemble(&content, proc_arch, target_addr) {
+                                                                        Ok(bytes) => {
+                                                                            ept_hook_asm_preview.set(format_bytes_hex(&bytes));
+                                                                            ept_hook_asm_error.set(String::new());
+                                                                        }
+                                                                        Err(e) => {
+                                                                            ept_hook_asm_preview.set(String::new());
+                                                                            ept_hook_asm_error.set(e.to_string());
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            "Load .aa"
+                                        }
+                                    }
                                 }
 
                                 if !hook_status.is_empty() {
@@ -1013,7 +1201,7 @@ pub fn MemoryScannerTab() -> Element {
                                     }
                                     button {
                                         class: "btn btn-primary",
-                                        disabled: !driver_loaded || !hv_is_running(),
+                                        disabled: !driver_loaded || !hv_is_running() || (input_mode == EptHookInputMode::Assembly && !asm_error.is_empty()),
                                         onclick: {
                                             move |_| {
                                                 let pid_str = pid_input.read().clone();
@@ -1031,13 +1219,30 @@ pub fn MemoryScannerTab() -> Element {
                                                     return;
                                                 }
 
-                                                let hex_str = ept_hook_bytes.read().clone();
-                                                let bytes = match parse_hex_bytes(&hex_str) {
-                                                    Ok(b) => b,
-                                                    Err(msg) => {
-                                                        ept_hook_status.set(msg);
-                                                        ept_hook_is_error.set(true);
-                                                        return;
+                                                let input_mode = *ept_hook_input_mode.read();
+                                                let bytes = match input_mode {
+                                                    EptHookInputMode::Hex => {
+                                                        let hex_str = ept_hook_bytes.read().clone();
+                                                        match parse_hex_bytes(&hex_str) {
+                                                            Ok(b) => b,
+                                                            Err(msg) => {
+                                                                ept_hook_status.set(msg);
+                                                                ept_hook_is_error.set(true);
+                                                                return;
+                                                            }
+                                                        }
+                                                    }
+                                                    EptHookInputMode::Assembly => {
+                                                        let asm_code = ept_hook_asm_input.read().clone();
+                                                        let proc_arch = get_process_arch(pid);
+                                                        match assemble(&asm_code, proc_arch, addr) {
+                                                            Ok(b) => b,
+                                                            Err(e) => {
+                                                                ept_hook_status.set(format!("Assembly error: {}", e));
+                                                                ept_hook_is_error.set(true);
+                                                                return;
+                                                            }
+                                                        }
                                                     }
                                                 };
 

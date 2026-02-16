@@ -8,7 +8,9 @@
 //! - Handle operations (process/thread handles)
 //! - Registry operations
 //! - Hypervisor control and process protection
+//! - x86/x64 assembly for EPT hooks
 
+pub mod assembler;
 mod driver;
 mod early_injection;
 mod ept_hook;
@@ -63,3 +65,4 @@ pub use scanner::{
 };
 pub use storage::{EventFilter, EventStorage};
 pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};
+pub use assembler::{assemble, assemble_for_process, format_bytes_hex, validate_assembly, AssemblerError};

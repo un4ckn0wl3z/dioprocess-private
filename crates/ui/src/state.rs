@@ -147,6 +147,20 @@ pub static EPT_HOOKS_LIST: GlobalSignal<Vec<callback::EptHookInfo>> = Signal::gl
 pub static EPT_HOOK_STATUS: GlobalSignal<String> = Signal::global(|| String::new());
 pub static EPT_HOOK_IS_ERROR: GlobalSignal<bool> = Signal::global(|| false);
 
+// EPT Hook Assembly mode state
+/// Input mode for EPT hook: Hex bytes or Assembly code
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub enum EptHookInputMode {
+    #[default]
+    Hex,
+    Assembly,
+}
+
+pub static EPT_HOOK_INPUT_MODE: GlobalSignal<EptHookInputMode> = Signal::global(|| EptHookInputMode::Hex);
+pub static EPT_HOOK_ASM_INPUT: GlobalSignal<String> = Signal::global(|| String::new());
+pub static EPT_HOOK_ASM_PREVIEW: GlobalSignal<String> = Signal::global(|| String::new());
+pub static EPT_HOOK_ASM_ERROR: GlobalSignal<String> = Signal::global(|| String::new());
+
 /// Process view mode - flat list or tree hierarchy
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ProcessViewMode {

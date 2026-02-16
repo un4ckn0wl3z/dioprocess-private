@@ -6,6 +6,8 @@ edition.workspace = true
 [dependencies]
 rusqlite = { version = "0.31", features = ["bundled"] }
 parking_lot = "0.12"
+keystone-engine = "0.1"
+process = { path = "../process" }
 
 [dependencies.windows]
 version = "0.58"

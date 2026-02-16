@@ -432,7 +432,9 @@ dependencies = [
 name = "callback"
 version = "2.5.0"
 dependencies = [
+ "keystone-engine",
  "parking_lot",
+ "process",
  "rusqlite",
  "windows 0.58.0",
 ]
@@ -532,6 +534,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
 dependencies = [
  "error-code",
+]
+
+[[package]]
+name = "cmake"
+version = "0.1.57"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75443c44cd6b379beb8c5b45d85d0773baf31cce901fe7bb252f4eff3008ef7d"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -2684,6 +2695,17 @@ dependencies = [
  "bitflags 2.10.0",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "keystone-engine"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab903ae27e1006cb336cc8af1991690c788892cd2184a3890547581afcf5a1f5"
+dependencies = [
+ "bitflags 1.3.2",
+ "cmake",
+ "libc",
 ]
 
 [[package]]
