@@ -19,6 +19,9 @@
   DioProcessEfi.c
   Config.c
   Config.h
+  Graphics.c
+  Graphics.h
+  Animation.h
   PatchDse.c
   PatchDse.h
   PatchKpp.c
@@ -43,6 +46,7 @@
 [Protocols]
   gEfiLoadedImageProtocolGuid          ## CONSUMES
   gEfiSimpleFileSystemProtocolGuid     ## CONSUMES
+  gEfiGraphicsOutputProtocolGuid       ## CONSUMES
 
 [Guids]
   gEfiFileInfoGuid                     ## CONSUMES

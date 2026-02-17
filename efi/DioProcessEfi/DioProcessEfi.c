@@ -32,6 +32,7 @@
 #include <Guid/FileInfo.h>
 
 #include "Config.h"
+#include "Graphics.h"
 #include "PatchDse.h"
 #include "PatchKpp.h"
 #include "PeUtils.h"
@@ -494,7 +495,7 @@ DioProcessEfiEntry(
 
     Print(L"[*] Booting in 5 seconds...\r\n");
     Print(L"\r\n");
-    gBS->Stall(5000000); // 5 seconds to flex
+    GraphicsPlayAnimation(5000); // 5 seconds animated boot screen
 
     // Chainload Windows Boot Manager
     Status = ChainloadWindowsBootManager(ImageHandle);

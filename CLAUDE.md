@@ -1256,6 +1256,8 @@ Boot-time kernel patching via a UEFI DXE driver, managed from the DioProcess UI.
 |------|---------|
 | `DioProcessEfi.c` | DXE entry point + ExitBootServices hook |
 | `Config.c/h` | NVRAM variable reader |
+| `Graphics.c/h` | GOP-based boot animation display |
+| `Animation.h` | Pre-converted BGRA32 animation frames (generated) |
 | `PatchDse.c/h` | DSE bypass (NOP g_CiOptions MOV in winload.efi) |
 | `PatchKpp.c/h` | PatchGuard bypass (RET at KiFilterFiberContext + ExpLicenseWatchInitWorker) |
 | `PatternScan.c/h` | Wildcard byte pattern scanner |
@@ -1268,6 +1270,32 @@ Boot-time kernel patching via a UEFI DXE driver, managed from the DioProcess UI.
 cd efi
 build -a X64 -t VS2022 -p DioProcessEfi/DioProcessEfi.dsc -b RELEASE
 ```
+
+### Boot Animation
+
+The EFI driver displays a custom animated boot screen during the 5-second delay before chainloading Windows. Uses GOP (Graphics Output Protocol) for hardware-accelerated display.
+
+**Adding custom animation:**
+```batch
+# Requirements: Python 3 + Pillow
+pip install Pillow
+
+# Convert GIF to C header
+python efi/tools/gif_to_header.py your_animation.gif -o efi/DioProcessEfi/Animation.h
+
+# Rebuild EFI driver
+cd efi
+build -a X64 -t VS2022 -p DioProcessEfi/DioProcessEfi.dsc -b RELEASE
+```
+
+**Technical details:**
+- Format: BGRA32 (matches GOP `PixelBlueGreenRedReserved8BitPerColor`)
+- Frames pre-converted at build time (no runtime GIF decoding)
+- Animation centered on screen, loops for 5 seconds
+- Graceful fallback to text-only if GOP unavailable
+- Recommended: max 256x256 resolution, 10-15 fps
+
+**Placeholder animation:** A simple blinking violet square is included in `Animation.h` (demonstrates 2-frame animation).
 
 **DSE bypass strategy:** Scan winload.efi .text section for `MOV [rip+imm32], ecx` patterns that initialize `g_CiOptions`, NOP out the 6-byte instruction to leave g_CiOptions at 0.
 
