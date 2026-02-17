@@ -25,6 +25,12 @@ STATIC BOOLEAN mGraphicsInitialized = FALSE;
 STATIC UINTN mScreenWidth = 0;
 STATIC UINTN mScreenHeight = 0;
 
+//
+// Double buffer for tear-free animation
+//
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL *mBackBuffer = NULL;
+STATIC UINTN mBackBufferSize = 0;
+
 EFI_STATUS
 GraphicsInit(
     VOID
@@ -61,6 +67,17 @@ GraphicsInit(
         // Fallback to common resolution
         mScreenWidth = 1024;
         mScreenHeight = 768;
+    }
+
+    //
+    // Allocate back buffer for double buffering (tear-free animation)
+    //
+    mBackBufferSize = mScreenWidth * mScreenHeight * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL);
+    mBackBuffer = AllocatePool(mBackBufferSize);
+    if (mBackBuffer == NULL) {
+        // Continue without double buffering
+        mBackBuffer = NULL;
+        mBackBufferSize = 0;
     }
 
     mGraphicsInitialized = TRUE;
@@ -184,7 +201,12 @@ GraphicsPlayAnimation(
     UINTN FrameDelay;
     UINTN CenterX;
     UINTN CenterY;
+    UINTN X, Y;
+    UINTN SrcX, SrcY;
+    UINTN DrawWidth, DrawHeight;
     EFI_STATUS Status;
+    CONST UINT8 *FrameData;
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Pixel;
 
     //
     // Initialize graphics if not already done
@@ -197,12 +219,39 @@ GraphicsPlayAnimation(
     }
 
     //
-    // Clear screen to black
+    // If no back buffer, fall back to direct drawing (may tear)
     //
-    GraphicsClearScreen();
+    if (mBackBuffer == NULL) {
+        GraphicsClearScreen();
+        
+        if (mScreenWidth > ANIMATION_WIDTH) {
+            CenterX = (mScreenWidth - ANIMATION_WIDTH) / 2;
+        } else {
+            CenterX = 0;
+        }
+        if (mScreenHeight > ANIMATION_HEIGHT) {
+            CenterY = (mScreenHeight - ANIMATION_HEIGHT) / 2;
+        } else {
+            CenterY = 0;
+        }
+        
+        ElapsedMs = 0;
+        FrameIndex = 0;
+        while (ElapsedMs < DurationMs) {
+            GraphicsDrawImage(AnimationFrames[FrameIndex], ANIMATION_WIDTH, ANIMATION_HEIGHT, CenterX, CenterY);
+            FrameDelay = AnimationDelays[FrameIndex];
+            if (ElapsedMs + FrameDelay > DurationMs) {
+                FrameDelay = DurationMs - ElapsedMs;
+            }
+            gBS->Stall(FrameDelay * 1000);
+            ElapsedMs += FrameDelay;
+            FrameIndex = (FrameIndex + 1) % ANIMATION_FRAME_COUNT;
+        }
+        return;
+    }
 
     //
-    // Calculate center position
+    // Calculate center position for animation
     //
     if (mScreenWidth > ANIMATION_WIDTH) {
         CenterX = (mScreenWidth - ANIMATION_WIDTH) / 2;
@@ -217,29 +266,69 @@ GraphicsPlayAnimation(
     }
 
     //
-    // Play animation loop
+    // Calculate actual draw dimensions (clip to screen)
+    //
+    DrawWidth = ANIMATION_WIDTH;
+    DrawHeight = ANIMATION_HEIGHT;
+    if (CenterX + DrawWidth > mScreenWidth) {
+        DrawWidth = mScreenWidth - CenterX;
+    }
+    if (CenterY + DrawHeight > mScreenHeight) {
+        DrawHeight = mScreenHeight - CenterY;
+    }
+
+    //
+    // Play animation loop with double buffering
     //
     ElapsedMs = 0;
     FrameIndex = 0;
 
     while (ElapsedMs < DurationMs) {
         //
-        // Draw current frame
+        // Clear back buffer to black
         //
-        GraphicsDrawImage(
-            AnimationFrames[FrameIndex],
-            ANIMATION_WIDTH,
-            ANIMATION_HEIGHT,
-            CenterX,
-            CenterY
+        SetMem(mBackBuffer, mBackBufferSize, 0);
+
+        //
+        // Copy animation frame to center of back buffer
+        //
+        FrameData = AnimationFrames[FrameIndex];
+        for (Y = 0; Y < DrawHeight; Y++) {
+            for (X = 0; X < DrawWidth; X++) {
+                SrcX = X;
+                SrcY = Y;
+                
+                // Source pixel from animation frame (BGRA32)
+                UINTN SrcOffset = (SrcY * ANIMATION_WIDTH + SrcX) * 4;
+                
+                // Destination pixel in back buffer
+                Pixel = &mBackBuffer[(CenterY + Y) * mScreenWidth + (CenterX + X)];
+                
+                Pixel->Blue     = FrameData[SrcOffset + 0];
+                Pixel->Green    = FrameData[SrcOffset + 1];
+                Pixel->Red      = FrameData[SrcOffset + 2];
+                Pixel->Reserved = 0;
+            }
+        }
+
+        //
+        // Blit entire back buffer to screen (single operation = no tearing)
+        //
+        mGop->Blt(
+            mGop,
+            mBackBuffer,
+            EfiBltBufferToVideo,
+            0, 0,           // Source X, Y
+            0, 0,           // Dest X, Y
+            mScreenWidth,
+            mScreenHeight,
+            0               // Delta
         );
 
         //
         // Wait for frame delay
         //
         FrameDelay = AnimationDelays[FrameIndex];
-        
-        // Cap frame delay to remaining time
         if (ElapsedMs + FrameDelay > DurationMs) {
             FrameDelay = DurationMs - ElapsedMs;
         }
@@ -254,5 +343,14 @@ GraphicsPlayAnimation(
         if (FrameIndex >= ANIMATION_FRAME_COUNT) {
             FrameIndex = 0;
         }
+    }
+
+    //
+    // Free back buffer
+    //
+    if (mBackBuffer != NULL) {
+        FreePool(mBackBuffer);
+        mBackBuffer = NULL;
+        mBackBufferSize = 0;
     }
 }

@@ -35,9 +35,17 @@ except ImportError:
     sys.exit(1)
 
 
-def extract_frames(gif_path: Path) -> list[tuple[bytes, int]]:
+def extract_frames(gif_path: Path, standalone_frames: bool = False) -> list[tuple[bytes, int]]:
     """
     Extract all frames from a GIF as BGRA32 bytes.
+    
+    Properly handles GIF disposal methods to avoid frame ghosting.
+    
+    Args:
+        gif_path: Path to GIF file
+        standalone_frames: If True, treat each frame as a complete image
+                          (no compositing/accumulation). Use for 3D renders
+                          or GIFs where each frame is a full image.
     
     Returns list of (frame_bytes, delay_ms) tuples.
     """
@@ -47,21 +55,52 @@ def extract_frames(gif_path: Path) -> list[tuple[bytes, int]]:
         # Get dimensions
         width, height = img.size
         
-        # Create a canvas for compositing (handles transparency/disposal)
+        # Track canvas state for proper disposal handling
         canvas = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+        last_canvas = canvas.copy()
         
         try:
+            frame_num = 0
             while True:
                 # Get frame delay (in ms, default 100ms if not specified)
                 delay = img.info.get("duration", 100)
                 if delay <= 0:
                     delay = 100
                 
+                # Get disposal method (0=unspecified, 1=none, 2=background, 3=previous)
+                disposal = img.info.get("disposal", 0)
+                
+                # For standalone frames mode, always start fresh
+                if standalone_frames:
+                    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+                    disposal = 2  # Force clear after each frame
+                
+                # Save canvas state before this frame (for disposal method 3)
+                if disposal == 3:
+                    restore_canvas = last_canvas.copy()
+                else:
+                    restore_canvas = None
+                
+                # Save current state for next iteration's "previous" reference
+                last_canvas = canvas.copy()
+                
                 # Convert frame to RGBA
                 frame = img.convert("RGBA")
                 
-                # Composite onto canvas (handles transparency)
-                canvas.paste(frame, (0, 0), frame)
+                # Composite frame onto canvas at the correct position
+                # Some GIFs have frames at offsets
+                paste_box = (0, 0)
+                if hasattr(img, 'tile') and img.tile:
+                    try:
+                        # tile format: [(decoder, (x0, y0, x1, y1), offset, params), ...]
+                        tile = img.tile[0]
+                        if len(tile) >= 2 and isinstance(tile[1], tuple) and len(tile[1]) >= 2:
+                            paste_box = (tile[1][0], tile[1][1])
+                    except (IndexError, TypeError):
+                        pass
+                
+                # Paste with alpha mask for transparency
+                canvas.paste(frame, paste_box, frame)
                 
                 # Convert to BGRA32 for GOP
                 # PIL gives RGBA (R, G, B, A), GOP wants BGRA (B, G, R, Reserved)
@@ -77,7 +116,17 @@ def extract_frames(gif_path: Path) -> list[tuple[bytes, int]]:
                 
                 frames.append((bytes(bgra_data), delay))
                 
+                # Apply disposal method AFTER capturing this frame
+                if disposal == 2:
+                    # Restore to background (clear canvas to black)
+                    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+                elif disposal == 3 and restore_canvas is not None:
+                    # Restore to previous frame
+                    canvas = restore_canvas
+                # disposal 0 or 1: leave canvas as-is for next frame
+                
                 # Move to next frame
+                frame_num += 1
                 img.seek(img.tell() + 1)
                 
         except EOFError:
@@ -157,6 +206,9 @@ def main():
     parser.add_argument("-o", "--output", type=Path, help="Output header file (default: stdout)")
     parser.add_argument("--max-frames", type=int, default=100, 
                         help="Maximum frames to extract (default: 100)")
+    parser.add_argument("--standalone-frames", action="store_true",
+                        help="Treat each frame as a complete image (no compositing). "
+                             "Use for 3D renders or GIFs where frames don't accumulate.")
     
     args = parser.parse_args()
     
@@ -165,7 +217,9 @@ def main():
         sys.exit(1)
     
     print(f"[*] Loading GIF: {args.input}", file=sys.stderr)
-    frames, width, height = extract_frames(args.input)
+    if args.standalone_frames:
+        print(f"[*] Mode: Standalone frames (no compositing)", file=sys.stderr)
+    frames, width, height = extract_frames(args.input, standalone_frames=args.standalone_frames)
     
     if len(frames) > args.max_frames:
         print(f"[!] Truncating to {args.max_frames} frames (was {len(frames)})", file=sys.stderr)

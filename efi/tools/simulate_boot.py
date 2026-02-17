@@ -31,9 +31,10 @@ except ImportError:
 
 
 class BootAnimationSimulator:
-    def __init__(self, gif_path: Path, duration_ms: int = 5000, resolution: tuple = None):
+    def __init__(self, gif_path: Path, duration_ms: int = 5000, resolution: tuple = None, standalone_frames: bool = False):
         self.gif_path = gif_path
         self.duration_ms = duration_ms
+        self.standalone_frames = standalone_frames
         self.frames = []
         self.delays = []
         self.current_frame = 0
@@ -111,14 +112,17 @@ class BootAnimationSimulator:
         self._animate()
     
     def _load_gif(self):
-        """Load GIF and extract frames."""
+        """Load GIF and extract frames with proper disposal handling."""
         print(f"[*] Loading: {self.gif_path}", file=sys.stderr)
+        if self.standalone_frames:
+            print(f"[*] Mode: Standalone frames (no compositing)", file=sys.stderr)
         
         with Image.open(self.gif_path) as img:
             self.anim_width, self.anim_height = img.size
             
-            # Create canvas for compositing
+            # Track canvas state for proper disposal handling
             canvas = Image.new("RGBA", (self.anim_width, self.anim_height), (0, 0, 0, 255))
+            last_canvas = canvas.copy()
             
             try:
                 while True:
@@ -127,6 +131,22 @@ class BootAnimationSimulator:
                     if delay <= 0:
                         delay = 100
                     
+                    # Get disposal method (0=unspecified, 1=none, 2=background, 3=previous)
+                    disposal = img.info.get("disposal", 0)
+                    
+                    # For standalone frames mode, always start fresh
+                    if self.standalone_frames:
+                        canvas = Image.new("RGBA", (self.anim_width, self.anim_height), (0, 0, 0, 255))
+                        disposal = 2  # Force clear after each frame
+                    
+                    # Save canvas for disposal method 3
+                    if disposal == 3:
+                        restore_canvas = last_canvas.copy()
+                    else:
+                        restore_canvas = None
+                    
+                    last_canvas = canvas.copy()
+                    
                     # Composite frame
                     frame = img.convert("RGBA")
                     canvas.paste(frame, (0, 0), frame)
@@ -134,6 +154,13 @@ class BootAnimationSimulator:
                     # Store copy
                     self.frames.append(canvas.copy())
                     self.delays.append(delay)
+                    
+                    # Apply disposal AFTER capturing
+                    if disposal == 2:
+                        # Restore to background
+                        canvas = Image.new("RGBA", (self.anim_width, self.anim_height), (0, 0, 0, 255))
+                    elif disposal == 3 and restore_canvas is not None:
+                        canvas = restore_canvas
                     
                     img.seek(img.tell() + 1)
             except EOFError:
@@ -240,6 +267,11 @@ def main():
         "-r", "--resolution", type=parse_resolution,
         help="Simulated screen resolution (default: 80%% of your screen)"
     )
+    parser.add_argument(
+        "--standalone-frames", action="store_true",
+        help="Treat each frame as a complete image (no compositing). "
+             "Use for 3D renders or GIFs where frames don't accumulate."
+    )
     
     args = parser.parse_args()
     
@@ -250,7 +282,8 @@ def main():
     simulator = BootAnimationSimulator(
         gif_path=args.input,
         duration_ms=args.duration,
-        resolution=args.resolution
+        resolution=args.resolution,
+        standalone_frames=args.standalone_frames
     )
     simulator.run()
 
