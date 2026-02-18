@@ -171,6 +171,24 @@ pub static EPT_HOOK_DETOUR_STOLEN_BYTES: GlobalSignal<String> = Signal::global(|
 pub static EPT_HOOK_DETOUR_ALLOCS: GlobalSignal<std::collections::HashMap<u32, (u32, u64)>> =
     Signal::global(std::collections::HashMap::new);
 
+// DPH Script state
+/// A loaded .dph (DioProcess Hook) script entry
+#[derive(Clone, Debug)]
+pub struct DphScript {
+    pub name: String,
+    pub file_path: String,
+    pub target_expr: String,      // "module+offset" or "0xABCD"
+    pub resolved_addr: Option<u64>,
+    pub mode: EptHookInputMode,
+    pub stolen_bytes: u32,
+    pub code: String,
+    pub hook_index: Option<u32>,  // Set after applied
+    pub status: String,           // "Applied", "Error: ...", "Pending"
+}
+
+pub static DPH_SCRIPTS: GlobalSignal<Vec<DphScript>> = Signal::global(Vec::new);
+pub static DPH_SHOW_SCRIPTS_TAB: GlobalSignal<bool> = Signal::global(|| false);
+
 /// Process view mode - flat list or tree hierarchy
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ProcessViewMode {

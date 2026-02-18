@@ -10,7 +10,10 @@ use misc::{allocate_near_address, free_remote_memory, write_process_memory_bytes
 use process::{get_process_arch, ProcessArch};
 
 use crate::helpers::copy_to_clipboard;
+use process::get_process_modules;
+
 use crate::state::{
+    DphScript, DPH_SCRIPTS, DPH_SHOW_SCRIPTS_TAB,
     EPT_HOOKS_LIST, EPT_HOOK_ASM_ERROR, EPT_HOOK_ASM_INPUT, EPT_HOOK_ASM_PREVIEW,
     EPT_HOOK_BYTES_INPUT, EPT_HOOK_DETOUR_ALLOCS, EPT_HOOK_DETOUR_ASM_ERROR,
     EPT_HOOK_DETOUR_ASM_INPUT, EPT_HOOK_DETOUR_ASM_PREVIEW, EPT_HOOK_DETOUR_STOLEN_BYTES,
@@ -60,6 +63,10 @@ pub fn MemoryScannerTab() -> Element {
     let mut detour_asm_error = EPT_HOOK_DETOUR_ASM_ERROR.signal();
     let mut detour_stolen_bytes = EPT_HOOK_DETOUR_STOLEN_BYTES.signal();
     let mut detour_allocs = EPT_HOOK_DETOUR_ALLOCS.signal();
+
+    // DPH Script state
+    let mut dph_scripts = DPH_SCRIPTS.signal();
+    let mut show_scripts_tab = DPH_SHOW_SCRIPTS_TAB.signal();
 
     let driver_loaded = is_driver_loaded();
     let scanned = *has_scanned.read();
@@ -441,10 +448,194 @@ pub fn MemoryScannerTab() -> Element {
                 }
             }
 
+            // Sub-tab toggle
+            div { style: "display: flex; gap: 4px; padding: 4px 12px; border-bottom: 1px solid var(--border-color);",
+                button {
+                    class: "btn",
+                    style: if !*show_scripts_tab.read() { "font-size: 12px; padding: 3px 12px; background: var(--accent-primary); color: #fff;" } else { "font-size: 12px; padding: 3px 12px;" },
+                    onclick: move |_| show_scripts_tab.set(false),
+                    "Scanner"
+                }
+                button {
+                    class: "btn",
+                    style: if *show_scripts_tab.read() { "font-size: 12px; padding: 3px 12px; background: var(--accent-primary); color: #fff;" } else { "font-size: 12px; padding: 3px 12px;" },
+                    onclick: move |_| show_scripts_tab.set(true),
+                    "Scripts"
+                }
+            }
+
             // Scrollable content
             div {
                 style: "display: flex; flex-direction: column; flex: 1; overflow-y: auto; gap: 0;",
 
+                if *show_scripts_tab.read() {
+                    // ============== Scripts Panel ==============
+                    {
+                        let scripts = dph_scripts.read().clone();
+                        let pid_str_clone = pid_input.read().clone();
+                        let pid_for_scripts = pid_str_clone.trim().parse::<u32>().unwrap_or(0);
+                        rsx! {
+                            div { class: "controls",
+                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 8px;",
+                                    button {
+                                        class: "btn",
+                                        style: "font-size: 12px; padding: 3px 12px;",
+                                        onclick: move |_| {
+                                            spawn(async move {
+                                                if let Some(file) = rfd::AsyncFileDialog::new()
+                                                    .add_filter("DioProcess Hook Script", &["dph"])
+                                                    .set_title("Load .dph Script")
+                                                    .pick_file()
+                                                    .await
+                                                {
+                                                    let path = file.path().to_string_lossy().to_string();
+                                                    match std::fs::read_to_string(file.path()) {
+                                                        Ok(content) => {
+                                                            match parse_dph_script(&content, &path) {
+                                                                Ok(script) => {
+                                                                    dph_scripts.write().push(script);
+                                                                    status_message.set("Script loaded".to_string());
+                                                                    is_error.set(false);
+                                                                }
+                                                                Err(e) => {
+                                                                    status_message.set(format!("Parse error: {}", e));
+                                                                    is_error.set(true);
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!("Read error: {}", e));
+                                                            is_error.set(true);
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        },
+                                        "Load .dph"
+                                    }
+                                    button {
+                                        class: "btn",
+                                        style: "font-size: 12px; padding: 3px 12px;",
+                                        disabled: pid_for_scripts == 0 || scripts.iter().all(|s| s.hook_index.is_some()),
+                                        onclick: {
+                                            move |_| {
+                                                let pid_str = pid_input.read().clone();
+                                                let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+                                                if pid == 0 {
+                                                    status_message.set("Set PID first".to_string());
+                                                    is_error.set(true);
+                                                    return;
+                                                }
+                                                let count = dph_scripts.read().len();
+                                                for i in 0..count {
+                                                    let already_applied = dph_scripts.read().get(i).map(|s| s.hook_index.is_some()).unwrap_or(true);
+                                                    if already_applied { continue; }
+                                                    apply_dph_script(i, pid, &mut dph_scripts, &mut detour_allocs, &mut ept_hooks_list, &mut status_message, &mut is_error);
+                                                }
+                                            }
+                                        },
+                                        "Apply All"
+                                    }
+                                    if !scripts.is_empty() {
+                                        button {
+                                            class: "btn",
+                                            style: "font-size: 12px; padding: 3px 12px; color: #dc2626;",
+                                            onclick: move |_| {
+                                                dph_scripts.write().clear();
+                                            },
+                                            "Clear All"
+                                        }
+                                    }
+                                }
+
+                                if scripts.is_empty() {
+                                    div { style: "color: var(--text-secondary); font-size: 13px; padding: 16px; text-align: center;",
+                                        "No scripts loaded. Click \"Load .dph\" to add a hook script."
+                                    }
+                                } else {
+                                    table { class: "process-table",
+                                        style: "font-size: 12px;",
+                                        thead { class: "table-header",
+                                            tr {
+                                                th { class: "th", style: "width: 180px;", "Name" }
+                                                th { class: "th", style: "width: 220px;", "Target" }
+                                                th { class: "th", style: "width: 80px;", "Mode" }
+                                                th { class: "th", style: "width: 100px;", "Status" }
+                                                th { class: "th", style: "width: 140px;", "" }
+                                            }
+                                        }
+                                        tbody {
+                                            for (si, script) in scripts.iter().enumerate() {
+                                                {
+                                                    let s_name = script.name.clone();
+                                                    let s_target = script.target_expr.clone();
+                                                    let s_mode = match script.mode {
+                                                        EptHookInputMode::Hex => "Hex",
+                                                        EptHookInputMode::Assembly => "Assembly",
+                                                        EptHookInputMode::Detour => "Detour",
+                                                    };
+                                                    let s_status = script.status.clone();
+                                                    let is_applied = script.hook_index.is_some();
+                                                    let status_color = if s_status == "Applied" { "color: #22c55e;" }
+                                                        else if s_status.starts_with("Error") { "color: #dc2626;" }
+                                                        else { "color: var(--text-secondary);" };
+                                                    rsx! {
+                                                        tr { class: "process-row",
+                                                            td { class: "cell", style: "width: 180px;", "{s_name}" }
+                                                            td { class: "cell", style: "width: 220px; font-family: 'Consolas', monospace; font-size: 11px;", "{s_target}" }
+                                                            td { class: "cell", style: "width: 80px;", "{s_mode}" }
+                                                            td { class: "cell", style: "width: 100px; {status_color}", "{s_status}" }
+                                                            td { class: "cell", style: "width: 140px; display: flex; gap: 4px;",
+                                                                if !is_applied {
+                                                                    button {
+                                                                        class: "btn",
+                                                                        style: "font-size: 10px; padding: 1px 6px;",
+                                                                        disabled: pid_for_scripts == 0,
+                                                                        onclick: {
+                                                                            move |_| {
+                                                                                let pid_str = pid_input.read().clone();
+                                                                                let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+                                                                                if pid > 0 {
+                                                                                    apply_dph_script(si, pid, &mut dph_scripts, &mut detour_allocs, &mut ept_hooks_list, &mut status_message, &mut is_error);
+                                                                                }
+                                                                            }
+                                                                        },
+                                                                        "Apply"
+                                                                    }
+                                                                }
+                                                                button {
+                                                                    class: "btn",
+                                                                    style: "font-size: 10px; padding: 1px 6px; color: #dc2626;",
+                                                                    onclick: move |_| {
+                                                                        // If applied, remove the hook first
+                                                                        if let Some(idx) = dph_scripts.read().get(si).and_then(|s| s.hook_index) {
+                                                                            if let Some((dpid, daddr)) = detour_allocs.read().get(&idx).copied() {
+                                                                                let _ = free_remote_memory(dpid, daddr);
+                                                                            }
+                                                                            detour_allocs.write().remove(&idx);
+                                                                            let _ = remove_ept_hook(idx);
+                                                                            if let Ok(h) = list_ept_hooks() {
+                                                                                ept_hooks_list.set(h);
+                                                                            }
+                                                                        }
+                                                                        dph_scripts.write().remove(si);
+                                                                    },
+                                                                    "Delete"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !*show_scripts_tab.read() {
                 // Controls bar
                 div { class: "controls",
                     div { style: "display: flex; gap: 8px; align-items: center; flex-wrap: wrap;",
@@ -763,6 +954,8 @@ pub fn MemoryScannerTab() -> Element {
                     }
                 }
 
+                } // end if !show_scripts_tab
+
                 // ============== EPT Hooks Panel ==============
                 {
                     let hooks = ept_hooks_list.read().clone();
@@ -816,7 +1009,7 @@ pub fn MemoryScannerTab() -> Element {
                                             th { class: "th", style: "width: 80px;", "PID" }
                                             th { class: "th", style: "width: 180px;", "Address" }
                                             th { class: "th", style: "width: 80px;", "Patch Size" }
-                                            th { class: "th", style: "width: 80px;", "" }
+                                            th { class: "th", style: "width: 140px;", "" }
                                         }
                                     }
                                     tbody {
@@ -836,7 +1029,42 @@ pub fn MemoryScannerTab() -> Element {
                                                             "0x{hook_addr:X}"
                                                         }
                                                         td { class: "cell", style: "width: 80px;", "{hook_size}" }
-                                                        td { class: "cell", style: "width: 80px;",
+                                                        td { class: "cell", style: "width: 140px; display: flex; gap: 4px;",
+                                                            button {
+                                                                class: "btn",
+                                                                style: "font-size: 10px; padding: 1px 6px;",
+                                                                onclick: {
+                                                                    move |_| {
+                                                                        let pid = hook_pid;
+                                                                        let addr = hook_addr;
+                                                                        let mode = *ept_hook_input_mode.read();
+                                                                        let code = match mode {
+                                                                            EptHookInputMode::Hex => ept_hook_bytes.read().clone(),
+                                                                            EptHookInputMode::Assembly => ept_hook_asm_input.read().clone(),
+                                                                            EptHookInputMode::Detour => detour_asm_input.read().clone(),
+                                                                        };
+                                                                        let stolen: u32 = detour_stolen_bytes.read().trim().parse().unwrap_or(6);
+                                                                        let target_expr = reverse_resolve_address(pid, addr);
+                                                                        let mode_str = match mode {
+                                                                            EptHookInputMode::Hex => "hex",
+                                                                            EptHookInputMode::Assembly => "assembly",
+                                                                            EptHookInputMode::Detour => "detour",
+                                                                        };
+                                                                        let content = build_dph_content("", &target_expr, mode_str, stolen, &code);
+                                                                        spawn(async move {
+                                                                            if let Some(file) = rfd::AsyncFileDialog::new()
+                                                                                .add_filter("DioProcess Hook Script", &["dph"])
+                                                                                .set_file_name("hook.dph")
+                                                                                .save_file()
+                                                                                .await
+                                                                            {
+                                                                                let _ = std::fs::write(file.path(), content);
+                                                                            }
+                                                                        });
+                                                                    }
+                                                                },
+                                                                "Save .dph"
+                                                            }
                                                             button {
                                                                 class: "btn",
                                                                 style: "font-size: 10px; padding: 1px 6px; color: #dc2626;",
@@ -1599,4 +1827,417 @@ fn parse_hex_bytes(input: &str) -> Result<Vec<u8>, String> {
     }
 
     Ok(bytes)
+}
+
+/// Parse a .dph script file into a DphScript struct
+fn parse_dph_script(content: &str, file_path: &str) -> Result<DphScript, String> {
+    let mut name = String::new();
+    let mut target = String::new();
+    let mut mode_str = String::new();
+    let mut stolen_bytes: u32 = 6;
+    let mut in_code = false;
+    let mut code_lines: Vec<&str> = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') && !in_code {
+            continue;
+        }
+        if trimmed == "[hook]" {
+            in_code = false;
+            continue;
+        }
+        if trimmed == "[code]" {
+            in_code = true;
+            continue;
+        }
+        if in_code {
+            code_lines.push(line);
+            continue;
+        }
+        // Parse key = value in [hook] section
+        if let Some((key, val)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let val = val.trim();
+            match key {
+                "name" => name = val.to_string(),
+                "target" => target = val.to_string(),
+                "mode" => mode_str = val.to_lowercase(),
+                "stolen_bytes" => stolen_bytes = val.parse().unwrap_or(6),
+                _ => {}
+            }
+        }
+    }
+
+    if target.is_empty() {
+        return Err("Missing 'target' field in [hook] section".to_string());
+    }
+
+    let code = code_lines.join("\n").trim_end().to_string();
+    if code.is_empty() {
+        return Err("Empty [code] section".to_string());
+    }
+
+    let mode = match mode_str.as_str() {
+        "hex" => EptHookInputMode::Hex,
+        "assembly" | "asm" => EptHookInputMode::Assembly,
+        "detour" => EptHookInputMode::Detour,
+        "" => return Err("Missing 'mode' field in [hook] section".to_string()),
+        other => return Err(format!("Unknown mode: '{}'", other)),
+    };
+
+    if name.is_empty() {
+        // Default name from filename
+        name = std::path::Path::new(file_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Unnamed".to_string());
+    }
+
+    Ok(DphScript {
+        name,
+        file_path: file_path.to_string(),
+        target_expr: target,
+        resolved_addr: None,
+        mode,
+        stolen_bytes,
+        code,
+        hook_index: None,
+        status: "Pending".to_string(),
+    })
+}
+
+/// Resolve a target expression like "module+offset" or "0xABCD" to an absolute address
+fn resolve_target(pid: u32, target_expr: &str) -> Result<u64, String> {
+    let expr = target_expr.trim();
+    // Absolute hex address
+    if expr.starts_with("0x") || expr.starts_with("0X") {
+        let hex = &expr[2..];
+        return u64::from_str_radix(hex, 16)
+            .map_err(|_| format!("Invalid hex address: '{}'", expr));
+    }
+
+    // module+offset
+    if let Some((module_name, offset_str)) = expr.split_once('+') {
+        let module_name = module_name.trim();
+        let offset_str = offset_str.trim();
+        let offset = if offset_str.starts_with("0x") || offset_str.starts_with("0X") {
+            u64::from_str_radix(&offset_str[2..], 16)
+        } else {
+            u64::from_str_radix(offset_str, 16)
+        }.map_err(|_| format!("Invalid offset: '{}'", offset_str))?;
+
+        let modules = get_process_modules(pid);
+        for m in &modules {
+            let mod_filename = std::path::Path::new(&m.path)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if mod_filename.eq_ignore_ascii_case(module_name) {
+                return Ok(m.base_address as u64 + offset);
+            }
+        }
+        return Err(format!("Module '{}' not found in process {}", module_name, pid));
+    }
+
+    // Try as plain hex without 0x prefix
+    u64::from_str_radix(expr, 16)
+        .map_err(|_| format!("Cannot parse target: '{}' (use module+offset or 0xABCD)", expr))
+}
+
+/// Reverse-resolve an address to "module+offset" format if possible
+fn reverse_resolve_address(pid: u32, addr: u64) -> String {
+    let modules = get_process_modules(pid);
+    for m in &modules {
+        let base = m.base_address as u64;
+        let end = base + m.size as u64;
+        if addr >= base && addr < end {
+            let offset = addr - base;
+            let mod_name = std::path::Path::new(&m.path)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_default();
+            return format!("{}+{:X}", mod_name, offset);
+        }
+    }
+    format!("0x{:X}", addr)
+}
+
+/// Build .dph file content
+fn build_dph_content(name: &str, target: &str, mode: &str, stolen_bytes: u32, code: &str) -> String {
+    let mut out = String::new();
+    out.push_str("# DioProcess Hook Script\n");
+    out.push_str("[hook]\n");
+    if !name.is_empty() {
+        out.push_str(&format!("name = {}\n", name));
+    }
+    out.push_str(&format!("target = {}\n", target));
+    out.push_str(&format!("mode = {}\n", mode));
+    if mode == "detour" {
+        out.push_str(&format!("stolen_bytes = {}\n", stolen_bytes));
+    }
+    out.push_str("\n[code]\n");
+    out.push_str(code);
+    if !code.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// Apply a DPH script by index to a target process
+fn apply_dph_script(
+    script_idx: usize,
+    pid: u32,
+    dph_scripts: &mut Signal<Vec<DphScript>>,
+    detour_allocs: &mut Signal<std::collections::HashMap<u32, (u32, u64)>>,
+    ept_hooks_list: &mut Signal<Vec<callback::EptHookInfo>>,
+    status_message: &mut Signal<String>,
+    is_error: &mut Signal<bool>,
+) {
+    let script = match dph_scripts.read().get(script_idx) {
+        Some(s) => s.clone(),
+        None => return,
+    };
+
+    // Resolve target address
+    let addr = match resolve_target(pid, &script.target_expr) {
+        Ok(a) => a,
+        Err(e) => {
+            if let Some(s) = dph_scripts.write().get_mut(script_idx) {
+                s.status = format!("Error: {}", e);
+            }
+            status_message.set(format!("Resolve failed: {}", e));
+            is_error.set(true);
+            return;
+        }
+    };
+
+    if let Some(s) = dph_scripts.write().get_mut(script_idx) {
+        s.resolved_addr = Some(addr);
+    }
+
+    let proc_arch = get_process_arch(pid);
+
+    match script.mode {
+        EptHookInputMode::Detour => {
+            let stolen = script.stolen_bytes.max(5);
+            let alloc_addr = match allocate_near_address(pid, addr, 0x1000) {
+                Ok(a) => a,
+                Err(e) => {
+                    let msg = format!("Alloc failed: {}", e);
+                    if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
+                    status_message.set(msg); is_error.set(true);
+                    return;
+                }
+            };
+            let detour_bytes = match assemble(&script.code, proc_arch, alloc_addr) {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = free_remote_memory(pid, alloc_addr);
+                    let msg = format!("Assembly error: {}", e);
+                    if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
+                    status_message.set(msg); is_error.set(true);
+                    return;
+                }
+            };
+            if detour_bytes.is_empty() || detour_bytes.len() > 3800 {
+                let _ = free_remote_memory(pid, alloc_addr);
+                let msg = "Detour code must be 1-3800 bytes".to_string();
+                if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
+                status_message.set(msg); is_error.set(true);
+                return;
+            }
+            let return_addr = addr + stolen as u64;
+            let mut full_code = detour_bytes.clone();
+            full_code.extend_from_slice(&[0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]);
+            full_code.extend_from_slice(&return_addr.to_le_bytes());
+
+            if let Err(e) = write_process_memory_bytes(pid, alloc_addr, &full_code) {
+                let _ = free_remote_memory(pid, alloc_addr);
+                let msg = format!("Write failed: {}", e);
+                if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
+                status_message.set(msg); is_error.set(true);
+                return;
+            }
+
+            let jmp_target = alloc_addr as i64;
+            let jmp_from = (addr + 5) as i64;
+            let rel32 = (jmp_target - jmp_from) as i32;
+            let mut jmp_patch: Vec<u8> = Vec::with_capacity(stolen as usize);
+            jmp_patch.push(0xE9);
+            jmp_patch.extend_from_slice(&rel32.to_le_bytes());
+            for _ in 5..stolen {
+                jmp_patch.push(0x90);
+            }
+
+            match install_ept_hook(pid, addr, &jmp_patch) {
+                Ok(idx) => {
+                    detour_allocs.write().insert(idx, (pid, alloc_addr));
+                    if let Some(s) = dph_scripts.write().get_mut(script_idx) {
+                        s.hook_index = Some(idx);
+                        s.status = "Applied".to_string();
+                    }
+                    status_message.set(format!("Script '{}' applied (detour hook #{})", script.name, idx));
+                    is_error.set(false);
+                    if let Ok(hooks) = list_ept_hooks() { ept_hooks_list.set(hooks); }
+                }
+                Err(e) => {
+                    let _ = free_remote_memory(pid, alloc_addr);
+                    let msg = format!("Install failed: {}", e);
+                    if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
+                    status_message.set(msg); is_error.set(true);
+                }
+            }
+        }
+        EptHookInputMode::Hex => {
+            let bytes = match parse_hex_bytes(&script.code) {
+                Ok(b) => b,
+                Err(e) => {
+                    if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", e); }
+                    status_message.set(e); is_error.set(true);
+                    return;
+                }
+            };
+            if bytes.is_empty() || bytes.len() > 256 {
+                let msg = "Patch bytes must be 1-256 bytes".to_string();
+                if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
+                status_message.set(msg); is_error.set(true);
+                return;
+            }
+            match install_ept_hook(pid, addr, &bytes) {
+                Ok(idx) => {
+                    if let Some(s) = dph_scripts.write().get_mut(script_idx) {
+                        s.hook_index = Some(idx);
+                        s.status = "Applied".to_string();
+                    }
+                    status_message.set(format!("Script '{}' applied (hook #{})", script.name, idx));
+                    is_error.set(false);
+                    if let Ok(hooks) = list_ept_hooks() { ept_hooks_list.set(hooks); }
+                }
+                Err(e) => {
+                    let msg = format!("Install failed: {}", e);
+                    if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
+                    status_message.set(msg); is_error.set(true);
+                }
+            }
+        }
+        EptHookInputMode::Assembly => {
+            let bytes = match assemble(&script.code, proc_arch, addr) {
+                Ok(b) => b,
+                Err(e) => {
+                    let msg = format!("Assembly error: {}", e);
+                    if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
+                    status_message.set(msg); is_error.set(true);
+                    return;
+                }
+            };
+            if bytes.is_empty() || bytes.len() > 256 {
+                let msg = "Patch bytes must be 1-256 bytes".to_string();
+                if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
+                status_message.set(msg); is_error.set(true);
+                return;
+            }
+            match install_ept_hook(pid, addr, &bytes) {
+                Ok(idx) => {
+                    if let Some(s) = dph_scripts.write().get_mut(script_idx) {
+                        s.hook_index = Some(idx);
+                        s.status = "Applied".to_string();
+                    }
+                    status_message.set(format!("Script '{}' applied (hook #{})", script.name, idx));
+                    is_error.set(false);
+                    if let Ok(hooks) = list_ept_hooks() { ept_hooks_list.set(hooks); }
+                }
+                Err(e) => {
+                    let msg = format!("Install failed: {}", e);
+                    if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
+                    status_message.set(msg); is_error.set(true);
+                }
+            }
+        }
+    }
+}
+
+/// Apply a .dph script file to a process (for use from process_tab context menu)
+pub fn apply_dph_file_to_process(pid: u32, file_path: &str) -> Result<String, String> {
+    let content = std::fs::read_to_string(file_path)
+        .map_err(|e| format!("Read error: {}", e))?;
+    let script = parse_dph_script(&content, file_path)?;
+
+    let addr = resolve_target(pid, &script.target_expr)?;
+    let proc_arch = get_process_arch(pid);
+
+    match script.mode {
+        EptHookInputMode::Detour => {
+            let stolen = script.stolen_bytes.max(5);
+            let alloc_addr = allocate_near_address(pid, addr, 0x1000)
+                .map_err(|e| format!("Alloc failed: {}", e))?;
+            let detour_bytes = match assemble(&script.code, proc_arch, alloc_addr) {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = free_remote_memory(pid, alloc_addr);
+                    return Err(format!("Assembly error: {}", e));
+                }
+            };
+            if detour_bytes.is_empty() || detour_bytes.len() > 3800 {
+                let _ = free_remote_memory(pid, alloc_addr);
+                return Err("Detour code must be 1-3800 bytes".to_string());
+            }
+            let return_addr = addr + stolen as u64;
+            let mut full_code = detour_bytes.clone();
+            full_code.extend_from_slice(&[0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]);
+            full_code.extend_from_slice(&return_addr.to_le_bytes());
+
+            if let Err(e) = write_process_memory_bytes(pid, alloc_addr, &full_code) {
+                let _ = free_remote_memory(pid, alloc_addr);
+                return Err(format!("Write failed: {}", e));
+            }
+
+            let jmp_target = alloc_addr as i64;
+            let jmp_from = (addr + 5) as i64;
+            let rel32 = (jmp_target - jmp_from) as i32;
+            let mut jmp_patch: Vec<u8> = Vec::with_capacity(stolen as usize);
+            jmp_patch.push(0xE9);
+            jmp_patch.extend_from_slice(&rel32.to_le_bytes());
+            for _ in 5..stolen { jmp_patch.push(0x90); }
+
+            match install_ept_hook(pid, addr, &jmp_patch) {
+                Ok(idx) => {
+                    EPT_HOOK_DETOUR_ALLOCS.write().insert(idx, (pid, alloc_addr));
+                    if let Ok(hooks) = list_ept_hooks() { EPT_HOOKS_LIST.write().clone_from(&hooks); }
+                    Ok(format!("Script '{}' applied (detour hook #{} at 0x{:X})", script.name, idx, addr))
+                }
+                Err(e) => {
+                    let _ = free_remote_memory(pid, alloc_addr);
+                    Err(format!("Install failed: {}", e))
+                }
+            }
+        }
+        EptHookInputMode::Hex => {
+            let bytes = parse_hex_bytes(&script.code)?;
+            if bytes.is_empty() || bytes.len() > 256 {
+                return Err("Patch bytes must be 1-256 bytes".to_string());
+            }
+            match install_ept_hook(pid, addr, &bytes) {
+                Ok(idx) => {
+                    if let Ok(hooks) = list_ept_hooks() { EPT_HOOKS_LIST.write().clone_from(&hooks); }
+                    Ok(format!("Script '{}' applied (hook #{} at 0x{:X})", script.name, idx, addr))
+                }
+                Err(e) => Err(format!("Install failed: {}", e)),
+            }
+        }
+        EptHookInputMode::Assembly => {
+            let bytes = assemble(&script.code, proc_arch, addr)
+                .map_err(|e| format!("Assembly error: {}", e))?;
+            if bytes.is_empty() || bytes.len() > 256 {
+                return Err("Patch bytes must be 1-256 bytes".to_string());
+            }
+            match install_ept_hook(pid, addr, &bytes) {
+                Ok(idx) => {
+                    if let Ok(hooks) = list_ept_hooks() { EPT_HOOKS_LIST.write().clone_from(&hooks); }
+                    Ok(format!("Script '{}' applied (hook #{} at 0x{:X})", script.name, idx, addr))
+                }
+                Err(e) => Err(format!("Install failed: {}", e)),
+            }
+        }
+    }
 }

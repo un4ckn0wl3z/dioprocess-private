@@ -50,6 +50,16 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - **Process herpaderping** (write payload PE to temp file, create image section, overwrite file with legitimate PE before inspection)
   - **Herpaderping hollowing** (herpaderping + hollowing: payload section mapped into suspended legit process, temp file overwritten with legit PE, thread hijacked)
 - Primary token theft & impersonation (`CreateProcessAsUserW` under stolen token)
+- **Memory Scanner** — Physical memory scanning via CR3 page table walk (hypervisor EPT):
+  - First/next scan with multiple data types (byte, 2/4/8-byte integers, float, double, AOB)
+  - Multiple scan types (exact, greater/less than, changed/unchanged, between)
+  - Inline value editing and write-back
+  - **EPT Hooks** — Install execution-page hooks via hypervisor (Hex bytes, Assembly, Detour modes)
+  - **`.dph` Hook Scripts** — Save and load EPT hook configurations as portable `.dph` files:
+    - `module+offset` target addressing (survives ASLR across restarts)
+    - Scripts sub-tab: load, apply, apply all, delete scripts
+    - Save active hooks as `.dph` files from the hooks table
+    - Apply scripts from process right-click context menu
 - **Utilities tab** — File bloating (append null bytes or random data to inflate file size, 1–2000 MB)
 
 ## Project Structure (Cargo Workspace)
@@ -286,6 +296,54 @@ Scan process IAT (Import Address Table) for inline hooks by comparing imported f
 - Displays hook location, memory vs disk bytes, target module, and import DLL name
 - Accessed via context menu: **Inspect → Hook Scan**
 
+### Memory Scanner & EPT Hooks
+
+Physical memory scanner via hypervisor CR3 page table walk. Access via the **Memory Scanner** tab:
+
+- **First scan** — Scan all committed memory regions for a value (exact, greater/less than, between, AOB pattern)
+- **Next scan** — Refine previous results (changed, unchanged, increased, decreased, exact)
+- **Data types** — Byte, 2/4/8-byte integers, float, double, Array of Bytes (AOB with wildcards)
+- **Value writing** — Select a result and write a new value back to memory
+- **EPT Hooks** — Install execution-page hooks via hypervisor EPT (requires hypervisor running):
+  - **Hex mode** — Patch execution page with raw hex bytes
+  - **Assembly mode** — Write Intel syntax assembly, assembled at target address (live preview)
+  - **Detour mode** — Allocate RWX cave near hook point (±2GB for JMP rel32), assemble detour code there, EPT hook redirects execution via JMP. Return jump auto-appended (`FF 25` absolute JMP back to hook_addr + stolen_bytes)
+  - Save/load `.aa` assembly script files
+
+#### `.dph` Hook Script System
+
+Save EPT hook configurations to `.dph` (DioProcess Hook) files for portable, repeatable hook application. Scripts survive process restarts by using `module+offset` addressing resolved at apply time.
+
+**File format** (plain text, human-editable):
+```ini
+# DioProcess Hook Script
+[hook]
+name = My Hook
+target = Tutorial-x86_64.exe+45D7D
+mode = detour
+stolen_bytes = 6
+
+[code]
+add [rbx+0x7F8], edx
+```
+
+**Fields:**
+- `name` — Display name (optional, defaults to filename)
+- `target` — `module+offset` (resolved at apply time via module enumeration) or absolute hex `0x7FF645D7D`
+- `mode` — `hex`, `assembly`, or `detour`
+- `stolen_bytes` — Only for detour mode (default 6, minimum 5)
+- `[code]` — Everything after this line is the hook payload
+
+**Usage:**
+1. **Save from active hook** — Click "Save .dph" on any active EPT hook row → reverse-resolves address to `module+offset`
+2. **Load in Scripts tab** — Memory Scanner → Scripts sub-tab → "Load .dph" → script appears in table
+3. **Apply** — Click "Apply" per script or "Apply All" to install all pending scripts
+4. **From process context menu** — Right-click process → Miscellaneous → "Apply .dph Script" → browse file → hook applied
+
+**Module+offset resolution:** At apply time, `get_process_modules(pid)` enumerates loaded modules, finds the matching module base (case-insensitive), and adds the offset. This makes scripts portable across ASLR restarts.
+
+Located in `crates/ui/src/components/memory_scanner_tab.rs`: `parse_dph_script()`, `resolve_target()`, `reverse_resolve_address()`, `apply_dph_file_to_process()`
+
 ### Token Theft
 
 `OpenProcessToken → DuplicateTokenEx(TokenPrimary) → SeAssignPrimaryTokenPrivilege → ImpersonateLoggedOnUser → CreateProcessAsUserW → RevertToSelf`
@@ -395,7 +453,7 @@ Real-time kernel event capture via WDM driver with 17 event types:
   - **Aura Glow** (default) — Dark background with purple/violet accents and glowing white text
   - **Cyber** — Original cyan/teal accent theme
   - Theme preference persisted in SQLite (`%LOCALAPPDATA%\DioProcess\config.db`)
-- Tabs: **Processes** · **Network** · **Services** · **Usermode Utilities** · **Kernel Enumeration** · **Hypervisor** <sup style="color:red">Ring -1</sup> · **UEFI Bootkit** · **System Events**
+- Tabs: **Processes** · **Network** · **Services** · **Memory Scanner** · **Usermode Utilities** · **Kernel Enumeration** · **Hypervisor** <sup style="color:red">Ring -1</sup> · **UEFI Bootkit** · **System Events**
 - **Tree view** in Processes tab (DFS traversal, box-drawing connectors ├ │ └ ─, ancestor-inclusive search)
 - Modal inspectors: Threads · Handles · Modules · Memory · Performance graphs · String Scan
 - Real-time per-process CPU/memory graphs (60-second rolling history, SVG + fill)

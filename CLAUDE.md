@@ -93,6 +93,7 @@ crates/
 │       │   ├── threadless_inject_window.rs # Threadless shellcode injection modal
 │       │   ├── string_scan_window.rs    # Process memory string scan modal
 │       │   ├── early_injection_window.rs # Early kernel injection modal (APC method only)
+│       │   ├── memory_scanner_tab.rs    # Memory Scanner tab (physical memory scan + EPT hooks + .dph scripts)
 │       │   ├── utilities_tab.rs         # Usermode Utilities tab (file bloating, etc.)
 │       │   ├── kernel_utilities_tab.rs  # Kernel Enumeration tab (callback enum, PspCidTable)
 │       │   ├── kernel_enumeration/
@@ -162,6 +163,9 @@ UI components call library functions directly. Libraries wrap unsafe Windows API
 | `EarlyInjectionStatus` | callback | armed, target_process_name, dll_path, method, injection_count, last_injected_pid, last_status, one_shot |
 | `UefiConfig` | uefi-manager | dse_bypass, kpp_bypass |
 | `EfiInstallInfo` | uefi-manager | efi_path, boot_entry_id |
+| `EptHookInfo` | callback | process_id, target_address, patch_size, hook_index, active |
+| `EptHookInputMode` | ui | Hex, Assembly, Detour |
+| `DphScript` | ui | name, file_path, target_expr, resolved_addr, mode, stolen_bytes, code, hook_index, status |
 
 ## Build & run
 
@@ -846,6 +850,104 @@ Access via right-click context menu > Inspect > String Scan:
 - **Context menu** — Copy String, Copy Address, Copy Row
 - **Region type** — Each result shows whether it came from Private, Mapped, or Image memory
 - Uses `process::scan_process_strings()` function; scanning runs on `tokio::task::spawn_blocking` to avoid UI freeze
+
+## Memory Scanner tab
+
+Access via "Memory Scanner" tab in the main navigation. Physical memory scanner via hypervisor CR3 page table walk + EPT hook management + .dph script system.
+
+### Scanner
+
+- **First scan** — Scan all committed memory regions for a value (exact, greater/less than, between, AOB pattern)
+- **Next scan** — Refine previous results (changed, unchanged, increased, decreased, exact)
+- **Data types** — Byte, 2/4/8-byte integers, float, double, Array of Bytes (AOB with `??` wildcards)
+- **Scan regions** — All, Heap, Stack, Image, Mapped, Private
+- **Value writing** — Select a result and write a new value, or double-click for inline editing
+- **Pagination** — 500 results per page with navigation
+- **Context menu** — Edit Value, Select for Write Bar, Copy Address/Value/Row, Install EPT Hook
+
+### EPT Hooks (Hypervisor)
+
+Install execution-page hooks via hypervisor EPT. The EPT hook makes the read-page show original bytes while the execute-page shows patched bytes (invisible to memory scanners).
+
+**Three input modes:**
+- **Hex mode** — Raw hex bytes (e.g. `90 90 90`, `0x90`, `909090`). Max 256 bytes.
+- **Assembly mode** — Intel syntax assembly, assembled at target address with live byte preview. Save/load `.aa` files.
+- **Detour mode** — Allocate RWX cave near hook point (±2GB for JMP rel32), assemble detour code there, EPT hook redirects execution. Return jump auto-appended (`FF 25 00 00 00 00 [8-byte abs addr]`). Stolen bytes minimum 5 (for `E9` JMP rel32 + NOP padding).
+
+**Active EPT Hooks table** — Shows all installed hooks with index, PID, address, patch size. Per-hook actions: Save .dph, Remove. Bulk: Refresh, Remove All.
+
+**State signals (state.rs):**
+- `EPT_HOOK_BYTES_INPUT`, `EPT_HOOK_TARGET_ADDR`, `EPT_HOOK_SHOW_MODAL`, `EPT_HOOKS_LIST`
+- `EPT_HOOK_STATUS`, `EPT_HOOK_IS_ERROR`, `EPT_HOOK_INPUT_MODE` (Hex/Assembly/Detour)
+- `EPT_HOOK_ASM_INPUT`, `EPT_HOOK_ASM_PREVIEW`, `EPT_HOOK_ASM_ERROR`
+- `EPT_HOOK_DETOUR_ASM_INPUT`, `EPT_HOOK_DETOUR_ASM_PREVIEW`, `EPT_HOOK_DETOUR_ASM_ERROR`
+- `EPT_HOOK_DETOUR_STOLEN_BYTES`, `EPT_HOOK_DETOUR_ALLOCS` (tracks hook_index → (pid, allocated_address) for cleanup)
+
+**Key functions (callback crate):**
+- `install_ept_hook(pid, addr, &bytes) -> Result<u32>` — Install EPT hook, returns hook index
+- `remove_ept_hook(hook_index) -> Result<()>` — Remove EPT hook by index
+- `list_ept_hooks() -> Result<Vec<EptHookInfo>>` — List all active hooks
+- `assemble(code, arch, addr) -> Result<Vec<u8>>` — Assemble Intel syntax to bytes
+
+**Key functions (misc crate):**
+- `allocate_near_address(pid, addr, size) -> Result<u64>` — Allocate RWX memory within ±2GB of target
+- `write_process_memory_bytes(pid, addr, &bytes) -> Result<()>` — Write bytes to remote process
+- `free_remote_memory(pid, addr) -> Result<()>` — Free allocated remote memory
+
+### .dph Hook Script System
+
+Save EPT hook configurations to `.dph` (DioProcess Hook) files for portable, repeatable hook application. Scripts survive process restarts via `module+offset` addressing resolved at apply time.
+
+**File format** (plain text, human-editable):
+```ini
+# DioProcess Hook Script
+[hook]
+name = My Hook
+target = Tutorial-x86_64.exe+45D7D
+mode = detour
+stolen_bytes = 6
+
+[code]
+add [rbx+0x7F8], edx
+```
+
+**Fields:**
+- `name` — Display name (optional, defaults to filename)
+- `target` — `module+offset` (resolved at apply time) or absolute hex `0x7FF645D7D`
+- `mode` — `hex`, `assembly` (or `asm`), or `detour`
+- `stolen_bytes` — Only for detour mode (default 6, minimum 5)
+- `[code]` section — Everything after this line is the hook payload (hex bytes for hex mode, assembly for assembly/detour)
+
+**Module+offset resolution:** At apply time, `get_process_modules(pid)` enumerates loaded modules, finds the matching module base (case-insensitive filename match), adds offset. Portable across ASLR restarts.
+
+**State signals (state.rs):**
+- `DPH_SCRIPTS: GlobalSignal<Vec<DphScript>>` — Loaded script list
+- `DPH_SHOW_SCRIPTS_TAB: GlobalSignal<bool>` — Toggle between Scanner and Scripts sub-tabs
+- `DphScript` struct: `name`, `file_path`, `target_expr`, `resolved_addr`, `mode`, `stolen_bytes`, `code`, `hook_index`, `status`
+
+**Functions (memory_scanner_tab.rs):**
+- `parse_dph_script(content, file_path) -> Result<DphScript, String>` — Parse `.dph` file format
+- `resolve_target(pid, target_expr) -> Result<u64, String>` — Resolve `module+offset` or `0xABCD` to absolute address
+- `reverse_resolve_address(pid, addr) -> String` — Convert address back to `module+offset` format
+- `build_dph_content(name, target, mode, stolen_bytes, code) -> String` — Generate `.dph` file content
+- `apply_dph_script(idx, pid, ...)` — Apply script from Scripts panel (internal)
+- `apply_dph_file_to_process(pid, file_path) -> Result<String, String>` — Apply `.dph` file directly (public, used by process_tab context menu)
+
+**UI — Scripts sub-tab:**
+- Toggle between "Scanner" and "Scripts" via buttons at top of Memory Scanner tab
+- **Load .dph** — File picker with `.dph` filter, parses and adds to script list
+- **Scripts table** — Name, Target, Mode, Status (Pending/Applied/Error), Actions (Apply, Delete)
+- **Apply All** — Apply all pending scripts in sequence
+- **Clear All** — Remove all scripts from list
+
+**UI — Save .dph from active hook:**
+- Each active EPT hook row has a "Save .dph" button
+- Reverse-resolves address to `module+offset` using module enumeration
+- Uses current input mode, code, and stolen bytes from UI state
+
+**UI — Process context menu:**
+- Right-click process → Miscellaneous → **"Apply .dph Script"** → file picker → parse → resolve → apply
+- Disabled when hypervisor not running (same guard as EPT hooks)
 
 ## Utilities tab
 
