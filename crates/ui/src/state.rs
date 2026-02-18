@@ -154,12 +154,22 @@ pub enum EptHookInputMode {
     #[default]
     Hex,
     Assembly,
+    Detour,
 }
 
 pub static EPT_HOOK_INPUT_MODE: GlobalSignal<EptHookInputMode> = Signal::global(|| EptHookInputMode::Hex);
 pub static EPT_HOOK_ASM_INPUT: GlobalSignal<String> = Signal::global(|| String::new());
 pub static EPT_HOOK_ASM_PREVIEW: GlobalSignal<String> = Signal::global(|| String::new());
 pub static EPT_HOOK_ASM_ERROR: GlobalSignal<String> = Signal::global(|| String::new());
+
+// EPT Hook Detour mode state
+pub static EPT_HOOK_DETOUR_ASM_INPUT: GlobalSignal<String> = Signal::global(|| String::new());
+pub static EPT_HOOK_DETOUR_ASM_PREVIEW: GlobalSignal<String> = Signal::global(|| String::new());
+pub static EPT_HOOK_DETOUR_ASM_ERROR: GlobalSignal<String> = Signal::global(|| String::new());
+pub static EPT_HOOK_DETOUR_STOLEN_BYTES: GlobalSignal<String> = Signal::global(|| "6".to_string());
+/// Tracks detour memory allocations for cleanup: hook_index -> (pid, allocated_address)
+pub static EPT_HOOK_DETOUR_ALLOCS: GlobalSignal<std::collections::HashMap<u32, (u32, u64)>> =
+    Signal::global(std::collections::HashMap::new);
 
 /// Process view mode - flat list or tree hierarchy
 #[derive(Clone, Copy, PartialEq, Debug)]

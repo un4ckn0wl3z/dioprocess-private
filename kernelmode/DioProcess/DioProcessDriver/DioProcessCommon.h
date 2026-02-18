@@ -828,6 +828,8 @@ struct PhysReadVmResponse
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8B1, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_DIOPROCESS_EPT_HOOK_LIST \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8B2, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_EPT_HOOK_INSTALL_DETOUR \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8B3, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 // ============== Usermode EPT Hook Structures ==============
 
@@ -843,6 +845,20 @@ struct EptHookInstallResponse
 {
 	ULONG HookIndex;
 	BOOLEAN Success;
+};
+
+#ifndef MAX_EPT_HOOK_DETOUR_SIZE
+#define MAX_EPT_HOOK_DETOUR_SIZE 3800
+#endif
+
+struct EptHookDetourRequest
+{
+	ULONG ProcessId;
+	ULONG64 TargetVirtualAddress;  // Address where JMP is placed
+	ULONG StolenBytes;             // Number of bytes to overwrite with JMP+NOPs (min 5)
+	ULONG DetourPageOffset;        // Offset within the 4KB page for detour code cave
+	ULONG DetourCodeSize;          // Size of detour code in bytes
+	UCHAR DetourCode[MAX_EPT_HOOK_DETOUR_SIZE];
 };
 
 struct EptHookRemoveRequest

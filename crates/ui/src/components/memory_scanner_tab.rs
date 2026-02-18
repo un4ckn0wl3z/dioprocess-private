@@ -6,16 +6,19 @@ use callback::{
     write_scan_value, ScanDataType, ScanRegion, ScanResult, ScanType,
 };
 use dioxus::prelude::*;
+use misc::{allocate_near_address, free_remote_memory, write_process_memory_bytes};
 use process::{get_process_arch, ProcessArch};
 
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
     EPT_HOOKS_LIST, EPT_HOOK_ASM_ERROR, EPT_HOOK_ASM_INPUT, EPT_HOOK_ASM_PREVIEW,
-    EPT_HOOK_BYTES_INPUT, EPT_HOOK_INPUT_MODE, EPT_HOOK_IS_ERROR, EPT_HOOK_SHOW_MODAL,
-    EPT_HOOK_STATUS, EPT_HOOK_TARGET_ADDR, EptHookInputMode, SCANNER_DATA_TYPE_IDX,
-    SCANNER_EDIT_VALUE, SCANNER_EDITING_IDX, SCANNER_HAS_SCANNED, SCANNER_IS_ERROR,
-    SCANNER_IS_SCANNING, SCANNER_PAGE, SCANNER_PID, SCANNER_RESULTS, SCANNER_SCAN_TYPE_IDX,
-    SCANNER_SELECTED, SCANNER_STATUS, SCANNER_VALUE, SCANNER_VALUE2, SCANNER_WRITE_VALUE,
+    EPT_HOOK_BYTES_INPUT, EPT_HOOK_DETOUR_ALLOCS, EPT_HOOK_DETOUR_ASM_ERROR,
+    EPT_HOOK_DETOUR_ASM_INPUT, EPT_HOOK_DETOUR_ASM_PREVIEW, EPT_HOOK_DETOUR_STOLEN_BYTES,
+    EPT_HOOK_INPUT_MODE, EPT_HOOK_IS_ERROR, EPT_HOOK_SHOW_MODAL, EPT_HOOK_STATUS,
+    EPT_HOOK_TARGET_ADDR, EptHookInputMode, SCANNER_DATA_TYPE_IDX, SCANNER_EDIT_VALUE,
+    SCANNER_EDITING_IDX, SCANNER_HAS_SCANNED, SCANNER_IS_ERROR, SCANNER_IS_SCANNING,
+    SCANNER_PAGE, SCANNER_PID, SCANNER_RESULTS, SCANNER_SCAN_TYPE_IDX, SCANNER_SELECTED,
+    SCANNER_STATUS, SCANNER_VALUE, SCANNER_VALUE2, SCANNER_WRITE_VALUE,
 };
 
 const RESULTS_PER_PAGE: usize = 500;
@@ -51,6 +54,12 @@ pub fn MemoryScannerTab() -> Element {
     let mut ept_hook_asm_input = EPT_HOOK_ASM_INPUT.signal();
     let mut ept_hook_asm_preview = EPT_HOOK_ASM_PREVIEW.signal();
     let mut ept_hook_asm_error = EPT_HOOK_ASM_ERROR.signal();
+    // Detour mode state
+    let mut detour_asm_input = EPT_HOOK_DETOUR_ASM_INPUT.signal();
+    let mut detour_asm_preview = EPT_HOOK_DETOUR_ASM_PREVIEW.signal();
+    let mut detour_asm_error = EPT_HOOK_DETOUR_ASM_ERROR.signal();
+    let mut detour_stolen_bytes = EPT_HOOK_DETOUR_STOLEN_BYTES.signal();
+    let mut detour_allocs = EPT_HOOK_DETOUR_ALLOCS.signal();
 
     let driver_loaded = is_driver_loaded();
     let scanned = *has_scanned.read();
@@ -781,6 +790,12 @@ pub fn MemoryScannerTab() -> Element {
                                             class: "btn",
                                             style: "font-size: 11px; padding: 2px 8px; color: #dc2626;",
                                             onclick: move |_| {
+                                                // Free all detour allocations first
+                                                let allocs = detour_allocs.read().clone();
+                                                for (_idx, (dpid, daddr)) in &allocs {
+                                                    let _ = free_remote_memory(*dpid, *daddr);
+                                                }
+                                                detour_allocs.write().clear();
                                                 let current = ept_hooks_list.read().clone();
                                                 for hook in &current {
                                                     let _ = remove_ept_hook(hook.hook_index);
@@ -826,6 +841,11 @@ pub fn MemoryScannerTab() -> Element {
                                                                 class: "btn",
                                                                 style: "font-size: 10px; padding: 1px 6px; color: #dc2626;",
                                                                 onclick: move |_| {
+                                                                    // Free detour allocation if this hook has one
+                                                                    if let Some((dpid, daddr)) = detour_allocs.read().get(&hook_idx).copied() {
+                                                                        let _ = free_remote_memory(dpid, daddr);
+                                                                    }
+                                                                    detour_allocs.write().remove(&hook_idx);
                                                                     let _ = remove_ept_hook(hook_idx);
                                                                     if let Ok(h) = list_ept_hooks() {
                                                                         ept_hooks_list.set(h);
@@ -956,7 +976,9 @@ pub fn MemoryScannerTab() -> Element {
                     let input_mode = *ept_hook_input_mode.read();
                     let asm_preview = ept_hook_asm_preview.read().clone();
                     let asm_error = ept_hook_asm_error.read().clone();
-                    
+                    let detour_preview = detour_asm_preview.read().clone();
+                    let detour_error = detour_asm_error.read().clone();
+
                     // Get process architecture for assembly
                     let pid_str = pid_input.read().clone();
                     let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
@@ -1025,6 +1047,15 @@ pub fn MemoryScannerTab() -> Element {
                                             ept_hook_status.set(String::new());
                                         },
                                         "Assembly"
+                                    }
+                                    button {
+                                        class: if input_mode == EptHookInputMode::Detour { "btn btn-primary" } else { "btn" },
+                                        style: "font-size: 12px; padding: 4px 12px;",
+                                        onclick: move |_| {
+                                            ept_hook_input_mode.set(EptHookInputMode::Detour);
+                                            ept_hook_status.set(String::new());
+                                        },
+                                        "Detour"
                                     }
                                 }
 
@@ -1184,6 +1215,164 @@ pub fn MemoryScannerTab() -> Element {
                                     }
                                 }
 
+                                // Detour input mode
+                                if input_mode == EptHookInputMode::Detour {
+                                    div { style: "margin-bottom: 8px; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; border: 1px solid var(--border-color);",
+                                        div { style: "color: var(--text-secondary); font-size: 11px; margin-bottom: 8px;",
+                                            "Allocates RWX memory near the hook point, writes detour code there, and places a JMP on the EPT exec page. Return jump is auto-appended."
+                                        }
+
+                                        // Stolen bytes input
+                                        div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 8px;",
+                                            label { style: "color: var(--text-secondary); font-size: 12px; min-width: 100px;", "Stolen bytes:" }
+                                            input {
+                                                class: "handle-filter-input",
+                                                r#type: "text",
+                                                placeholder: "6",
+                                                style: "width: 60px; font-family: 'Consolas', monospace; font-size: 12px;",
+                                                value: "{detour_stolen_bytes}",
+                                                oninput: move |e| detour_stolen_bytes.set(e.value()),
+                                            }
+                                            span { style: "color: var(--text-secondary); font-size: 11px;",
+                                                "(min 5 — bytes overwritten by JMP + NOP padding)"
+                                            }
+                                        }
+                                    }
+
+                                    // Detour assembly textarea
+                                    div { style: "margin-bottom: 8px;",
+                                        label { style: "color: var(--text-secondary); font-size: 13px; display: block; margin-bottom: 4px;",
+                                            "Detour assembly code (Intel syntax):"
+                                        }
+                                        textarea {
+                                            class: "handle-filter-input",
+                                            placeholder: "; Your detour code here\n; Return jump is auto-appended\nadd [rbx+0x7F8], edx",
+                                            style: "width: 100%; height: 160px; font-family: 'Consolas', monospace; font-size: 13px; resize: vertical; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 8px;",
+                                            value: "{detour_asm_input}",
+                                            oninput: {
+                                                move |e: Event<FormData>| {
+                                                    let code = e.value();
+                                                    detour_asm_input.set(code.clone());
+
+                                                    if !code.trim().is_empty() && pid > 0 {
+                                                        // Preview: assemble at address 0 (final address determined at install time)
+                                                        match assemble(&code, proc_arch, 0) {
+                                                            Ok(bytes) => {
+                                                                detour_asm_preview.set(format_bytes_hex(&bytes));
+                                                                detour_asm_error.set(String::new());
+                                                            }
+                                                            Err(e) => {
+                                                                detour_asm_preview.set(String::new());
+                                                                detour_asm_error.set(e.to_string());
+                                                            }
+                                                        }
+                                                    } else {
+                                                        detour_asm_preview.set(String::new());
+                                                        detour_asm_error.set(String::new());
+                                                    }
+                                                }
+                                            },
+                                            onkeydown: {
+                                                move |e: KeyboardEvent| {
+                                                    if e.key() == Key::Escape {
+                                                        ept_hook_show_modal.set(false);
+                                                    }
+                                                }
+                                            },
+                                        }
+                                    }
+
+                                    // Error display
+                                    if !detour_error.is_empty() {
+                                        div {
+                                            style: "color: #ef4444; font-size: 12px; font-family: 'Consolas', monospace; margin-bottom: 8px; padding: 6px; background: rgba(239, 68, 68, 0.1); border-radius: 4px;",
+                                            "{detour_error}"
+                                        }
+                                    }
+
+                                    // Assembled bytes preview
+                                    if !detour_preview.is_empty() {
+                                        {
+                                            let byte_count = detour_preview.split_whitespace().count();
+                                            let info = format!("Assembled detour ({} bytes + 14 return JMP = {} total):", byte_count, byte_count + 14);
+                                            rsx! {
+                                                div { style: "margin-bottom: 8px;",
+                                                    label { style: "color: var(--text-secondary); font-size: 12px; display: block; margin-bottom: 4px;",
+                                                        "{info}"
+                                                    }
+                                                    div {
+                                                        style: "font-family: 'Consolas', monospace; font-size: 12px; color: #22c55e; background: var(--bg-tertiary); padding: 8px; border-radius: 4px; word-break: break-all; max-height: 80px; overflow-y: auto;",
+                                                        "{detour_preview}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    div { style: "color: var(--text-secondary); font-size: 11px; margin-bottom: 8px; padding: 6px; background: var(--bg-secondary); border-radius: 4px;",
+                                        "Flow: hook_addr → [EPT JMP rel32] → allocated cave → your code → [auto JMP back] → hook_addr + stolen"
+                                    }
+
+                                    // Save/Load buttons
+                                    div { style: "display: flex; gap: 8px; margin-bottom: 8px;",
+                                        button {
+                                            class: "btn",
+                                            style: "font-size: 11px; padding: 3px 10px;",
+                                            onclick: {
+                                                move |_| {
+                                                    let code = detour_asm_input.read().clone();
+                                                    spawn(async move {
+                                                        if let Some(file) = rfd::AsyncFileDialog::new()
+                                                            .add_filter("Auto Assemble Script", &["aa"])
+                                                            .set_file_name("detour.aa")
+                                                            .save_file()
+                                                            .await
+                                                        {
+                                                            let _ = std::fs::write(file.path(), code);
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            "Save .aa"
+                                        }
+                                        button {
+                                            class: "btn",
+                                            style: "font-size: 11px; padding: 3px 10px;",
+                                            onclick: {
+                                                move |_| {
+                                                    spawn(async move {
+                                                        if let Some(file) = rfd::AsyncFileDialog::new()
+                                                            .add_filter("Auto Assemble Script", &["aa"])
+                                                            .pick_file()
+                                                            .await
+                                                        {
+                                                            if let Ok(content) = std::fs::read_to_string(file.path()) {
+                                                                detour_asm_input.set(content.clone());
+                                                                let pid_str = pid_input.read().clone();
+                                                                let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+                                                                if pid > 0 {
+                                                                    let proc_arch = get_process_arch(pid);
+                                                                    match assemble(&content, proc_arch, 0) {
+                                                                        Ok(bytes) => {
+                                                                            detour_asm_preview.set(format_bytes_hex(&bytes));
+                                                                            detour_asm_error.set(String::new());
+                                                                        }
+                                                                        Err(e) => {
+                                                                            detour_asm_preview.set(String::new());
+                                                                            detour_asm_error.set(e.to_string());
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            "Load .aa"
+                                        }
+                                    }
+                                }
+
                                 if !hook_status.is_empty() {
                                     div {
                                         class: if hook_error { "status-message status-error" } else { "status-message" },
@@ -1201,7 +1390,9 @@ pub fn MemoryScannerTab() -> Element {
                                     }
                                     button {
                                         class: "btn btn-primary",
-                                        disabled: !driver_loaded || !hv_is_running() || (input_mode == EptHookInputMode::Assembly && !asm_error.is_empty()),
+                                        disabled: !driver_loaded || !hv_is_running()
+                                            || (input_mode == EptHookInputMode::Assembly && !asm_error.is_empty())
+                                            || (input_mode == EptHookInputMode::Detour && !detour_error.is_empty()),
                                         onclick: {
                                             move |_| {
                                                 let pid_str = pid_input.read().clone();
@@ -1220,6 +1411,99 @@ pub fn MemoryScannerTab() -> Element {
                                                 }
 
                                                 let input_mode = *ept_hook_input_mode.read();
+
+                                                // Detour mode: allocate RWX near hook, write detour+return JMP, EPT hook with JMP patch
+                                                if input_mode == EptHookInputMode::Detour {
+                                                    let asm_code = detour_asm_input.read().clone();
+                                                    let proc_arch = get_process_arch(pid);
+
+                                                    // Parse stolen bytes (minimum 5 for JMP rel32)
+                                                    let stolen: u32 = detour_stolen_bytes.read().trim().parse().unwrap_or(6);
+                                                    if stolen < 5 {
+                                                        ept_hook_status.set("Stolen bytes must be >= 5".to_string());
+                                                        ept_hook_is_error.set(true);
+                                                        return;
+                                                    }
+
+                                                    // Step 1: Allocate RWX memory near the hook point (within ±2GB for JMP rel32)
+                                                    let alloc_addr = match allocate_near_address(pid, addr, 0x1000) {
+                                                        Ok(a) => a,
+                                                        Err(e) => {
+                                                            ept_hook_status.set(format!("Alloc failed: {}", e));
+                                                            ept_hook_is_error.set(true);
+                                                            return;
+                                                        }
+                                                    };
+
+                                                    // Step 2: Assemble detour code at allocated address
+                                                    let detour_bytes = match assemble(&asm_code, proc_arch, alloc_addr) {
+                                                        Ok(b) => b,
+                                                        Err(e) => {
+                                                            let _ = free_remote_memory(pid, alloc_addr);
+                                                            ept_hook_status.set(format!("Assembly error: {}", e));
+                                                            ept_hook_is_error.set(true);
+                                                            return;
+                                                        }
+                                                    };
+
+                                                    if detour_bytes.is_empty() || detour_bytes.len() > 3800 {
+                                                        let _ = free_remote_memory(pid, alloc_addr);
+                                                        ept_hook_status.set("Detour code must be 1-3800 bytes".to_string());
+                                                        ept_hook_is_error.set(true);
+                                                        return;
+                                                    }
+
+                                                    // Step 3: Build full payload = detour code + return JMP back to hook_point + stolen_bytes
+                                                    // Return JMP uses FF 25 00 00 00 00 [8-byte abs addr] (14 bytes, no register clobber)
+                                                    let return_addr = addr + stolen as u64;
+                                                    let mut full_code = detour_bytes.clone();
+                                                    full_code.extend_from_slice(&[0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]);
+                                                    full_code.extend_from_slice(&return_addr.to_le_bytes());
+
+                                                    // Step 4: Write detour code to allocated memory
+                                                    if let Err(e) = write_process_memory_bytes(pid, alloc_addr, &full_code) {
+                                                        let _ = free_remote_memory(pid, alloc_addr);
+                                                        ept_hook_status.set(format!("Write failed: {}", e));
+                                                        ept_hook_is_error.set(true);
+                                                        return;
+                                                    }
+
+                                                    // Step 5: Build JMP rel32 patch (E9 + offset) + NOP padding for stolen bytes
+                                                    let jmp_target = alloc_addr as i64;
+                                                    let jmp_from = (addr + 5) as i64; // E9 + 4 bytes = 5
+                                                    let rel32 = (jmp_target - jmp_from) as i32;
+                                                    let mut jmp_patch: Vec<u8> = Vec::with_capacity(stolen as usize);
+                                                    jmp_patch.push(0xE9);
+                                                    jmp_patch.extend_from_slice(&rel32.to_le_bytes());
+                                                    // Fill remaining stolen bytes with NOPs
+                                                    for _ in 5..stolen {
+                                                        jmp_patch.push(0x90);
+                                                    }
+
+                                                    // Step 6: Install EPT hook with JMP patch bytes
+                                                    match install_ept_hook(pid, addr, &jmp_patch) {
+                                                        Ok(idx) => {
+                                                            // Track allocation for cleanup on removal
+                                                            detour_allocs.write().insert(idx, (pid, alloc_addr));
+                                                            ept_hook_status.set(format!(
+                                                                "Detour hook #{} installed: JMP@0x{:X} -> 0x{:X} ({} bytes detour)",
+                                                                idx, addr, alloc_addr, detour_bytes.len()
+                                                            ));
+                                                            ept_hook_is_error.set(false);
+                                                            if let Ok(hooks) = list_ept_hooks() {
+                                                                ept_hooks_list.set(hooks);
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            let _ = free_remote_memory(pid, alloc_addr);
+                                                            ept_hook_status.set(format!("Failed: {}", e));
+                                                            ept_hook_is_error.set(true);
+                                                        }
+                                                    }
+                                                    return;
+                                                }
+
+                                                // Hex / Assembly modes: use install_ept_hook
                                                 let bytes = match input_mode {
                                                     EptHookInputMode::Hex => {
                                                         let hex_str = ept_hook_bytes.read().clone();
@@ -1244,6 +1528,7 @@ pub fn MemoryScannerTab() -> Element {
                                                             }
                                                         }
                                                     }
+                                                    EptHookInputMode::Detour => unreachable!(),
                                                 };
 
                                                 if bytes.is_empty() || bytes.len() > 256 {
@@ -1259,7 +1544,6 @@ pub fn MemoryScannerTab() -> Element {
                                                             idx, addr, bytes.len()
                                                         ));
                                                         ept_hook_is_error.set(false);
-                                                        // Refresh hooks list
                                                         if let Ok(hooks) = list_ept_hooks() {
                                                             ept_hooks_list.set(hooks);
                                                         }

@@ -45,7 +45,7 @@ pub use hypervisor::{
     hv_start, hv_stop, hv_unhide_driver, hv_unprotect_process, HvInjectDllResult, HvInjectResult,
     HvStatus,
 };
-pub use ept_hook::{install_ept_hook, list_ept_hooks, remove_ept_hook, EptHookInfo};
+pub use ept_hook::{install_ept_hook, install_ept_hook_detour, list_ept_hooks, remove_ept_hook, EptHookInfo};
 pub use early_injection::{
     arm_early_injection, disarm_early_injection, get_early_injection_status,
     EarlyInjectionMethod, EarlyInjectionStatus,

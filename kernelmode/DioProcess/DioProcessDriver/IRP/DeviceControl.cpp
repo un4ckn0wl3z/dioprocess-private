@@ -14,6 +14,7 @@ NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 
 // Forward declarations for EPT Hook handlers
 NTSTATUS HandleEptHookInstall(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleEptHookInstallDetour(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleEptHookRemove(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandleEptHookList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 
@@ -310,6 +311,10 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_EPT_HOOK_LIST:
 		status = HandleEptHookList(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_EPT_HOOK_INSTALL_DETOUR:
+		status = HandleEptHookInstallDetour(Irp, irpSp, &info);
 		break;
 
 	default:
@@ -3991,4 +3996,52 @@ NTSTATUS HandleEptHookList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
 
 	*info = sizeof(EptHookListResponse);
 	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleEptHookInstallDetour(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "EPT Hook install detour request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(EptHookDetourRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (outputLen < sizeof(EptHookInstallResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (EptHookDetourRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->DetourCodeSize == 0 || request->DetourCodeSize > MAX_EPT_HOOK_DETOUR_SIZE)
+		return STATUS_INVALID_PARAMETER;
+
+	if (request->StolenBytes < 5)
+		return STATUS_INVALID_PARAMETER;
+
+	ULONG hookIndex = 0;
+	NTSTATUS status = UsermodeEptHook_InstallDetour(
+		request->ProcessId,
+		request->TargetVirtualAddress,
+		request->StolenBytes,
+		request->DetourPageOffset,
+		(PVOID)request->DetourCode,
+		request->DetourCodeSize,
+		&hookIndex
+	);
+
+	auto response = (EptHookInstallResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+	if (NT_SUCCESS(status))
+	{
+		response->HookIndex = hookIndex;
+		response->Success = TRUE;
+	}
+	else
+	{
+		response->HookIndex = 0;
+		response->Success = FALSE;
+	}
+
+	*info = sizeof(EptHookInstallResponse);
+	return status;
 }

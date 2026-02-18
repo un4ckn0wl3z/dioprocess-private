@@ -9,6 +9,7 @@
 
 #define MAX_USERMODE_EPT_HOOKS 32
 #define USERMODE_EPT_HOOK_TAG 'ephU'
+#define MAX_EPT_HOOK_DETOUR_SIZE 3800
 
 struct UsermodeEptHookEntry
 {
@@ -29,6 +30,18 @@ NTSTATUS UsermodeEptHook_Install(
 	ULONG64 TargetVirtualAddress,
 	PVOID PatchBytes,
 	ULONG PatchSize,
+	PULONG OutHookIndex
+);
+
+// Install an EPT hook with a detour (JMP at hook point -> code cave on same page)
+// StolenBytes must be >= 5; DetourCode is written at DetourPageOffset on the exec page
+NTSTATUS UsermodeEptHook_InstallDetour(
+	ULONG ProcessId,
+	ULONG64 TargetVirtualAddress,
+	ULONG StolenBytes,
+	ULONG DetourPageOffset,
+	PVOID DetourCode,
+	ULONG DetourCodeSize,
 	PULONG OutHookIndex
 );
 

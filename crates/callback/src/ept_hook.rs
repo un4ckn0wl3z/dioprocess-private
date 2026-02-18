@@ -30,8 +30,11 @@ const IOCTL_DIOPROCESS_EPT_HOOK_REMOVE: u32 =
     ctl_code(FILE_DEVICE_UNKNOWN, 0x8B1, METHOD_BUFFERED, FILE_ANY_ACCESS);
 const IOCTL_DIOPROCESS_EPT_HOOK_LIST: u32 =
     ctl_code(FILE_DEVICE_UNKNOWN, 0x8B2, METHOD_BUFFERED, FILE_ANY_ACCESS);
+const IOCTL_DIOPROCESS_EPT_HOOK_INSTALL_DETOUR: u32 =
+    ctl_code(FILE_DEVICE_UNKNOWN, 0x8B3, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
 const MAX_EPT_HOOK_LIST_ENTRIES: usize = 32;
+const MAX_EPT_HOOK_DETOUR_SIZE: usize = 3800;
 
 const DEVICE_PATH: &str = "\\\\.\\DioProcess\0";
 
@@ -49,6 +52,16 @@ struct EptHookInstallRequest {
 struct EptHookInstallResponse {
     hook_index: u32,
     success: u8, // BOOLEAN
+}
+
+#[repr(C)]
+struct EptHookDetourRequest {
+    process_id: u32,
+    target_virtual_address: u64,
+    stolen_bytes: u32,
+    detour_page_offset: u32,
+    detour_code_size: u32,
+    detour_code: [u8; MAX_EPT_HOOK_DETOUR_SIZE],
 }
 
 #[repr(C)]
@@ -155,6 +168,74 @@ pub fn install_ept_hook(
             IOCTL_DIOPROCESS_EPT_HOOK_INSTALL,
             Some(&request as *const _ as *const c_void),
             size_of::<EptHookInstallRequest>() as u32,
+            Some(&mut response as *mut _ as *mut c_void),
+            size_of::<EptHookInstallResponse>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+
+    if result.is_ok() && response.success != 0 {
+        Ok(response.hook_index)
+    } else {
+        Err(CallbackError::IoctlFailed(
+            std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(0) as u32,
+        ))
+    }
+}
+
+/// Install an EPT hook with a detour: places a JMP at target_va that redirects to a
+/// code cave elsewhere on the same 4KB page. Allows up to 3800 bytes of detour code.
+///
+/// - `stolen_bytes`: number of bytes at target_va to overwrite with JMP+NOPs (min 5)
+/// - `detour_page_offset`: offset within the 4KB page where detour code is placed
+/// - `detour_code`: the assembled detour code bytes (max 3800)
+///
+/// Returns the hook index (used for removal).
+pub fn install_ept_hook_detour(
+    pid: u32,
+    target_va: u64,
+    stolen_bytes: u32,
+    detour_page_offset: u32,
+    detour_code: &[u8],
+) -> Result<u32, CallbackError> {
+    if detour_code.is_empty() || detour_code.len() > MAX_EPT_HOOK_DETOUR_SIZE {
+        return Err(CallbackError::InvalidParameter);
+    }
+    if stolen_bytes < 5 {
+        return Err(CallbackError::InvalidParameter);
+    }
+
+    let handle = open_driver()?;
+
+    let mut request = EptHookDetourRequest {
+        process_id: pid,
+        target_virtual_address: target_va,
+        stolen_bytes,
+        detour_page_offset,
+        detour_code_size: detour_code.len() as u32,
+        detour_code: [0u8; MAX_EPT_HOOK_DETOUR_SIZE],
+    };
+    request.detour_code[..detour_code.len()].copy_from_slice(detour_code);
+
+    let mut response = EptHookInstallResponse {
+        hook_index: 0,
+        success: 0,
+    };
+    let mut bytes_returned: u32 = 0;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_EPT_HOOK_INSTALL_DETOUR,
+            Some(&request as *const _ as *const c_void),
+            size_of::<EptHookDetourRequest>() as u32,
             Some(&mut response as *mut _ as *mut c_void),
             size_of::<EptHookInstallResponse>() as u32,
             Some(&mut bytes_returned),
