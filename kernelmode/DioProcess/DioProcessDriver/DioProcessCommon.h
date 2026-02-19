@@ -883,6 +883,55 @@ struct EptHookListResponse
 	EptHookListEntry Entries[MAX_EPT_HOOK_LIST_ENTRIES];
 };
 
+// ============== EPT Register Change IOCTLs ==============
+// Modify guest registers at a specific RIP via EPT + MTF (no code patching)
+
+#define IOCTL_DIOPROCESS_REG_CHANGE_INSTALL \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8C0, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_REG_CHANGE_REMOVE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8C1, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_REG_CHANGE_LIST \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8C2, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_REG_CHANGE_REMOVE_ALL \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8C3, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define MAX_REG_CHANGES 32
+
+struct RegChangeInstallRequest
+{
+	ULONG ProcessId;
+	ULONG64 TargetAddress;       // Virtual address where instruction lives
+	ULONG RegIndex;              // 0=RAX..15=R15
+	ULONG64 NewValue;
+};
+
+struct RegChangeInstallResponse
+{
+	ULONG EntryIndex;
+	BOOLEAN Success;
+};
+
+struct RegChangeRemoveRequest
+{
+	ULONG EntryIndex;
+};
+
+struct RegChangeListEntry
+{
+	ULONG ProcessId;
+	ULONG64 TargetAddress;
+	ULONG RegIndex;
+	ULONG64 NewValue;
+	ULONG EntryIndex;
+	BOOLEAN Active;
+};
+
+struct RegChangeListResponse
+{
+	ULONG Count;
+	RegChangeListEntry Entries[MAX_REG_CHANGES];
+};
+
 // ============== NSI Port Hiding IOCTLs ==============
 // Hide TCP connections by port via NSI (Network Store Interface) hook
 

@@ -45,6 +45,19 @@ struct vcpu_ept_hooks {
   size_t active_count;
 };
 
+// register change entry for EPT register modification hooks
+// modifies a guest register when RIP matches, without code patching
+struct vcpu_ept_reg_change_entry {
+  uint64_t target_rip;      // exact guest virtual address to match
+  uint64_t process_cr3;     // CR3 of target process (mask lower 12 bits)
+  uint64_t orig_page_pfn;   // PFN of the page (for EPT PTE lookup)
+  uint8_t  reg_index;       // 0=RAX,1=RCX,2=RDX,3=RBX,4=RSP,5=RBP,6=RSI,7=RDI,8-15=R8-R15
+  uint64_t new_value;       // value to set
+  bool     in_use;
+};
+
+inline constexpr size_t ept_reg_change_count = 32;
+
 // TODO: make this a bitfield instead
 enum mmr_memory_mode {
   mmr_memory_mode_r = 0b001,
@@ -103,6 +116,13 @@ struct vcpu_ept_data {
   // PTE of the page that we should re-enable memory monitoring on
   ept_pte* mmr_mtf_pte;
   uint8_t  mmr_mtf_mode;
+
+  // register change hooks
+  vcpu_ept_reg_change_entry reg_changes[ept_reg_change_count];
+  size_t reg_change_active_count;
+
+  // PTE to restore execute-deny after MTF for register change hooks
+  ept_pte* reg_change_mtf_pte;
 };
 
 // identity-map the EPT paging structures

@@ -15,6 +15,7 @@ mod driver;
 mod early_injection;
 mod ept_hook;
 mod error;
+mod reg_change;
 mod filehide;
 mod hypervisor;
 mod porthide;
@@ -46,6 +47,7 @@ pub use hypervisor::{
     HvStatus,
 };
 pub use ept_hook::{install_ept_hook, install_ept_hook_detour, list_ept_hooks, remove_ept_hook, EptHookInfo};
+pub use reg_change::{install_reg_change, list_reg_changes, remove_all_reg_changes, remove_reg_change, RegChangeInfo, REG_NAMES};
 pub use early_injection::{
     arm_early_injection, disarm_early_injection, get_early_injection_status,
     EarlyInjectionMethod, EarlyInjectionStatus,

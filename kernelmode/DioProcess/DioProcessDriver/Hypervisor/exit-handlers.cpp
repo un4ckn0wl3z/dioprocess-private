@@ -212,6 +212,9 @@ void emulate_vmcall(vcpu* const cpu) {
   case hypercall_remove_mmr:           hc::remove_mmr(cpu);           return;
   case hypercall_remove_all_mmrs:      hc::remove_all_mmrs(cpu);      return;
   case hypercall_inject_shellcode:     hc::inject_shellcode(cpu);     return;
+  case hypercall_install_reg_change:   hc::install_reg_change(cpu);   return;
+  case hypercall_remove_reg_change:    hc::remove_reg_change(cpu);    return;
+  case hypercall_remove_all_reg_changes: hc::remove_all_reg_changes(cpu); return;
   }
 
   HV_LOG_VERBOSE("Unhandled VMCALL. RIP=%p.", vmx_vmread(VMCS_GUEST_RIP));
@@ -625,6 +628,34 @@ void handle_ept_violation(vcpu* const cpu) {
     return;
   }
 
+  // register change hooks: modify guest register when RIP matches, then single-step
+  if (cpu->ept.reg_change_active_count > 0 && qualification.execute_access) {
+    auto const guest_rip = vmx_vmread(VMCS_GUEST_RIP);
+    auto const guest_cr3 = vmx_vmread(VMCS_GUEST_CR3);
+
+    // check if any register change entry matches this RIP + CR3
+    for (auto& entry : cpu->ept.reg_changes) {
+      if (!entry.in_use)
+        continue;
+      if (entry.target_rip != guest_rip)
+        continue;
+      if ((entry.process_cr3 >> 12) != (guest_cr3 >> 12))
+        continue;
+
+      // modify the guest register
+      write_guest_gpr(cpu->ctx, entry.reg_index, entry.new_value);
+    }
+
+    // temporarily allow execute on this page so the instruction can run
+    pte->read_access    = 1;
+    pte->write_access   = 1;
+    pte->execute_access = 1;
+
+    cpu->ept.reg_change_mtf_pte = pte;
+    enable_monitor_trap_flag();
+    return;
+  }
+
   if (qualification.execute_access &&
      (qualification.write_access || qualification.read_access)) {
     HV_LOG_ERROR("Invalid EPT access combination. PhysAddr = %p.", physical_address);
@@ -676,6 +707,21 @@ void emulate_rdtscp(vcpu* const cpu) {
 }
 
 void handle_monitor_trap_flag(vcpu* const cpu) {
+  // restore execute-deny for register change hooks
+  if (cpu->ept.reg_change_mtf_pte) {
+    cpu->ept.reg_change_mtf_pte->read_access    = 1;
+    cpu->ept.reg_change_mtf_pte->write_access   = 1;
+    cpu->ept.reg_change_mtf_pte->execute_access  = 0;
+    cpu->ept.reg_change_mtf_pte = nullptr;
+
+    invept_descriptor desc = {};
+    desc.ept_pointer = vmx_vmread(VMCS_CTRL_EPT_POINTER);
+    vmx_invept(invept_single_context, desc);
+
+    disable_monitor_trap_flag();
+    return;
+  }
+
   auto& pte       = cpu->ept.mmr_mtf_pte;
   auto const mode = cpu->ept.mmr_mtf_mode;
 

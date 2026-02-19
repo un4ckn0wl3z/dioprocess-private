@@ -189,6 +189,13 @@ pub struct DphScript {
 pub static DPH_SCRIPTS: GlobalSignal<Vec<DphScript>> = Signal::global(Vec::new);
 pub static DPH_SHOW_SCRIPTS_TAB: GlobalSignal<bool> = Signal::global(|| false);
 
+// Register Change hook state
+pub static REG_CHANGE_SHOW_MODAL: GlobalSignal<bool> = Signal::global(|| false);
+pub static REG_CHANGE_TARGET_ADDR: GlobalSignal<Option<u64>> = Signal::global(|| None);
+pub static REG_CHANGE_LIST: GlobalSignal<Vec<callback::RegChangeInfo>> = Signal::global(Vec::new);
+pub static REG_CHANGE_STATUS: GlobalSignal<String> = Signal::global(|| String::new());
+pub static REG_CHANGE_IS_ERROR: GlobalSignal<bool> = Signal::global(|| false);
+
 /// Process view mode - flat list or tree hierarchy
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ProcessViewMode {

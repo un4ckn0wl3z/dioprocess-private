@@ -620,7 +620,7 @@ void inject_shellcode(vcpu* const cpu) {
   ctx->rax = 0;
 
   // Step 1: Get the target process CR3
-  cr3 guest_cr3;
+  cr3 guest_cr3 = {};
 
   // System process (PID 4)
   if (target_pid == 4) {
@@ -714,6 +714,132 @@ void inject_shellcode(vcpu* const cpu) {
   }
 
   ctx->rax = bytes_written;
+  skip_instruction();
+}
+
+// install a register change entry
+void install_reg_change(vcpu* const cpu) {
+  auto const ctx = cpu->ctx;
+
+  auto const target_rip   = ctx->rcx;
+  auto const process_cr3  = ctx->rdx;
+  auto const page_pfn     = ctx->r8;
+  auto const reg_index    = static_cast<uint8_t>(ctx->r9);
+  auto const new_value    = ctx->r10;
+
+  ctx->rax = 0;
+
+  if (reg_index > 15) {
+    skip_instruction();
+    return;
+  }
+
+  // find a free slot
+  vcpu_ept_reg_change_entry* entry = nullptr;
+  for (auto& e : cpu->ept.reg_changes) {
+    if (!e.in_use) {
+      entry = &e;
+      break;
+    }
+  }
+
+  if (!entry) {
+    skip_instruction();
+    return;
+  }
+
+  entry->target_rip     = target_rip;
+  entry->process_cr3    = process_cr3;
+  entry->orig_page_pfn  = page_pfn;
+  entry->reg_index      = reg_index;
+  entry->new_value      = new_value;
+  entry->in_use         = true;
+  ++cpu->ept.reg_change_active_count;
+
+  // revoke execute access on the page so we get EPT violations
+  auto const pte = get_ept_pte(cpu->ept, page_pfn << 12, true);
+  if (pte) {
+    pte->execute_access = 0;
+    vmx_invept(invept_all_context, {});
+  }
+
+  ctx->rax = 1;
+  skip_instruction();
+}
+
+// remove a register change entry
+void remove_reg_change(vcpu* const cpu) {
+  auto const target_rip  = cpu->ctx->rcx;
+  auto const process_cr3 = cpu->ctx->rdx;
+
+  cpu->ctx->rax = 0;
+
+  for (auto& e : cpu->ept.reg_changes) {
+    if (!e.in_use)
+      continue;
+    if (e.target_rip != target_rip)
+      continue;
+    if ((e.process_cr3 >> 12) != (process_cr3 >> 12))
+      continue;
+
+    auto const pfn = e.orig_page_pfn;
+    e.in_use = false;
+    if (cpu->ept.reg_change_active_count > 0)
+      --cpu->ept.reg_change_active_count;
+
+    // check if any other reg change entries still use this page
+    bool page_still_hooked = false;
+    for (auto const& other : cpu->ept.reg_changes) {
+      if (other.in_use && other.orig_page_pfn == pfn) {
+        page_still_hooked = true;
+        break;
+      }
+    }
+
+    // restore execute access if no other hooks on this page
+    if (!page_still_hooked) {
+      auto const pte = get_ept_pte(cpu->ept, pfn << 12, false);
+      if (pte) {
+        pte->execute_access = 1;
+        vmx_invept(invept_all_context, {});
+      }
+    }
+
+    cpu->ctx->rax = 1;
+    break;
+  }
+
+  skip_instruction();
+}
+
+// remove all register change entries
+void remove_all_reg_changes(vcpu* const cpu) {
+  for (auto& e : cpu->ept.reg_changes) {
+    if (!e.in_use)
+      continue;
+
+    auto const pfn = e.orig_page_pfn;
+    e.in_use = false;
+
+    // check if any other remaining entries use this page
+    bool page_still_hooked = false;
+    for (auto const& other : cpu->ept.reg_changes) {
+      if (other.in_use && other.orig_page_pfn == pfn) {
+        page_still_hooked = true;
+        break;
+      }
+    }
+
+    if (!page_still_hooked) {
+      auto const pte = get_ept_pte(cpu->ept, pfn << 12, false);
+      if (pte) {
+        pte->execute_access = 1;
+      }
+    }
+  }
+
+  cpu->ept.reg_change_active_count = 0;
+  vmx_invept(invept_all_context, {});
   skip_instruction();
 }
 

@@ -8,6 +8,7 @@
 #include "../Memory/PhysicalMemory.h"
 #include "../NSI/PortHide.h"
 #include "../EptHook/UsermodeEptHook.h"
+#include "../EptHook/RegisterChange.h"
 
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
@@ -17,6 +18,12 @@ NTSTATUS HandleEptHookInstall(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR inf
 NTSTATUS HandleEptHookInstallDetour(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleEptHookRemove(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandleEptHookList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// Forward declarations for Register Change handlers
+NTSTATUS HandleRegChangeInstall(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleRegChangeRemove(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleRegChangeList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleRegChangeRemoveAll(PIRP Irp, PIO_STACK_LOCATION irpSp);
 
 // ============== IOCTL Device Control Dispatcher ==============
 
@@ -315,6 +322,23 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_EPT_HOOK_INSTALL_DETOUR:
 		status = HandleEptHookInstallDetour(Irp, irpSp, &info);
+		break;
+
+	// EPT Register Change IOCTLs
+	case IOCTL_DIOPROCESS_REG_CHANGE_INSTALL:
+		status = HandleRegChangeInstall(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_REG_CHANGE_REMOVE:
+		status = HandleRegChangeRemove(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_REG_CHANGE_LIST:
+		status = HandleRegChangeList(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_REG_CHANGE_REMOVE_ALL:
+		status = HandleRegChangeRemoveAll(Irp, irpSp);
 		break;
 
 	default:
@@ -4044,4 +4068,109 @@ NTSTATUS HandleEptHookInstallDetour(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_P
 
 	*info = sizeof(EptHookInstallResponse);
 	return status;
+}
+
+// ============== Register Change Handlers ==============
+
+NTSTATUS HandleRegChangeInstall(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "Register Change install request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(RegChangeInstallRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (outputLen < sizeof(RegChangeInstallResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (RegChangeInstallRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->RegIndex > 15)
+		return STATUS_INVALID_PARAMETER;
+
+	ULONG entryIndex = 0;
+	NTSTATUS status = RegisterChange_Install(
+		request->ProcessId,
+		request->TargetAddress,
+		request->RegIndex,
+		request->NewValue,
+		&entryIndex
+	);
+
+	auto response = (RegChangeInstallResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+	if (NT_SUCCESS(status))
+	{
+		response->EntryIndex = entryIndex;
+		response->Success = TRUE;
+	}
+	else
+	{
+		response->EntryIndex = 0;
+		response->Success = FALSE;
+	}
+
+	*info = sizeof(RegChangeInstallResponse);
+	return status;
+}
+
+NTSTATUS HandleRegChangeRemove(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "Register Change remove request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+
+	if (inputLen < sizeof(RegChangeRemoveRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (RegChangeRemoveRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	return RegisterChange_Remove(request->EntryIndex);
+}
+
+NTSTATUS HandleRegChangeList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (outputLen < sizeof(RegChangeListResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto response = (RegChangeListResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+		return STATUS_INVALID_PARAMETER;
+
+	RtlZeroMemory(response, sizeof(RegChangeListResponse));
+
+	RegChangeTrackingEntry entries[MAX_REG_CHANGES] = { 0 };
+	ULONG slotIndices[MAX_REG_CHANGES] = { 0 };
+	ULONG count = 0;
+
+	NTSTATUS status = RegisterChange_GetList(entries, slotIndices, &count, MAX_REG_CHANGES);
+	if (!NT_SUCCESS(status))
+		return status;
+
+	response->Count = count;
+	for (ULONG i = 0; i < count; i++)
+	{
+		response->Entries[i].ProcessId = entries[i].ProcessId;
+		response->Entries[i].TargetAddress = entries[i].TargetVirtualAddress;
+		response->Entries[i].RegIndex = entries[i].RegIndex;
+		response->Entries[i].NewValue = entries[i].NewValue;
+		response->Entries[i].EntryIndex = slotIndices[i];
+		response->Entries[i].Active = TRUE;
+	}
+
+	*info = sizeof(RegChangeListResponse);
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleRegChangeRemoveAll(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+
+	return RegisterChange_RemoveAll();
 }

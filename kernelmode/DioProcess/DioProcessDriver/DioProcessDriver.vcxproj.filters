@@ -55,6 +55,9 @@
     <ClInclude Include="EptHook\UsermodeEptHook.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="EptHook\RegisterChange.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="DioProcessDriver.cpp">
@@ -85,6 +88,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="EptHook\UsermodeEptHook.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="EptHook\RegisterChange.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

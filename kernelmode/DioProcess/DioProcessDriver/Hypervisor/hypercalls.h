@@ -30,7 +30,10 @@ enum hypercall_code : uint64_t {
   hypercall_install_mmr,
   hypercall_remove_mmr,
   hypercall_remove_all_mmrs,
-  hypercall_inject_shellcode    // Ring -1 shellcode injection
+  hypercall_inject_shellcode,   // Ring -1 shellcode injection
+  hypercall_install_reg_change,
+  hypercall_remove_reg_change,
+  hypercall_remove_all_reg_changes,
 };
 
 // hypercall input
@@ -108,6 +111,17 @@ void remove_all_mmrs(vcpu* cpu);
 // R9  = size
 // Returns: bytes written in RAX
 void inject_shellcode(vcpu* cpu);
+
+// install a register change entry (modify register on execute at target RIP)
+// RCX = target_rip, RDX = process_cr3, R8 = page_pfn, R9 = reg_index, R10 = new_value
+void install_reg_change(vcpu* cpu);
+
+// remove a register change entry
+// RCX = target_rip, RDX = process_cr3
+void remove_reg_change(vcpu* cpu);
+
+// remove all register change entries
+void remove_all_reg_changes(vcpu* cpu);
 
 } // namespace hc
 

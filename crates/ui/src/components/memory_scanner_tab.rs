@@ -18,7 +18,10 @@ use crate::state::{
     EPT_HOOK_BYTES_INPUT, EPT_HOOK_DETOUR_ALLOCS, EPT_HOOK_DETOUR_ASM_ERROR,
     EPT_HOOK_DETOUR_ASM_INPUT, EPT_HOOK_DETOUR_ASM_PREVIEW, EPT_HOOK_DETOUR_STOLEN_BYTES,
     EPT_HOOK_INPUT_MODE, EPT_HOOK_IS_ERROR, EPT_HOOK_SHOW_MODAL, EPT_HOOK_STATUS,
-    EPT_HOOK_TARGET_ADDR, EptHookInputMode, SCANNER_DATA_TYPE_IDX, SCANNER_EDIT_VALUE,
+    EPT_HOOK_TARGET_ADDR, EptHookInputMode,
+    REG_CHANGE_IS_ERROR, REG_CHANGE_LIST, REG_CHANGE_SHOW_MODAL, REG_CHANGE_STATUS,
+    REG_CHANGE_TARGET_ADDR,
+    SCANNER_DATA_TYPE_IDX, SCANNER_EDIT_VALUE,
     SCANNER_EDITING_IDX, SCANNER_HAS_SCANNED, SCANNER_IS_ERROR, SCANNER_IS_SCANNING,
     SCANNER_PAGE, SCANNER_PID, SCANNER_RESULTS, SCANNER_SCAN_TYPE_IDX, SCANNER_SELECTED,
     SCANNER_STATUS, SCANNER_VALUE, SCANNER_VALUE2, SCANNER_WRITE_VALUE,
@@ -67,6 +70,15 @@ pub fn MemoryScannerTab() -> Element {
     // DPH Script state
     let mut dph_scripts = DPH_SCRIPTS.signal();
     let mut show_scripts_tab = DPH_SHOW_SCRIPTS_TAB.signal();
+
+    // Register Change state
+    let mut rc_show_modal = REG_CHANGE_SHOW_MODAL.signal();
+    let mut rc_status = REG_CHANGE_STATUS.signal();
+    let mut rc_is_error = REG_CHANGE_IS_ERROR.signal();
+
+    // Register Change modal state (local signals)
+    let mut rc_reg_idx_input = use_signal(|| "0".to_string());
+    let mut rc_value_input = use_signal(|| String::new());
 
     let driver_loaded = is_driver_loaded();
     let scanned = *has_scanned.read();
@@ -1094,6 +1106,105 @@ pub fn MemoryScannerTab() -> Element {
                 }
             }
 
+            // ============== Active Register Changes Table ==============
+            {
+                let reg_changes = REG_CHANGE_LIST.read().clone();
+                let has_reg_changes = !reg_changes.is_empty();
+                rsx! {
+                    if has_reg_changes {
+                        div { class: "controls",
+                            style: "border-left: 3px solid #a855f7; margin-top: 4px;",
+                            div { style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;",
+                                span { style: "color: var(--text-primary); font-weight: 600; font-size: 13px;",
+                                    "Active Register Changes ({reg_changes.len()})"
+                                }
+                                div { style: "display: flex; gap: 8px;",
+                                    button {
+                                        class: "btn",
+                                        style: "font-size: 11px; padding: 2px 8px;",
+                                        onclick: move |_| {
+                                            if let Ok(list) = callback::list_reg_changes() {
+                                                *REG_CHANGE_LIST.write() = list;
+                                            }
+                                        },
+                                        "Refresh"
+                                    }
+                                    button {
+                                        class: "btn",
+                                        style: "font-size: 11px; padding: 2px 8px; color: #dc2626;",
+                                        onclick: move |_| {
+                                            let _ = callback::remove_all_reg_changes();
+                                            if let Ok(list) = callback::list_reg_changes() {
+                                                *REG_CHANGE_LIST.write() = list;
+                                            }
+                                        },
+                                        "Remove All"
+                                    }
+                                }
+                            }
+                            table { class: "process-table",
+                                style: "font-size: 12px;",
+                                thead { class: "table-header",
+                                    tr {
+                                        th { class: "th", style: "width: 50px;", "#" }
+                                        th { class: "th", style: "width: 80px;", "PID" }
+                                        th { class: "th", style: "width: 180px;", "Address" }
+                                        th { class: "th", style: "width: 80px;", "Register" }
+                                        th { class: "th", style: "width: 150px;", "Value" }
+                                        th { class: "th", style: "width: 80px;", "" }
+                                    }
+                                }
+                                tbody {
+                                    for rc in reg_changes.iter() {
+                                        {
+                                            let rc_idx = rc.entry_index;
+                                            let rc_pid = rc.process_id;
+                                            let rc_addr = rc.target_address;
+                                            let reg_name = callback::REG_NAMES.get(rc.reg_index as usize).unwrap_or(&"???");
+                                            let rc_val = rc.new_value;
+                                            rsx! {
+                                                tr { class: "process-row",
+                                                    td { class: "cell", style: "width: 50px;", "{rc_idx}" }
+                                                    td { class: "cell", style: "width: 80px;", "{rc_pid}" }
+                                                    td {
+                                                        class: "cell",
+                                                        style: "width: 180px; font-family: 'Consolas', monospace; color: var(--accent-primary);",
+                                                        "0x{rc_addr:X}"
+                                                    }
+                                                    td {
+                                                        class: "cell",
+                                                        style: "width: 80px; font-family: 'Consolas', monospace; color: #a855f7;",
+                                                        "{reg_name}"
+                                                    }
+                                                    td {
+                                                        class: "cell",
+                                                        style: "width: 150px; font-family: 'Consolas', monospace;",
+                                                        "0x{rc_val:X}"
+                                                    }
+                                                    td { class: "cell", style: "width: 80px;",
+                                                        button {
+                                                            class: "btn",
+                                                            style: "font-size: 10px; padding: 1px 6px; color: #dc2626;",
+                                                            onclick: move |_| {
+                                                                let _ = callback::remove_reg_change(rc_idx);
+                                                                if let Ok(list) = callback::list_reg_changes() {
+                                                                    *REG_CHANGE_LIST.write() = list;
+                                                                }
+                                                            },
+                                                            "Remove"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Context menu
             if let Some((x, y, idx)) = ctx_menu {
                 {
@@ -1103,7 +1214,7 @@ pub fn MemoryScannerTab() -> Element {
                     rsx! {
                         div {
                             class: "context-menu",
-                            style: "left: clamp(0px, {x}px, calc(100vw - 200px)); top: clamp(0px, {y}px, calc(100vh - 200px));",
+                            style: "left: clamp(0px, {x}px, calc(100vw - 200px)); top: clamp(0px, {y}px, calc(100vh - 350px)); max-height: calc(100vh - 20px); overflow-y: auto;",
                             onclick: move |e| e.stop_propagation(),
 
                             // Edit Value
@@ -1186,6 +1297,23 @@ pub fn MemoryScannerTab() -> Element {
                                     context_menu.set(None);
                                 },
                                 span { "Install EPT Hook" }
+                                if !hv_is_running() {
+                                    span { style: "color: var(--text-secondary); font-size: 10px; margin-left: 4px;", "(HV off)" }
+                                }
+                            }
+
+                            // Change Register at This Address
+                            button {
+                                class: "context-menu-item",
+                                disabled: !driver_loaded || !hv_is_running(),
+                                onclick: move |_| {
+                                    REG_CHANGE_TARGET_ADDR.write().replace(addr);
+                                    rc_show_modal.set(true);
+                                    rc_status.set(String::new());
+                                    rc_is_error.set(false);
+                                    context_menu.set(None);
+                                },
+                                span { "Change Register at This Address" }
                                 if !hv_is_running() {
                                     span { style: "color: var(--text-secondary); font-size: 10px; margin-left: 4px;", "(HV off)" }
                                 }
@@ -1780,6 +1908,125 @@ pub fn MemoryScannerTab() -> Element {
                                                         ept_hook_status.set(format!("Failed: {}", e));
                                                         ept_hook_is_error.set(true);
                                                     }
+                                                }
+                                            }
+                                        },
+                                        "Install"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ============== Register Change Modal ==============
+            if *rc_show_modal.read() {
+                {
+                    let target_addr = REG_CHANGE_TARGET_ADDR.read().unwrap_or(0);
+                    let rc_status_msg = rc_status.read().clone();
+                    let rc_error = *rc_is_error.read();
+                    let pid_str = pid_input.read().clone();
+                    let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+
+                    rsx! {
+                        div {
+                            class: "modal-overlay",
+                            onclick: move |_| rc_show_modal.set(false),
+                            div {
+                                class: "modal-content",
+                                style: "max-width: 450px;",
+                                onclick: move |e| e.stop_propagation(),
+
+                                h3 { style: "margin: 0 0 12px 0; color: var(--text-primary);",
+                                    "Change Register at This Address"
+                                }
+
+                                div { style: "margin-bottom: 12px; color: var(--text-secondary); font-size: 12px;",
+                                    "Modify a register value every time execution reaches this address. No code patching \u{2014} pure EPT + MTF register manipulation at Ring -1."
+                                }
+
+                                // Target address (read-only)
+                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
+                                    label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Address:" }
+                                    span {
+                                        style: "font-family: 'Consolas', monospace; color: var(--accent-primary); font-size: 13px;",
+                                        "0x{target_addr:X}"
+                                    }
+                                }
+
+                                // Register selector
+                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
+                                    label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Register:" }
+                                    select {
+                                        class: "input",
+                                        style: "flex: 1; font-family: 'Consolas', monospace;",
+                                        value: "{rc_reg_idx_input}",
+                                        onchange: move |e| rc_reg_idx_input.set(e.value()),
+                                        for (i, name) in callback::REG_NAMES.iter().enumerate() {
+                                            option {
+                                                value: "{i}",
+                                                "{name}"
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // New value input
+                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
+                                    label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Value:" }
+                                    input {
+                                        class: "input",
+                                        style: "flex: 1; font-family: 'Consolas', monospace;",
+                                        r#type: "text",
+                                        placeholder: "0x1869F or 99999",
+                                        value: "{rc_value_input}",
+                                        oninput: move |e| rc_value_input.set(e.value()),
+                                    }
+                                }
+
+                                // Status
+                                if !rc_status_msg.is_empty() {
+                                    div {
+                                        style: if rc_error { "color: #dc2626; font-size: 12px; margin-bottom: 8px;" } else { "color: #22c55e; font-size: 12px; margin-bottom: 8px;" },
+                                        "{rc_status_msg}"
+                                    }
+                                }
+
+                                // Buttons
+                                div { style: "display: flex; gap: 8px; justify-content: flex-end;",
+                                    button {
+                                        class: "btn",
+                                        onclick: move |_| rc_show_modal.set(false),
+                                        "Cancel"
+                                    }
+                                    button {
+                                        class: "btn btn-primary",
+                                        disabled: pid == 0,
+                                        onclick: move |_| {
+                                            let reg_idx: u32 = rc_reg_idx_input.read().trim().parse().unwrap_or(0);
+                                            let val_str = rc_value_input.read().clone();
+                                            let val_trimmed = val_str.trim();
+
+                                            // Parse value: support "0x..." hex or decimal
+                                            let new_value: u64 = if val_trimmed.starts_with("0x") || val_trimmed.starts_with("0X") {
+                                                u64::from_str_radix(&val_trimmed[2..], 16).unwrap_or(0)
+                                            } else {
+                                                val_trimmed.parse::<u64>().unwrap_or(0)
+                                            };
+
+                                            match callback::install_reg_change(pid, target_addr, reg_idx, new_value) {
+                                                Ok(idx) => {
+                                                    let reg_name = callback::REG_NAMES.get(reg_idx as usize).unwrap_or(&"???");
+                                                    rc_status.set(format!("Installed #{}: {} = 0x{:X}", idx, reg_name, new_value));
+                                                    rc_is_error.set(false);
+                                                    if let Ok(list) = callback::list_reg_changes() {
+                                                        *REG_CHANGE_LIST.write() = list;
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    rc_status.set(format!("Failed: {}", e));
+                                                    rc_is_error.set(true);
                                                 }
                                             }
                                         },

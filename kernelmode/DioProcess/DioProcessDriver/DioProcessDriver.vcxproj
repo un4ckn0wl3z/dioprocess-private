@@ -141,6 +141,7 @@
     <ClInclude Include="Memory\PhysicalMemory.h" />
     <ClInclude Include="NSI\PortHide.h" />
     <ClInclude Include="EptHook\UsermodeEptHook.h" />
+    <ClInclude Include="EptHook\RegisterChange.h" />
     <!-- Hypervisor Headers -->
     <ClInclude Include="Hypervisor\arch.h" />
     <ClInclude Include="Hypervisor\ept.h" />
@@ -220,6 +221,9 @@
 
     <!-- EPT Hook -->
     <ClCompile Include="EptHook\UsermodeEptHook.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="EptHook\RegisterChange.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
 
