@@ -78,6 +78,15 @@ pub fn MemoryScannerTab() -> Element {
     // DPH Script state
     let mut dph_scripts = DPH_SCRIPTS.signal();
 
+    // Load persisted scripts on mount
+    use_future(move || async move {
+        let (saved_dph, saved_dpr) = tokio::task::spawn_blocking(|| {
+            (crate::config::load_dph_scripts(), crate::config::load_dpr_scripts())
+        }).await.unwrap_or_default();
+        if !saved_dph.is_empty() { *DPH_SCRIPTS.write() = saved_dph; }
+        if !saved_dpr.is_empty() { *DPR_SCRIPTS.write() = saved_dpr; }
+    });
+
     // Sub-tab state (local, like kernel_enumeration pattern)
     let mut active_tab = use_signal(|| MemScannerSubTab::Scanner);
 
@@ -517,6 +526,7 @@ pub fn MemoryScannerTab() -> Element {
                                                             match parse_dph_script(&content, &path) {
                                                                 Ok(script) => {
                                                                     dph_scripts.write().push(script);
+                                                                    persist_dph(&dph_scripts.read());
                                                                     status_message.set("Script loaded".to_string());
                                                                     is_error.set(false);
                                                                 }
@@ -555,6 +565,7 @@ pub fn MemoryScannerTab() -> Element {
                                                     if already_applied { continue; }
                                                     apply_dph_script(i, pid, &mut dph_scripts, &mut detour_allocs, &mut ept_hooks_list, &mut status_message, &mut is_error);
                                                 }
+                                                persist_dph(&dph_scripts.read());
                                             }
                                         },
                                         "Apply All"
@@ -565,6 +576,7 @@ pub fn MemoryScannerTab() -> Element {
                                             style: "font-size: 12px; padding: 3px 12px; color: #dc2626;",
                                             onclick: move |_| {
                                                 dph_scripts.write().clear();
+                                                persist_dph(&dph_scripts.read());
                                             },
                                             "Clear All"
                                         }
@@ -620,6 +632,7 @@ pub fn MemoryScannerTab() -> Element {
                                                                                 let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
                                                                                 if pid > 0 {
                                                                                     apply_dph_script(si, pid, &mut dph_scripts, &mut detour_allocs, &mut ept_hooks_list, &mut status_message, &mut is_error);
+                                                                                    persist_dph(&dph_scripts.read());
                                                                                 }
                                                                             }
                                                                         },
@@ -642,6 +655,7 @@ pub fn MemoryScannerTab() -> Element {
                                                                             }
                                                                         }
                                                                         dph_scripts.write().remove(si);
+                                                                        persist_dph(&dph_scripts.read());
                                                                     },
                                                                     "Delete"
                                                                 }
@@ -1281,6 +1295,7 @@ pub fn MemoryScannerTab() -> Element {
                                                         match parse_dpr_script(&content, &path) {
                                                             Ok(script) => {
                                                                 DPR_SCRIPTS.write().push(script);
+                                                                persist_dpr(&DPR_SCRIPTS.read());
                                                                 status_message.set("DPR script loaded".to_string());
                                                                 is_error.set(false);
                                                             }
@@ -1321,6 +1336,7 @@ pub fn MemoryScannerTab() -> Element {
                                                 if already_applied { continue; }
                                                 apply_dpr_script(i, pid, &mut dpr, &mut rc_list, &mut status_message, &mut is_error);
                                             }
+                                            persist_dpr(&DPR_SCRIPTS.read());
                                         }
                                     },
                                     "Apply All"
@@ -1337,6 +1353,7 @@ pub fn MemoryScannerTab() -> Element {
                                                 }
                                             }
                                             DPR_SCRIPTS.write().clear();
+                                            persist_dpr(&DPR_SCRIPTS.read());
                                             if let Ok(list) = callback::list_reg_changes() {
                                                 *REG_CHANGE_LIST.write() = list;
                                             }
@@ -1397,6 +1414,7 @@ pub fn MemoryScannerTab() -> Element {
                                                                             let mut dpr = DPR_SCRIPTS.signal();
                                                                             let mut rc_list = REG_CHANGE_LIST.signal();
                                                                             apply_dpr_script(si, pid, &mut dpr, &mut rc_list, &mut status_message, &mut is_error);
+                                                                            persist_dpr(&DPR_SCRIPTS.read());
                                                                         }
                                                                     }
                                                                 },
@@ -1415,6 +1433,7 @@ pub fn MemoryScannerTab() -> Element {
                                                                     }
                                                                 }
                                                                 DPR_SCRIPTS.write().remove(si);
+                                                                persist_dpr(&DPR_SCRIPTS.read());
                                                             },
                                                             "Delete"
                                                         }
@@ -2506,6 +2525,16 @@ fn build_dph_content(name: &str, target: &str, mode: &str, stolen_bytes: u32, co
         out.push('\n');
     }
     out
+}
+
+fn persist_dph(scripts: &[DphScript]) {
+    let s = scripts.to_vec();
+    spawn(async move { let _ = tokio::task::spawn_blocking(move || crate::config::save_dph_scripts(&s)).await; });
+}
+
+fn persist_dpr(scripts: &[DprScript]) {
+    let s = scripts.to_vec();
+    spawn(async move { let _ = tokio::task::spawn_blocking(move || crate::config::save_dpr_scripts(&s)).await; });
 }
 
 /// Apply a DPH script by index to a target process
