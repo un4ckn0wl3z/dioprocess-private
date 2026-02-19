@@ -507,7 +507,9 @@ pub fn MemoryScannerTab() -> Element {
                         let pid_str_clone = pid_input.read().clone();
                         let pid_for_scripts = pid_str_clone.trim().parse::<u32>().unwrap_or(0);
                         rsx! {
-                            div { class: "controls",
+                    div { class: "controls",
+                        style: "border-left: 3px solid #f59e0b; margin-top: 4px;",
+
                                 div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 8px;",
                                     button {
                                         class: "btn",
@@ -1273,14 +1275,11 @@ pub fn MemoryScannerTab() -> Element {
                 rsx! {
                     div { class: "controls",
                         style: "border-left: 3px solid #f59e0b; margin-top: 4px;",
-                        div { style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;",
-                            span { style: "color: var(--text-primary); font-weight: 600; font-size: 13px;",
-                                "Register Scripts (.dpr)"
-                            }
-                            div { style: "display: flex; gap: 8px;",
-                                button {
-                                    class: "btn",
-                                    style: "font-size: 11px; padding: 2px 8px;",
+
+                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 8px;",
+                                    button {
+                                        class: "btn",
+                                        style: "font-size: 12px; padding: 3px 12px;",
                                     onclick: move |_| {
                                         spawn(async move {
                                             if let Some(file) = rfd::AsyncFileDialog::new()
@@ -1317,7 +1316,7 @@ pub fn MemoryScannerTab() -> Element {
                                 }
                                 button {
                                     class: "btn",
-                                    style: "font-size: 11px; padding: 2px 8px;",
+                                    style: "font-size: 12px; padding: 3px 12px;",
                                     disabled: pid_for_dpr == 0 || dpr_scripts_list.iter().all(|s| s.entry_index.is_some()),
                                     onclick: {
                                         move |_| {
@@ -1344,7 +1343,7 @@ pub fn MemoryScannerTab() -> Element {
                                 if !dpr_scripts_list.is_empty() {
                                     button {
                                         class: "btn",
-                                        style: "font-size: 11px; padding: 2px 8px; color: #dc2626;",
+                                        style: "font-size: 12px; padding: 3px 12px; color: #dc2626;",
                                         onclick: move |_| {
                                             // Remove applied hooks first
                                             for script in DPR_SCRIPTS.read().iter() {
@@ -1362,7 +1361,7 @@ pub fn MemoryScannerTab() -> Element {
                                     }
                                 }
                             }
-                        }
+                        
 
                         if dpr_scripts_list.is_empty() {
                             div { style: "color: var(--text-secondary); font-size: 13px; padding: 8px; text-align: center;",
