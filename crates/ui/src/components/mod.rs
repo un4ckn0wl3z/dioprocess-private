@@ -36,7 +36,7 @@ pub use graph_window::GraphWindow;
 pub use handle_window::HandleWindow;
 pub use hook_scan_window::HookScanWindow;
 pub use kernel_enumeration::{HypervisorTab, KernelUtilitiesTab};
-pub use memory_scanner_tab::{MemoryScannerTab, apply_dph_file_to_process};
+pub use memory_scanner_tab::{MemoryScannerTab, apply_dph_file_to_process, apply_dpr_file_to_process};
 pub use memory_translate_tab::MemoryTranslateTab;
 pub use memory_window::MemoryWindow;
 pub use string_scan_window::StringScanWindow;

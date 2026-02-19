@@ -14,6 +14,7 @@ use process::get_process_modules;
 
 use crate::state::{
     DphScript, DPH_SCRIPTS, DPH_SHOW_SCRIPTS_TAB,
+    DprScript, DPR_SCRIPTS,
     EPT_HOOKS_LIST, EPT_HOOK_ASM_ERROR, EPT_HOOK_ASM_INPUT, EPT_HOOK_ASM_PREVIEW,
     EPT_HOOK_BYTES_INPUT, EPT_HOOK_DETOUR_ALLOCS, EPT_HOOK_DETOUR_ASM_ERROR,
     EPT_HOOK_DETOUR_ASM_INPUT, EPT_HOOK_DETOUR_ASM_PREVIEW, EPT_HOOK_DETOUR_STOLEN_BYTES,
@@ -1152,7 +1153,7 @@ pub fn MemoryScannerTab() -> Element {
                                         th { class: "th", style: "width: 180px;", "Address" }
                                         th { class: "th", style: "width: 80px;", "Register" }
                                         th { class: "th", style: "width: 150px;", "Value" }
-                                        th { class: "th", style: "width: 80px;", "" }
+                                        th { class: "th", style: "width: 140px;", "" }
                                     }
                                 }
                                 tbody {
@@ -1188,7 +1189,34 @@ pub fn MemoryScannerTab() -> Element {
                                                         style: "width: 150px; font-family: 'Consolas', monospace;",
                                                         "{val_display}"
                                                     }
-                                                    td { class: "cell", style: "width: 80px;",
+                                                    td { class: "cell", style: "width: 140px; display: flex; gap: 4px;",
+                                                        button {
+                                                            class: "btn",
+                                                            style: "font-size: 10px; padding: 1px 6px;",
+                                                            onclick: {
+                                                                let reg_name_str = reg_name.to_string();
+                                                                let val_str = if is_flag {
+                                                                    if rc_val != 0 { "set".to_string() } else { "clear".to_string() }
+                                                                } else {
+                                                                    format!("0x{:X}", rc_val)
+                                                                };
+                                                                move |_| {
+                                                                    let target_expr = reverse_resolve_address(rc_pid, rc_addr);
+                                                                    let content = build_dpr_content("", &target_expr, &reg_name_str, &val_str, "");
+                                                                    spawn(async move {
+                                                                        if let Some(file) = rfd::AsyncFileDialog::new()
+                                                                            .add_filter("DioProcess Register Script", &["dpr"])
+                                                                            .set_file_name("register.dpr")
+                                                                            .save_file()
+                                                                            .await
+                                                                        {
+                                                                            let _ = std::fs::write(file.path(), content);
+                                                                        }
+                                                                    });
+                                                                }
+                                                            },
+                                                            "Save .dpr"
+                                                        }
                                                         button {
                                                             class: "btn",
                                                             style: "font-size: 10px; padding: 1px 6px; color: #dc2626;",
@@ -1199,6 +1227,185 @@ pub fn MemoryScannerTab() -> Element {
                                                                 }
                                                             },
                                                             "Remove"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ============== DPR Scripts Panel ==============
+            {
+                let dpr_scripts_list = DPR_SCRIPTS.read().clone();
+                let pid_str_for_dpr = pid_input.read().clone();
+                let pid_for_dpr = pid_str_for_dpr.trim().parse::<u32>().unwrap_or(0);
+                rsx! {
+                    div { class: "controls",
+                        style: "border-left: 3px solid #f59e0b; margin-top: 4px;",
+                        div { style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;",
+                            span { style: "color: var(--text-primary); font-weight: 600; font-size: 13px;",
+                                "Register Scripts (.dpr)"
+                            }
+                            div { style: "display: flex; gap: 8px;",
+                                button {
+                                    class: "btn",
+                                    style: "font-size: 11px; padding: 2px 8px;",
+                                    onclick: move |_| {
+                                        spawn(async move {
+                                            if let Some(file) = rfd::AsyncFileDialog::new()
+                                                .add_filter("DioProcess Register Script", &["dpr"])
+                                                .set_title("Load .dpr Script")
+                                                .pick_file()
+                                                .await
+                                            {
+                                                let path = file.path().to_string_lossy().to_string();
+                                                match std::fs::read_to_string(file.path()) {
+                                                    Ok(content) => {
+                                                        match parse_dpr_script(&content, &path) {
+                                                            Ok(script) => {
+                                                                DPR_SCRIPTS.write().push(script);
+                                                                status_message.set("DPR script loaded".to_string());
+                                                                is_error.set(false);
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!("Parse error: {}", e));
+                                                                is_error.set(true);
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        status_message.set(format!("Read error: {}", e));
+                                                        is_error.set(true);
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    },
+                                    "Load .dpr"
+                                }
+                                button {
+                                    class: "btn",
+                                    style: "font-size: 11px; padding: 2px 8px;",
+                                    disabled: pid_for_dpr == 0 || dpr_scripts_list.iter().all(|s| s.entry_index.is_some()),
+                                    onclick: {
+                                        move |_| {
+                                            let pid_str = pid_input.read().clone();
+                                            let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+                                            if pid == 0 {
+                                                status_message.set("Set PID first".to_string());
+                                                is_error.set(true);
+                                                return;
+                                            }
+                                            let mut dpr = DPR_SCRIPTS.signal();
+                                            let mut rc_list = REG_CHANGE_LIST.signal();
+                                            let count = dpr.read().len();
+                                            for i in 0..count {
+                                                let already_applied = dpr.read().get(i).map(|s| s.entry_index.is_some()).unwrap_or(true);
+                                                if already_applied { continue; }
+                                                apply_dpr_script(i, pid, &mut dpr, &mut rc_list, &mut status_message, &mut is_error);
+                                            }
+                                        }
+                                    },
+                                    "Apply All"
+                                }
+                                if !dpr_scripts_list.is_empty() {
+                                    button {
+                                        class: "btn",
+                                        style: "font-size: 11px; padding: 2px 8px; color: #dc2626;",
+                                        onclick: move |_| {
+                                            // Remove applied hooks first
+                                            for script in DPR_SCRIPTS.read().iter() {
+                                                if let Some(idx) = script.entry_index {
+                                                    let _ = callback::remove_reg_change(idx);
+                                                }
+                                            }
+                                            DPR_SCRIPTS.write().clear();
+                                            if let Ok(list) = callback::list_reg_changes() {
+                                                *REG_CHANGE_LIST.write() = list;
+                                            }
+                                        },
+                                        "Clear All"
+                                    }
+                                }
+                            }
+                        }
+
+                        if dpr_scripts_list.is_empty() {
+                            div { style: "color: var(--text-secondary); font-size: 13px; padding: 8px; text-align: center;",
+                                "No .dpr scripts loaded. Click \"Load .dpr\" to add a register script."
+                            }
+                        } else {
+                            table { class: "process-table",
+                                style: "font-size: 12px;",
+                                thead { class: "table-header",
+                                    tr {
+                                        th { class: "th", style: "width: 160px;", "Name" }
+                                        th { class: "th", style: "width: 180px;", "Target" }
+                                        th { class: "th", style: "width: 80px;", "Register" }
+                                        th { class: "th", style: "width: 100px;", "Value" }
+                                        th { class: "th", style: "width: 100px;", "Status" }
+                                        th { class: "th", style: "width: 140px;", "" }
+                                    }
+                                }
+                                tbody {
+                                    for (si, script) in dpr_scripts_list.iter().enumerate() {
+                                        {
+                                            let s_name = script.name.clone();
+                                            let s_target = script.target_expr.clone();
+                                            let s_reg = script.register.clone();
+                                            let s_val = script.value_expr.clone();
+                                            let s_status = script.status.clone();
+                                            let is_applied = script.entry_index.is_some();
+                                            let status_color = if s_status == "Applied" { "color: #22c55e;" }
+                                                else if s_status.starts_with("Error") { "color: #dc2626;" }
+                                                else { "color: var(--text-secondary);" };
+                                            rsx! {
+                                                tr { class: "process-row",
+                                                    td { class: "cell", style: "width: 160px;", "{s_name}" }
+                                                    td { class: "cell", style: "width: 180px; font-family: 'Consolas', monospace; font-size: 11px;", "{s_target}" }
+                                                    td { class: "cell", style: "width: 80px; font-family: 'Consolas', monospace; color: #a855f7;", "{s_reg}" }
+                                                    td { class: "cell", style: "width: 100px; font-family: 'Consolas', monospace;", "{s_val}" }
+                                                    td { class: "cell", style: "width: 100px; {status_color}", "{s_status}" }
+                                                    td { class: "cell", style: "width: 140px; display: flex; gap: 4px;",
+                                                        if !is_applied {
+                                                            button {
+                                                                class: "btn",
+                                                                style: "font-size: 10px; padding: 1px 6px;",
+                                                                disabled: pid_for_dpr == 0,
+                                                                onclick: {
+                                                                    move |_| {
+                                                                        let pid_str = pid_input.read().clone();
+                                                                        let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+                                                                        if pid > 0 {
+                                                                            let mut dpr = DPR_SCRIPTS.signal();
+                                                                            let mut rc_list = REG_CHANGE_LIST.signal();
+                                                                            apply_dpr_script(si, pid, &mut dpr, &mut rc_list, &mut status_message, &mut is_error);
+                                                                        }
+                                                                    }
+                                                                },
+                                                                "Apply"
+                                                            }
+                                                        }
+                                                        button {
+                                                            class: "btn",
+                                                            style: "font-size: 10px; padding: 1px 6px; color: #dc2626;",
+                                                            onclick: move |_| {
+                                                                // If applied, remove the reg change first
+                                                                if let Some(idx) = DPR_SCRIPTS.read().get(si).and_then(|s| s.entry_index) {
+                                                                    let _ = callback::remove_reg_change(idx);
+                                                                    if let Ok(list) = callback::list_reg_changes() {
+                                                                        *REG_CHANGE_LIST.write() = list;
+                                                                    }
+                                                                }
+                                                                DPR_SCRIPTS.write().remove(si);
+                                                            },
+                                                            "Delete"
                                                         }
                                                     }
                                                 }
@@ -2523,5 +2730,193 @@ pub fn apply_dph_file_to_process(pid: u32, file_path: &str) -> Result<String, St
                 Err(e) => Err(format!("Install failed: {}", e)),
             }
         }
+    }
+}
+
+// ============== .dpr (DioProcess Register) Script System ==============
+
+/// Parse a .dpr script file into a DprScript struct
+fn parse_dpr_script(content: &str, file_path: &str) -> Result<DprScript, String> {
+    let mut name = String::new();
+    let mut target = String::new();
+    let mut register = String::new();
+    let mut value_expr = String::new();
+    let mut in_description = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') && !in_description {
+            continue;
+        }
+        if trimmed == "[register]" {
+            in_description = false;
+            continue;
+        }
+        if trimmed == "[description]" {
+            in_description = true;
+            continue;
+        }
+        if in_description {
+            continue; // Ignore description lines
+        }
+        // Parse key = value in [register] section
+        if let Some((key, val)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let val = val.trim();
+            match key {
+                "name" => name = val.to_string(),
+                "target" => target = val.to_string(),
+                "register" => register = val.to_string(),
+                "value" => value_expr = val.to_string(),
+                _ => {}
+            }
+        }
+    }
+
+    if target.is_empty() {
+        return Err("Missing 'target' field in [register] section".to_string());
+    }
+    if register.is_empty() {
+        return Err("Missing 'register' field in [register] section".to_string());
+    }
+    if value_expr.is_empty() {
+        return Err("Missing 'value' field in [register] section".to_string());
+    }
+
+    // Resolve register name to index
+    let reg_upper = register.to_uppercase();
+    let reg_index = callback::REG_NAMES.iter()
+        .position(|&n| n == reg_upper)
+        .ok_or_else(|| format!("Unknown register: '{}'. Valid: {:?}", register, &callback::REG_NAMES[..]))? as u32;
+
+    // Resolve value
+    let is_flag = reg_index >= 16;
+    let new_value = if is_flag {
+        match value_expr.to_lowercase().as_str() {
+            "set" | "1" => 1u64,
+            "clear" | "0" => 0u64,
+            _ => return Err(format!("Invalid flag value: '{}'. Use 'set' or 'clear'", value_expr)),
+        }
+    } else {
+        let v = value_expr.trim();
+        if v.starts_with("0x") || v.starts_with("0X") {
+            u64::from_str_radix(&v[2..], 16)
+                .map_err(|_| format!("Invalid hex value: '{}'", v))?
+        } else {
+            v.parse::<u64>()
+                .map_err(|_| format!("Invalid value: '{}'. Use hex (0x...) or decimal", v))?
+        }
+    };
+
+    if name.is_empty() {
+        name = std::path::Path::new(file_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Unnamed".to_string());
+    }
+
+    Ok(DprScript {
+        name,
+        file_path: file_path.to_string(),
+        target_expr: target,
+        resolved_addr: None,
+        register: reg_upper,
+        reg_index,
+        value_expr: value_expr.to_string(),
+        new_value,
+        entry_index: None,
+        status: "Pending".to_string(),
+    })
+}
+
+/// Build .dpr file content
+fn build_dpr_content(name: &str, target: &str, register: &str, value: &str, description: &str) -> String {
+    let mut out = String::new();
+    out.push_str("# DioProcess Register Script\n");
+    out.push_str("[register]\n");
+    if !name.is_empty() {
+        out.push_str(&format!("name = {}\n", name));
+    }
+    out.push_str(&format!("target = {}\n", target));
+    out.push_str(&format!("register = {}\n", register));
+    out.push_str(&format!("value = {}\n", value));
+    if !description.is_empty() {
+        out.push_str(&format!("\n[description]\n{}\n", description));
+    }
+    out
+}
+
+/// Apply a DPR script by index to a target process
+fn apply_dpr_script(
+    script_idx: usize,
+    pid: u32,
+    dpr_scripts: &mut Signal<Vec<DprScript>>,
+    rc_list: &mut Signal<Vec<callback::RegChangeInfo>>,
+    status_message: &mut Signal<String>,
+    is_error: &mut Signal<bool>,
+) {
+    let script = match dpr_scripts.read().get(script_idx) {
+        Some(s) => s.clone(),
+        None => return,
+    };
+
+    // Resolve target address
+    let addr = match resolve_target(pid, &script.target_expr) {
+        Ok(a) => a,
+        Err(e) => {
+            if let Some(s) = dpr_scripts.write().get_mut(script_idx) {
+                s.status = format!("Error: {}", e);
+            }
+            status_message.set(format!("Resolve failed: {}", e));
+            is_error.set(true);
+            return;
+        }
+    };
+
+    if let Some(s) = dpr_scripts.write().get_mut(script_idx) {
+        s.resolved_addr = Some(addr);
+    }
+
+    match callback::install_reg_change(pid, addr, script.reg_index, script.new_value) {
+        Ok(entry_idx) => {
+            if let Some(s) = dpr_scripts.write().get_mut(script_idx) {
+                s.entry_index = Some(entry_idx);
+                s.status = "Applied".to_string();
+            }
+            status_message.set(format!("Script '{}' applied (reg change #{}, {} = {})",
+                script.name, entry_idx, script.register, script.value_expr));
+            is_error.set(false);
+            if let Ok(list) = callback::list_reg_changes() {
+                rc_list.set(list);
+            }
+        }
+        Err(e) => {
+            let msg = format!("Install failed: {}", e);
+            if let Some(s) = dpr_scripts.write().get_mut(script_idx) {
+                s.status = format!("Error: {}", msg);
+            }
+            status_message.set(msg);
+            is_error.set(true);
+        }
+    }
+}
+
+/// Apply a .dpr script file to a process (for use from process_tab context menu)
+pub fn apply_dpr_file_to_process(pid: u32, file_path: &str) -> Result<String, String> {
+    let content = std::fs::read_to_string(file_path)
+        .map_err(|e| format!("Read error: {}", e))?;
+    let script = parse_dpr_script(&content, file_path)?;
+
+    let addr = resolve_target(pid, &script.target_expr)?;
+
+    match callback::install_reg_change(pid, addr, script.reg_index, script.new_value) {
+        Ok(entry_idx) => {
+            if let Ok(list) = callback::list_reg_changes() {
+                *REG_CHANGE_LIST.write() = list;
+            }
+            Ok(format!("Script '{}' applied (reg change #{}, {} = {} at 0x{:X})",
+                script.name, entry_idx, script.register, script.value_expr, addr))
+        }
+        Err(e) => Err(format!("Install failed: {}", e)),
     }
 }

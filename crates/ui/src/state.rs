@@ -189,6 +189,24 @@ pub struct DphScript {
 pub static DPH_SCRIPTS: GlobalSignal<Vec<DphScript>> = Signal::global(Vec::new);
 pub static DPH_SHOW_SCRIPTS_TAB: GlobalSignal<bool> = Signal::global(|| false);
 
+// DPR Script state
+/// A loaded .dpr (DioProcess Register) script entry
+#[derive(Clone, Debug)]
+pub struct DprScript {
+    pub name: String,
+    pub file_path: String,
+    pub target_expr: String,        // "module+offset" or "0xABCD"
+    pub resolved_addr: Option<u64>,
+    pub register: String,           // "ZF", "RAX", etc.
+    pub reg_index: u32,             // 0-21
+    pub value_expr: String,         // "set", "clear", "0x1234"
+    pub new_value: u64,             // Resolved numeric value
+    pub entry_index: Option<u32>,   // Set after hook installed
+    pub status: String,             // "Pending" / "Applied" / "Error: ..."
+}
+
+pub static DPR_SCRIPTS: GlobalSignal<Vec<DprScript>> = Signal::global(Vec::new);
+
 // Register Change hook state
 pub static REG_CHANGE_SHOW_MODAL: GlobalSignal<bool> = Signal::global(|| false);
 pub static REG_CHANGE_TARGET_ADDR: GlobalSignal<Option<u64>> = Signal::global(|| None);

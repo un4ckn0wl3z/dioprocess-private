@@ -18,7 +18,7 @@ use super::{
     CreateProcessWindow, EarlyInjectionWindow, FunctionStompingWindow, GhostProcessWindow,
     GraphWindow, HandleWindow, HookScanWindow, MemoryWindow, ModuleWindow, ProcessRow,
     ShellcodeInjectWindow, StringScanWindow, ThreadWindow, ThreadlessInjectWindow,
-    TokenThiefWindow, apply_dph_file_to_process,
+    TokenThiefWindow, apply_dph_file_to_process, apply_dpr_file_to_process,
 };
 use crate::helpers::copy_to_clipboard;
 use crate::state::{
@@ -1548,6 +1548,44 @@ pub fn ProcessTab() -> Element {
                                 },
                                 span { "📜" }
                                 span { "Apply .dph Script" }
+                            }
+
+                            // Apply .dpr Script
+                            button {
+                                class: "context-menu-item",
+                                disabled: !hv_is_running(),
+                                onclick: move |_| {
+                                    let target_pid = ctx_menu.pid;
+                                    context_menu.set(ContextMenuState::default());
+
+                                    if let Some(pid) = target_pid {
+                                        spawn(async move {
+                                            let file = rfd::AsyncFileDialog::new()
+                                                .add_filter("DioProcess Register Script", &["dpr"])
+                                                .set_title("Select .dpr Script to Apply")
+                                                .pick_file()
+                                                .await;
+
+                                            if let Some(file) = file {
+                                                let path = file.path().to_string_lossy().to_string();
+                                                match apply_dpr_file_to_process(pid, &path) {
+                                                    Ok(msg) => {
+                                                        status_message.set(format!("✓ {}", msg));
+                                                    }
+                                                    Err(e) => {
+                                                        status_message.set(format!("✗ .dpr script failed: {}", e));
+                                                    }
+                                                }
+                                                spawn(async move {
+                                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                    status_message.set(String::new());
+                                                });
+                                            }
+                                        });
+                                    }
+                                },
+                                span { "📋" }
+                                span { "Apply .dpr Script" }
                             }
 
                             div { class: "context-menu-separator" }
