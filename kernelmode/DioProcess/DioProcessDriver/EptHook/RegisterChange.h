@@ -15,7 +15,7 @@ struct RegChangeTrackingEntry
 	ULONG64 TargetVirtualAddress;
 	ULONG64 ProcessCr3;
 	ULONG64 PagePfn;
-	ULONG RegIndex;          // 0=RAX..15=R15, 16=RFLAGS
+	ULONG RegIndex;          // 0=RAX..15=R15, 16=CF, 17=PF, 18=AF, 19=ZF, 20=SF, 21=OF
 	ULONG64 NewValue;
 	BOOLEAN Active;
 };

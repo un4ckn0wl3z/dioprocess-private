@@ -79,6 +79,7 @@ pub fn MemoryScannerTab() -> Element {
     // Register Change modal state (local signals)
     let mut rc_reg_idx_input = use_signal(|| "0".to_string());
     let mut rc_value_input = use_signal(|| String::new());
+    let mut rc_flag_set = use_signal(|| true); // true = Set (1), false = Clear (0)
 
     let driver_loaded = is_driver_loaded();
     let scanned = *has_scanned.read();
@@ -1162,6 +1163,12 @@ pub fn MemoryScannerTab() -> Element {
                                             let rc_addr = rc.target_address;
                                             let reg_name = callback::REG_NAMES.get(rc.reg_index as usize).unwrap_or(&"???");
                                             let rc_val = rc.new_value;
+                                            let is_flag = rc.reg_index >= 16;
+                                            let val_display = if is_flag {
+                                                if rc_val != 0 { "Set".to_string() } else { "Clear".to_string() }
+                                            } else {
+                                                format!("0x{:X}", rc_val)
+                                            };
                                             rsx! {
                                                 tr { class: "process-row",
                                                     td { class: "cell", style: "width: 50px;", "{rc_idx}" }
@@ -1179,7 +1186,7 @@ pub fn MemoryScannerTab() -> Element {
                                                     td {
                                                         class: "cell",
                                                         style: "width: 150px; font-family: 'Consolas', monospace;",
-                                                        "0x{rc_val:X}"
+                                                        "{val_display}"
                                                     }
                                                     td { class: "cell", style: "width: 80px;",
                                                         button {
@@ -1972,16 +1979,36 @@ pub fn MemoryScannerTab() -> Element {
                                     }
                                 }
 
-                                // New value input
-                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
-                                    label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Value:" }
-                                    input {
-                                        class: "input",
-                                        style: "flex: 1; font-family: 'Consolas', monospace;",
-                                        r#type: "text",
-                                        placeholder: "0x1869F or 99999",
-                                        value: "{rc_value_input}",
-                                        oninput: move |e| rc_value_input.set(e.value()),
+                                // New value input — conditional on register type
+                                {
+                                    let selected_reg_idx: u32 = rc_reg_idx_input.read().trim().parse().unwrap_or(0);
+                                    let is_flag_reg = selected_reg_idx >= 16;
+                                    rsx! {
+                                        if is_flag_reg {
+                                            div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
+                                                label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Action:" }
+                                                select {
+                                                    class: "input",
+                                                    style: "flex: 1; font-family: 'Consolas', monospace;",
+                                                    value: if *rc_flag_set.read() { "1" } else { "0" },
+                                                    onchange: move |e| rc_flag_set.set(e.value() == "1"),
+                                                    option { value: "1", "Set (1)" }
+                                                    option { value: "0", "Clear (0)" }
+                                                }
+                                            }
+                                        } else {
+                                            div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
+                                                label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Value:" }
+                                                input {
+                                                    class: "input",
+                                                    style: "flex: 1; font-family: 'Consolas', monospace;",
+                                                    r#type: "text",
+                                                    placeholder: "0x1869F or 99999",
+                                                    value: "{rc_value_input}",
+                                                    oninput: move |e| rc_value_input.set(e.value()),
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
@@ -2005,20 +2032,30 @@ pub fn MemoryScannerTab() -> Element {
                                         disabled: pid == 0,
                                         onclick: move |_| {
                                             let reg_idx: u32 = rc_reg_idx_input.read().trim().parse().unwrap_or(0);
-                                            let val_str = rc_value_input.read().clone();
-                                            let val_trimmed = val_str.trim();
+                                            let is_flag = reg_idx >= 16;
 
-                                            // Parse value: support "0x..." hex or decimal
-                                            let new_value: u64 = if val_trimmed.starts_with("0x") || val_trimmed.starts_with("0X") {
-                                                u64::from_str_radix(&val_trimmed[2..], 16).unwrap_or(0)
+                                            let new_value: u64 = if is_flag {
+                                                if *rc_flag_set.read() { 1 } else { 0 }
                                             } else {
-                                                val_trimmed.parse::<u64>().unwrap_or(0)
+                                                let val_str = rc_value_input.read().clone();
+                                                let val_trimmed = val_str.trim().to_string();
+                                                // Parse value: support "0x..." hex or decimal
+                                                if val_trimmed.starts_with("0x") || val_trimmed.starts_with("0X") {
+                                                    u64::from_str_radix(&val_trimmed[2..], 16).unwrap_or(0)
+                                                } else {
+                                                    val_trimmed.parse::<u64>().unwrap_or(0)
+                                                }
                                             };
 
                                             match callback::install_reg_change(pid, target_addr, reg_idx, new_value) {
                                                 Ok(idx) => {
                                                     let reg_name = callback::REG_NAMES.get(reg_idx as usize).unwrap_or(&"???");
-                                                    rc_status.set(format!("Installed #{}: {} = 0x{:X}", idx, reg_name, new_value));
+                                                    let val_display = if is_flag {
+                                                        if new_value != 0 { "Set".to_string() } else { "Clear".to_string() }
+                                                    } else {
+                                                        format!("0x{:X}", new_value)
+                                                    };
+                                                    rc_status.set(format!("Installed #{}: {} = {}", idx, reg_name, val_display));
                                                     rc_is_error.set(false);
                                                     if let Ok(list) = callback::list_reg_changes() {
                                                         *REG_CHANGE_LIST.write() = list;

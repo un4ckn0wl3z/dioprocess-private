@@ -51,7 +51,7 @@ struct vcpu_ept_reg_change_entry {
   uint64_t target_rip;      // exact guest virtual address to match
   uint64_t process_cr3;     // CR3 of target process (mask lower 12 bits)
   uint64_t orig_page_pfn;   // PFN of the page (for EPT PTE lookup)
-  uint8_t  reg_index;       // 0=RAX,1=RCX,2=RDX,3=RBX,4=RSP,5=RBP,6=RSI,7=RDI,8-15=R8-R15,16=RFLAGS
+  uint8_t  reg_index;       // 0=RAX,1=RCX,2=RDX,3=RBX,4=RSP,5=RBP,6=RSI,7=RDI,8-15=R8-R15,16=CF,17=PF,18=AF,19=ZF,20=SF,21=OF
   uint64_t new_value;       // value to set
   bool     in_use;
 };

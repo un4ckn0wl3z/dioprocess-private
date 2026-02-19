@@ -642,11 +642,20 @@ void handle_ept_violation(vcpu* const cpu) {
       if ((entry.process_cr3 >> 12) != (guest_cr3 >> 12))
         continue;
 
-      // modify the guest register (index 16 = RFLAGS, stored in VMCS)
-      if (entry.reg_index == 16)
-        vmx_vmwrite(VMCS_GUEST_RFLAGS, entry.new_value);
-      else
+      // modify the guest register
+      if (entry.reg_index >= 16 && entry.reg_index <= 21) {
+        // individual RFLAGS flags: 16=CF(bit0), 17=PF(bit2), 18=AF(bit4), 19=ZF(bit6), 20=SF(bit7), 21=OF(bit11)
+        static const uint8_t flag_bits[] = { 0, 2, 4, 6, 7, 11 };
+        auto bit = flag_bits[entry.reg_index - 16];
+        auto rflags = vmx_vmread(VMCS_GUEST_RFLAGS);
+        if (entry.new_value)
+          rflags |= (1ull << bit);
+        else
+          rflags &= ~(1ull << bit);
+        vmx_vmwrite(VMCS_GUEST_RFLAGS, rflags);
+      } else {
         write_guest_gpr(cpu->ctx, entry.reg_index, entry.new_value);
+      }
     }
 
     // temporarily allow execute on this page so the instruction can run
