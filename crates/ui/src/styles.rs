@@ -1874,6 +1874,10 @@ const BASE_STYLES: &str = r#"
     .create-process-input::placeholder {
         color: #4b5563;
     }
+    select.create-process-input option {
+        background: #1e293b;
+        color: white;
+    }
     .create-process-path-row {
         display: flex;
         gap: 8px;

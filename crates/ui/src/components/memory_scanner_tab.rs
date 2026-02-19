@@ -13,7 +13,7 @@ use crate::helpers::copy_to_clipboard;
 use process::get_process_modules;
 
 use crate::state::{
-    DphScript, DPH_SCRIPTS, DPH_SHOW_SCRIPTS_TAB,
+    DphScript, DPH_SCRIPTS,
     DprScript, DPR_SCRIPTS,
     EPT_HOOKS_LIST, EPT_HOOK_ASM_ERROR, EPT_HOOK_ASM_INPUT, EPT_HOOK_ASM_PREVIEW,
     EPT_HOOK_BYTES_INPUT, EPT_HOOK_DETOUR_ALLOCS, EPT_HOOK_DETOUR_ASM_ERROR,
@@ -29,6 +29,13 @@ use crate::state::{
 };
 
 const RESULTS_PER_PAGE: usize = 500;
+
+/// Sub-tab selection for Memory Scanner
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum MemScannerSubTab {
+    Scanner,
+    Scripts,
+}
 
 #[component]
 pub fn MemoryScannerTab() -> Element {
@@ -70,7 +77,9 @@ pub fn MemoryScannerTab() -> Element {
 
     // DPH Script state
     let mut dph_scripts = DPH_SCRIPTS.signal();
-    let mut show_scripts_tab = DPH_SHOW_SCRIPTS_TAB.signal();
+
+    // Sub-tab state (local, like kernel_enumeration pattern)
+    let mut active_tab = use_signal(|| MemScannerSubTab::Scanner);
 
     // Register Change state
     let mut rc_show_modal = REG_CHANGE_SHOW_MODAL.signal();
@@ -462,18 +471,18 @@ pub fn MemoryScannerTab() -> Element {
                 }
             }
 
-            // Sub-tab toggle
-            div { style: "display: flex; gap: 4px; padding: 4px 12px; border-bottom: 1px solid var(--border-color);",
+            // Sub-tabs (styled like kernel_enumeration controls bar)
+            div {
+                class: "controls",
+                style: "border-bottom: 1px solid var(--border-secondary); padding-bottom: 12px;",
                 button {
-                    class: "btn",
-                    style: if !*show_scripts_tab.read() { "font-size: 12px; padding: 3px 12px; background: var(--accent-primary); color: #fff;" } else { "font-size: 12px; padding: 3px 12px;" },
-                    onclick: move |_| show_scripts_tab.set(false),
+                    class: if *active_tab.read() == MemScannerSubTab::Scanner { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| active_tab.set(MemScannerSubTab::Scanner),
                     "Scanner"
                 }
                 button {
-                    class: "btn",
-                    style: if *show_scripts_tab.read() { "font-size: 12px; padding: 3px 12px; background: var(--accent-primary); color: #fff;" } else { "font-size: 12px; padding: 3px 12px;" },
-                    onclick: move |_| show_scripts_tab.set(true),
+                    class: if *active_tab.read() == MemScannerSubTab::Scripts { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| active_tab.set(MemScannerSubTab::Scripts),
                     "Scripts"
                 }
             }
@@ -482,7 +491,7 @@ pub fn MemoryScannerTab() -> Element {
             div {
                 style: "display: flex; flex-direction: column; flex: 1; overflow-y: auto; gap: 0;",
 
-                if *show_scripts_tab.read() {
+                if *active_tab.read() == MemScannerSubTab::Scripts {
                     // ============== Scripts Panel ==============
                     {
                         let scripts = dph_scripts.read().clone();
@@ -649,7 +658,7 @@ pub fn MemoryScannerTab() -> Element {
                     }
                 }
 
-                if !*show_scripts_tab.read() {
+                if *active_tab.read() == MemScannerSubTab::Scanner {
                 // Controls bar
                 div { class: "controls",
                     div { style: "display: flex; gap: 8px; align-items: center; flex-wrap: wrap;",
@@ -968,9 +977,10 @@ pub fn MemoryScannerTab() -> Element {
                     }
                 }
 
-                } // end if !show_scripts_tab
+                } // end if Scanner sub-tab
 
-                // ============== EPT Hooks Panel ==============
+                // ============== EPT Hooks Panel (shown in Scripts sub-tab) ==============
+                if *active_tab.read() == MemScannerSubTab::Scripts {
                 {
                     let hooks = ept_hooks_list.read().clone();
                     let has_hooks = !hooks.is_empty();
@@ -1106,9 +1116,10 @@ pub fn MemoryScannerTab() -> Element {
                         }
                     }
                 }
-            }
+                } // end if Scripts sub-tab (EPT hooks section)
 
-            // ============== Active Register Changes Table ==============
+                // ============== Active Register Changes Table (Scripts sub-tab) ==============
+                if *active_tab.read() == MemScannerSubTab::Scripts {
             {
                 let reg_changes = REG_CHANGE_LIST.read().clone();
                 let has_reg_changes = !reg_changes.is_empty();
@@ -1417,7 +1428,9 @@ pub fn MemoryScannerTab() -> Element {
                         }
                     }
                 }
-            }
+                }
+                } // end if Scripts sub-tab (register changes + DPR scripts)
+            } // end scrollable content div
 
             // Context menu
             if let Some((x, y, idx)) = ctx_menu {
@@ -1566,32 +1579,40 @@ pub fn MemoryScannerTab() -> Element {
 
                     rsx! {
                         div {
-                            class: "modal-overlay",
+                            class: "create-process-modal-overlay",
                             onclick: move |_| ept_hook_show_modal.set(false),
                             div {
-                                class: "modal-content",
+                                class: "create-process-modal",
                                 style: "max-width: 600px; min-height: 400px;",
                                 onclick: move |e| e.stop_propagation(),
 
-                                // Header with title and arch badge
-                                div { style: "display: flex; align-items: center; gap: 8px; margin-bottom: 12px;",
-                                    h3 { style: "margin: 0; color: var(--text-primary);",
-                                        "Install EPT Hook"
+                                // Header
+                                div { class: "create-process-modal-header",
+                                    div { style: "display: flex; align-items: center; gap: 8px;",
+                                        span { class: "create-process-modal-title", "Install EPT Hook" }
+                                        span {
+                                            class: "experimental-badge",
+                                            style: "{arch_badge_style}",
+                                            "{arch_label}"
+                                        }
                                     }
-                                    span {
-                                        class: "experimental-badge",
-                                        style: "{arch_badge_style}",
-                                        "{arch_label}"
+                                    button {
+                                        class: "create-process-modal-close",
+                                        onclick: move |_| ept_hook_show_modal.set(false),
+                                        "X"
                                     }
                                 }
+
+                                // Body
+                                div { class: "create-process-form",
 
                                 div { style: "margin-bottom: 12px; color: var(--text-secondary); font-size: 12px;",
                                     "EPT split-page hook: reads see original bytes, execution uses patched bytes."
                                 }
 
                                 // Target address (read-only)
-                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
-                                    label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Address:" }
+                                div { class: "create-process-field",
+                                    label { class: "create-process-label", "Address:" }
                                     span {
                                         style: "font-family: 'Consolas', monospace; color: var(--accent-primary); font-size: 13px;",
                                         "0x{target_addr:X}"
@@ -1945,14 +1966,15 @@ pub fn MemoryScannerTab() -> Element {
 
                                 if !hook_status.is_empty() {
                                     div {
-                                        class: if hook_error { "status-message status-error" } else { "status-message" },
-                                        style: "margin-bottom: 8px;",
+                                        class: if hook_error { "create-process-status create-process-status-error" } else { "create-process-status create-process-status-success" },
                                         "{hook_status}"
                                     }
                                 }
 
-                                // Buttons
-                                div { style: "display: flex; gap: 8px; justify-content: flex-end;",
+                                } // end create-process-form
+
+                                // Actions
+                                div { class: "create-process-actions",
                                     button {
                                         class: "btn",
                                         onclick: move |_| ept_hook_show_modal.set(false),
@@ -2145,24 +2167,33 @@ pub fn MemoryScannerTab() -> Element {
 
                     rsx! {
                         div {
-                            class: "modal-overlay",
+                            class: "create-process-modal-overlay",
                             onclick: move |_| rc_show_modal.set(false),
                             div {
-                                class: "modal-content",
+                                class: "create-process-modal",
                                 style: "max-width: 450px;",
                                 onclick: move |e| e.stop_propagation(),
 
-                                h3 { style: "margin: 0 0 12px 0; color: var(--text-primary);",
-                                    "Change Register at This Address"
+                                // Header
+                                div { class: "create-process-modal-header",
+                                    span { class: "create-process-modal-title", "Change Register" }
+                                    button {
+                                        class: "create-process-modal-close",
+                                        onclick: move |_| rc_show_modal.set(false),
+                                        "X"
+                                    }
                                 }
+
+                                // Body
+                                div { class: "create-process-form",
 
                                 div { style: "margin-bottom: 12px; color: var(--text-secondary); font-size: 12px;",
                                     "Modify a register value every time execution reaches this address. No code patching \u{2014} pure EPT + MTF register manipulation at Ring -1."
                                 }
 
                                 // Target address (read-only)
-                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
-                                    label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Address:" }
+                                div { class: "create-process-field",
+                                    label { class: "create-process-label", "Address:" }
                                     span {
                                         style: "font-family: 'Consolas', monospace; color: var(--accent-primary); font-size: 13px;",
                                         "0x{target_addr:X}"
@@ -2170,11 +2201,11 @@ pub fn MemoryScannerTab() -> Element {
                                 }
 
                                 // Register selector
-                                div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
-                                    label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Register:" }
+                                div { class: "create-process-field",
+                                    label { class: "create-process-label", "Register:" }
                                     select {
-                                        class: "input",
-                                        style: "flex: 1; font-family: 'Consolas', monospace;",
+                                        class: "create-process-input",
+                                        style: "font-family: 'Consolas', monospace;",
                                         value: "{rc_reg_idx_input}",
                                         onchange: move |e| rc_reg_idx_input.set(e.value()),
                                         for (i, name) in callback::REG_NAMES.iter().enumerate() {
@@ -2192,11 +2223,11 @@ pub fn MemoryScannerTab() -> Element {
                                     let is_flag_reg = selected_reg_idx >= 16;
                                     rsx! {
                                         if is_flag_reg {
-                                            div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
-                                                label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Action:" }
+                                            div { class: "create-process-field",
+                                                label { class: "create-process-label", "Action:" }
                                                 select {
-                                                    class: "input",
-                                                    style: "flex: 1; font-family: 'Consolas', monospace;",
+                                                    class: "create-process-input",
+                                                    style: "font-family: 'Consolas', monospace;",
                                                     value: if *rc_flag_set.read() { "1" } else { "0" },
                                                     onchange: move |e| rc_flag_set.set(e.value() == "1"),
                                                     option { value: "1", "Set (1)" }
@@ -2204,11 +2235,11 @@ pub fn MemoryScannerTab() -> Element {
                                                 }
                                             }
                                         } else {
-                                            div { style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
-                                                label { style: "color: var(--text-secondary); font-size: 13px; min-width: 80px;", "Value:" }
+                                            div { class: "create-process-field",
+                                                label { class: "create-process-label", "Value:" }
                                                 input {
-                                                    class: "input",
-                                                    style: "flex: 1; font-family: 'Consolas', monospace;",
+                                                    class: "create-process-input",
+                                                    style: "font-family: 'Consolas', monospace;",
                                                     r#type: "text",
                                                     placeholder: "0x1869F or 99999",
                                                     value: "{rc_value_input}",
@@ -2222,13 +2253,15 @@ pub fn MemoryScannerTab() -> Element {
                                 // Status
                                 if !rc_status_msg.is_empty() {
                                     div {
-                                        style: if rc_error { "color: #dc2626; font-size: 12px; margin-bottom: 8px;" } else { "color: #22c55e; font-size: 12px; margin-bottom: 8px;" },
+                                        class: if rc_error { "create-process-status create-process-status-error" } else { "create-process-status create-process-status-success" },
                                         "{rc_status_msg}"
                                     }
                                 }
 
-                                // Buttons
-                                div { style: "display: flex; gap: 8px; justify-content: flex-end;",
+                                } // end create-process-form
+
+                                // Actions
+                                div { class: "create-process-actions",
                                     button {
                                         class: "btn",
                                         onclick: move |_| rc_show_modal.set(false),

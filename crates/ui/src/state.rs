@@ -187,7 +187,6 @@ pub struct DphScript {
 }
 
 pub static DPH_SCRIPTS: GlobalSignal<Vec<DphScript>> = Signal::global(Vec::new);
-pub static DPH_SHOW_SCRIPTS_TAB: GlobalSignal<bool> = Signal::global(|| false);
 
 // DPR Script state
 /// A loaded .dpr (DioProcess Register) script entry
