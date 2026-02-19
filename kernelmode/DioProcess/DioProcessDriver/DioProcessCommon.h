@@ -901,7 +901,7 @@ struct RegChangeInstallRequest
 {
 	ULONG ProcessId;
 	ULONG64 TargetAddress;       // Virtual address where instruction lives
-	ULONG RegIndex;              // 0=RAX..15=R15
+	ULONG RegIndex;              // 0=RAX..15=R15, 16=RFLAGS
 	ULONG64 NewValue;
 };
 

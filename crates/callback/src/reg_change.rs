@@ -87,10 +87,11 @@ pub struct RegChangeInfo {
     pub active: bool,
 }
 
-/// Register names for display
-pub const REG_NAMES: [&str; 16] = [
+/// Register names for display (0-15 = GPRs, 16 = RFLAGS)
+pub const REG_NAMES: [&str; 17] = [
     "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI",
     "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15",
+    "RFLAGS",
 ];
 
 // ============== Driver Communication ==============
@@ -134,7 +135,7 @@ pub fn install_reg_change(
     reg_index: u32,
     new_value: u64,
 ) -> Result<u32, CallbackError> {
-    if reg_index > 15 {
+    if reg_index > 16 {
         return Err(CallbackError::InvalidParameter);
     }
 

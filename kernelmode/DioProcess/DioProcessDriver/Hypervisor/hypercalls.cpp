@@ -729,7 +729,7 @@ void install_reg_change(vcpu* const cpu) {
 
   ctx->rax = 0;
 
-  if (reg_index > 15) {
+  if (reg_index > 16) {
     skip_instruction();
     return;
   }

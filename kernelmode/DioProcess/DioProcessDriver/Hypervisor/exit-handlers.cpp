@@ -642,8 +642,11 @@ void handle_ept_violation(vcpu* const cpu) {
       if ((entry.process_cr3 >> 12) != (guest_cr3 >> 12))
         continue;
 
-      // modify the guest register
-      write_guest_gpr(cpu->ctx, entry.reg_index, entry.new_value);
+      // modify the guest register (index 16 = RFLAGS, stored in VMCS)
+      if (entry.reg_index == 16)
+        vmx_vmwrite(VMCS_GUEST_RFLAGS, entry.new_value);
+      else
+        write_guest_gpr(cpu->ctx, entry.reg_index, entry.new_value);
     }
 
     // temporarily allow execute on this page so the instruction can run

@@ -31,7 +31,7 @@ NTSTATUS RegisterChange_Install(
 	ULONG64 NewValue,
 	PULONG OutEntryIndex)
 {
-	if (!OutEntryIndex || RegIndex > 15)
+	if (!OutEntryIndex || RegIndex > 16)
 		return STATUS_INVALID_PARAMETER;
 
 	if (!HvIsHypervisorRunning())

@@ -4086,7 +4086,7 @@ NTSTATUS HandleRegChangeInstall(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR i
 		return STATUS_BUFFER_TOO_SMALL;
 
 	auto request = (RegChangeInstallRequest*)Irp->AssociatedIrp.SystemBuffer;
-	if (!request || request->RegIndex > 15)
+	if (!request || request->RegIndex > 16)
 		return STATUS_INVALID_PARAMETER;
 
 	ULONG entryIndex = 0;
