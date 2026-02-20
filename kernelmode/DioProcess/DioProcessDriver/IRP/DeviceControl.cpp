@@ -3529,6 +3529,17 @@ NTSTATUS HandleFileHideHide(PIRP Irp, PIO_STACK_LOCATION irpSp)
 		return STATUS_INVALID_PARAMETER;
 	}
 
+	// Lazy init: start minifilter on first use
+	if (!g_FileHideInitialized)
+	{
+		NTSTATUS initStatus = FileHide_Init(g_DriverObject, &g_RegistryPath);
+		if (!NT_SUCCESS(initStatus))
+		{
+			KdPrint((DRIVER_PREFIX "FileHide: Lazy init failed (0x%08X)\n", initStatus));
+			return initStatus;
+		}
+	}
+
 	// Ensure null-terminated
 	request->FilePath[259] = L'\0';
 
@@ -3879,6 +3890,17 @@ NTSTATUS HandlePortHide(PIRP Irp, PIO_STACK_LOCATION irpSp)
 	if (request->Port == 0)
 	{
 		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Lazy init: install NSI hook on first use
+	if (!g_PortHideInitialized)
+	{
+		NTSTATUS initStatus = PortHide_Init(nullptr);
+		if (!NT_SUCCESS(initStatus))
+		{
+			KdPrint((DRIVER_PREFIX "PortHide: Lazy init failed (0x%08X)\n", initStatus));
+			return initStatus;
+		}
 	}
 
 	return PortHide_AddPort(request->Port);

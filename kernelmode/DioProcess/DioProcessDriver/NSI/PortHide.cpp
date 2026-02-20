@@ -5,11 +5,16 @@
 // ============== Globals ==============
 
 PDEVICE_OBJECT g_NsiPreviousDevice = NULL;
+PFILE_OBJECT g_NsiFileObject = NULL;        // Must deref this, not the device
 PDRIVER_DISPATCH g_NsiPreviousDispatch = NULL;
 USHORT g_HiddenPorts[MAX_HIDDEN_PORTS] = { 0 };
 ULONG g_HiddenPortCount = 0;
 KSPIN_LOCK g_HiddenPortLock;
 BOOLEAN g_PortHideInitialized = FALSE;
+
+// Pending IRP tracking for safe unload
+static volatile LONG g_PendingNsiIrpCount = 0;
+static KEVENT g_NsiDrainEvent;
 
 // ============== Internal Helpers ==============
 
@@ -68,6 +73,12 @@ static NTSTATUS NsiCompletionRoutine(
 		}
 	}
 
+	// Decrement pending count; signal drain event if unload is waiting
+	if (InterlockedDecrement(&g_PendingNsiIrpCount) == 0)
+	{
+		KeSetEvent(&g_NsiDrainEvent, 0, FALSE);
+	}
+
 	return STATUS_SUCCESS;
 }
 
@@ -82,6 +93,9 @@ static NTSTATUS NsiHookDeviceIo(
 
 	if (irpStack->Parameters.DeviceIoControl.IoControlCode == IOCTL_NSI_GETALLPARAM)
 	{
+		// Increment before setting completion routine — ensures the drain
+		// event can't fire before the completion routine is registered.
+		InterlockedIncrement(&g_PendingNsiIrpCount);
 		irpStack->CompletionRoutine = NsiCompletionRoutine;
 		irpStack->Control |= SL_INVOKE_ON_SUCCESS;
 	}
@@ -97,11 +111,18 @@ NTSTATUS PortHide_Init(
 {
 	UNREFERENCED_PARAMETER(DriverObject);
 
+	if (g_PortHideInitialized)
+		return STATUS_SUCCESS;
+
 	KdPrint((DRIVER_PREFIX "PortHide: Initializing NSI hook\n"));
 
 	KeInitializeSpinLock(&g_HiddenPortLock);
 	g_HiddenPortCount = 0;
 	RtlZeroMemory(g_HiddenPorts, sizeof(g_HiddenPorts));
+
+	// Init drain event (signaled when no pending IRPs)
+	KeInitializeEvent(&g_NsiDrainEvent, NotificationEvent, TRUE);
+	g_PendingNsiIrpCount = 0;
 
 	// Get NSI device object
 	UNICODE_STRING deviceName;
@@ -118,7 +139,8 @@ NTSTATUS PortHide_Init(
 		return status;
 	}
 
-	// Save reference for cleanup
+	// Save BOTH the file object (for correct deref) and device (for dispatch restore)
+	g_NsiFileObject = pFile;
 	g_NsiPreviousDevice = device;
 
 	// Hook IRP_MJ_DEVICE_CONTROL dispatch routine
@@ -135,19 +157,44 @@ NTSTATUS PortHide_Init(
 
 VOID PortHide_Cleanup()
 {
+	if (!g_PortHideInitialized)
+		return;
+
 	KdPrint((DRIVER_PREFIX "PortHide: Cleaning up NSI hook\n"));
 
 	if (g_NsiPreviousDevice && g_NsiPreviousDispatch)
 	{
-		// Restore original dispatch routine
+		// Restore original dispatch routine — no new IRPs will come to our hook after this
 		InterlockedExchangePointer(
 			(PVOID*)&g_NsiPreviousDevice->DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL],
 			(PVOID)g_NsiPreviousDispatch
 		);
-
-		ObDereferenceObject(g_NsiPreviousDevice);
-		g_NsiPreviousDevice = NULL;
 		g_NsiPreviousDispatch = NULL;
+
+		// Drain: wait for any completion routines that are still in-flight.
+		// After restoring dispatch, no new IRPs will set NsiCompletionRoutine.
+		// We just need to wait for already-registered completions to fire.
+		if (g_PendingNsiIrpCount > 0)
+		{
+			KdPrint((DRIVER_PREFIX "PortHide: Waiting for %d pending NSI IRPs to drain...\n", g_PendingNsiIrpCount));
+			KeClearEvent(&g_NsiDrainEvent);
+			// Re-check after clearing to avoid a race where count hit 0 before KeClearEvent
+			if (g_PendingNsiIrpCount > 0)
+			{
+				LARGE_INTEGER timeout;
+				timeout.QuadPart = -5000 * 10000LL; // 5 seconds
+				KeWaitForSingleObject(&g_NsiDrainEvent, Executive, KernelMode, FALSE, &timeout);
+			}
+		}
+
+		// Correct deref: IoGetDeviceObjectPointer gave us a ref on the FILE OBJECT, not the device
+		if (g_NsiFileObject)
+		{
+			ObDereferenceObject(g_NsiFileObject);
+			g_NsiFileObject = NULL;
+		}
+
+		g_NsiPreviousDevice = NULL;
 	}
 
 	g_PortHideInitialized = FALSE;

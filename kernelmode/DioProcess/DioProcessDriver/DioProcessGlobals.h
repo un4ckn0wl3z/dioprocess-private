@@ -10,6 +10,7 @@ extern DioProcessState g_State;
 extern PVOID g_ObCallbackHandle;
 extern LARGE_INTEGER g_RegistryCookie;
 extern BOOLEAN g_CallbacksRegistered;
+extern PDRIVER_OBJECT g_DriverObject;
 
 // ============== Removed Callback Storage ==============
 // Storage for callback data that was removed, allowing restoration

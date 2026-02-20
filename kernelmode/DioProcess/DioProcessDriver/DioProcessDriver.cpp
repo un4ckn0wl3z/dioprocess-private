@@ -17,6 +17,7 @@ DioProcessState g_State;
 PVOID g_ObCallbackHandle = nullptr;
 LARGE_INTEGER g_RegistryCookie = { 0 };
 BOOLEAN g_CallbacksRegistered = FALSE;
+PDRIVER_OBJECT g_DriverObject = nullptr;
 
 // Registry path storage for minifilter initialization
 UNICODE_STRING g_RegistryPath = { 0 };
@@ -199,6 +200,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 		return status;
 	}
 
+	g_DriverObject = DriverObject;
 	g_State.Lock.Init();
 	InitializeListHead(&g_State.ItemsHead);
 	g_State.CollectionEnabled = FALSE;  // Collection disabled by default
@@ -210,21 +212,11 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 	// Initialize DKOM process hiding (non-fatal)
 	ProcessHide_Init();
 
-	// Initialize file hiding minifilter (non-fatal if it fails)
-	status = FileHide_Init(DriverObject, &g_RegistryPath);
-	if (!NT_SUCCESS(status))
-	{
-		KdPrint((DRIVER_PREFIX "FileHide initialization failed (0x%X) - file hiding unavailable\n", status));
-		// Continue loading - file hiding is optional
-	}
-
-	// Initialize NSI port hiding (non-fatal if it fails)
-	status = PortHide_Init(DriverObject);
-	if (!NT_SUCCESS(status))
-	{
-		KdPrint((DRIVER_PREFIX "PortHide initialization failed (0x%X) - port hiding unavailable\n", status));
-		// Continue loading - port hiding is optional
-	}
+	// FileHide and PortHide are NOT initialized here.
+	// They require the NSI dispatch hook / minifilter to be active, which causes a
+	// SYSTEM_SERVICE_EXCEPTION (0x3b) BSOD if the driver is unloaded while any
+	// background IRP has our completion routine set.
+	// Both subsystems are initialized lazily on first use via their respective IOCTLs.
 
 	DriverObject->DriverUnload = DioProcessUnload;
 	DriverObject->MajorFunction[IRP_MJ_CREATE] = DriverObject->MajorFunction[IRP_MJ_CLOSE] = DioProcessCreateClose;
