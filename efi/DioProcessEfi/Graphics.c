@@ -1,356 +1,283 @@
 /** @file
-  Graphics module implementation for UEFI boot animation.
+  Glitch effect boot animation — Damned Software boot screen.
 
-  Uses GOP (Graphics Output Protocol) to display animated boot screens.
-  Falls back gracefully if GOP is unavailable (legacy BIOS, text console).
+  Drives gST->ConOut with random horizontal noise bars, scatter chars,
+  and occasional title corruption. ClearScreen + targeted draws keeps
+  the firmware call count very low (~50 per frame vs 2000 for rain).
 
   Copyright (c) 2024, DioProcess. All rights reserved.
 **/
 
 #include <Uefi.h>
-#include <Library/UefiLib.h>
 #include <Library/UefiBootServicesTableLib.h>
-#include <Library/BaseMemoryLib.h>
-#include <Library/MemoryAllocationLib.h>
-#include <Protocol/GraphicsOutput.h>
 
 #include "Graphics.h"
-#include "Animation.h"
 
-//
-// Global GOP instance
-//
-STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL *mGop = NULL;
-STATIC BOOLEAN mGraphicsInitialized = FALSE;
-STATIC UINTN mScreenWidth = 0;
-STATIC UINTN mScreenHeight = 0;
+// ── Branding ──────────────────────────────────────────────────────────────────
+STATIC CONST CHAR16 *TITLE = L"DAMNED SOFTWARE";
+STATIC CONST CHAR16 *MOTTO = L"deeper than ring zero";
+#define TITLE_LEN  15
+#define MOTTO_LEN  21
 
-//
-// Double buffer for tear-free animation
-//
-STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL *mBackBuffer = NULL;
-STATIC UINTN mBackBufferSize = 0;
+// ── Timing ────────────────────────────────────────────────────────────────────
+#define FRAME_MS   40       // ~25 fps
 
-EFI_STATUS
-GraphicsInit(
-    VOID
-    )
+// ── Console caps ─────────────────────────────────────────────────────────────
+#define MAX_COLS  200
+#define MAX_ROWS   60
+
+// ── Colour attributes ────────────────────────────────────────────────────────
+#define ATTR_BLANK  EFI_TEXT_ATTR(EFI_BLACK,       EFI_BACKGROUND_BLACK)
+#define ATTR_TITLE  EFI_TEXT_ATTR(EFI_WHITE,        EFI_BACKGROUND_BLACK)
+#define ATTR_MOTTO  EFI_TEXT_ATTR(EFI_LIGHTGREEN,   EFI_BACKGROUND_BLACK)
+
+#define GLITCH_COLOR_COUNT 7
+STATIC CONST UINTN GLITCH_COLORS[GLITCH_COLOR_COUNT] = {
+    EFI_TEXT_ATTR(EFI_DARKGRAY,    EFI_BACKGROUND_BLACK),
+    EFI_TEXT_ATTR(EFI_GREEN,       EFI_BACKGROUND_BLACK),
+    EFI_TEXT_ATTR(EFI_LIGHTGREEN,  EFI_BACKGROUND_BLACK),
+    EFI_TEXT_ATTR(EFI_CYAN,        EFI_BACKGROUND_BLACK),
+    EFI_TEXT_ATTR(EFI_LIGHTCYAN,   EFI_BACKGROUND_BLACK),
+    EFI_TEXT_ATTR(EFI_LIGHTGRAY,   EFI_BACKGROUND_BLACK),
+    EFI_TEXT_ATTR(EFI_WHITE,       EFI_BACKGROUND_BLACK),
+};
+
+// ── Glitch character set ──────────────────────────────────────────────────────
+STATIC CONST CHAR16 GLITCH_CHARS[] =
+    L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    L"0123456789!@#$%^&*<>|/\\{}[]+-=~_";
+#define GLITCH_CHAR_COUNT  ((sizeof(GLITCH_CHARS) / sizeof(CHAR16)) - 1)
+
+// ── LCG PRNG (no stdlib) ──────────────────────────────────────────────────────
+STATIC UINT32 mRng = 1337;
+
+STATIC UINT32
+RngNext (VOID)
 {
-    EFI_STATUS Status;
-
-    if (mGraphicsInitialized) {
-        return EFI_SUCCESS;
-    }
-
-    //
-    // Locate GOP
-    //
-    Status = gBS->LocateProtocol(
-        &gEfiGraphicsOutputProtocolGuid,
-        NULL,
-        (VOID **)&mGop
-    );
-
-    if (EFI_ERROR(Status)) {
-        mGop = NULL;
-        mGraphicsInitialized = FALSE;
-        return EFI_NOT_FOUND;
-    }
-
-    //
-    // Get current mode info
-    //
-    if (mGop->Mode != NULL && mGop->Mode->Info != NULL) {
-        mScreenWidth = mGop->Mode->Info->HorizontalResolution;
-        mScreenHeight = mGop->Mode->Info->VerticalResolution;
-    } else {
-        // Fallback to common resolution
-        mScreenWidth = 1024;
-        mScreenHeight = 768;
-    }
-
-    //
-    // Allocate back buffer for double buffering (tear-free animation)
-    //
-    mBackBufferSize = mScreenWidth * mScreenHeight * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL);
-    mBackBuffer = AllocatePool(mBackBufferSize);
-    if (mBackBuffer == NULL) {
-        // Continue without double buffering
-        mBackBuffer = NULL;
-        mBackBufferSize = 0;
-    }
-
-    mGraphicsInitialized = TRUE;
-    return EFI_SUCCESS;
+    mRng = mRng * 1664525u + 1013904223u;
+    return mRng;
 }
 
-BOOLEAN
-GraphicsIsAvailable(
-    VOID
-    )
+STATIC UINT32
+RngRange (IN UINT32 Lo, IN UINT32 Hi)
 {
-    return mGraphicsInitialized && (mGop != NULL);
+    if (Hi <= Lo) return Lo;
+    return Lo + (RngNext() % (Hi - Lo + 1));
 }
 
-EFI_STATUS
-GraphicsGetResolution(
-    OUT UINTN *Width,
-    OUT UINTN *Height
-    )
+// ── Console size ──────────────────────────────────────────────────────────────
+STATIC UINTN mNumCols;
+STATIC UINTN mNumRows;
+
+// ── String buffer for bar content ─────────────────────────────────────────────
+STATIC CHAR16 mLineBuf[MAX_COLS + 1];
+
+STATIC VOID
+FillGlitchStr (IN UINTN Len)
 {
-    if (!GraphicsIsAvailable()) {
-        return EFI_NOT_READY;
+    UINTN i;
+    if (Len > MAX_COLS) Len = MAX_COLS;
+    for (i = 0; i < Len; i++) {
+        mLineBuf[i] = GLITCH_CHARS[RngNext() % GLITCH_CHAR_COUNT];
     }
-
-    if (Width != NULL) {
-        *Width = mScreenWidth;
-    }
-    if (Height != NULL) {
-        *Height = mScreenHeight;
-    }
-
-    return EFI_SUCCESS;
+    mLineBuf[Len] = L'\0';
 }
 
-EFI_STATUS
-GraphicsClearScreen(
-    VOID
+// ── Active glitch bars ────────────────────────────────────────────────────────
+#define MAX_BARS  8
+
+typedef struct {
+    BOOLEAN Active;
+    UINTN   Row;
+    UINTN   ColStart;
+    UINTN   Width;
+    UINTN   Attr;
+    UINTN   Life;       // frames remaining
+} GLITCH_BAR;
+
+STATIC GLITCH_BAR mBars[MAX_BARS];
+
+STATIC VOID
+SpawnBar (
+    IN UINTN Row,
+    IN UINTN ColStart,
+    IN UINTN Width,
+    IN UINTN Attr,
+    IN UINTN Life
     )
 {
-    EFI_GRAPHICS_OUTPUT_BLT_PIXEL Black = {0, 0, 0, 0};
-
-    if (!GraphicsIsAvailable()) {
-        return EFI_NOT_READY;
+    UINTN i;
+    for (i = 0; i < MAX_BARS; i++) {
+        if (!mBars[i].Active) {
+            mBars[i].Active   = TRUE;
+            mBars[i].Row      = Row;
+            mBars[i].ColStart = ColStart;
+            mBars[i].Width    = Width;
+            mBars[i].Attr     = Attr;
+            mBars[i].Life     = Life;
+            return;
+        }
     }
-
-    //
-    // Fill entire screen with black
-    //
-    return mGop->Blt(
-        mGop,
-        &Black,
-        EfiBltVideoFill,
-        0, 0,           // Source X, Y (ignored for fill)
-        0, 0,           // Dest X, Y
-        mScreenWidth,
-        mScreenHeight,
-        0               // Delta (stride, 0 = use Width)
-    );
+    // All slots full — evict oldest (slot 0) and reuse
+    mBars[0].Row      = Row;
+    mBars[0].ColStart = ColStart;
+    mBars[0].Width    = Width;
+    mBars[0].Attr     = Attr;
+    mBars[0].Life     = Life;
 }
 
-EFI_STATUS
-GraphicsDrawImage(
-    IN CONST UINT8 *Buffer,
-    IN UINTN        Width,
-    IN UINTN        Height,
-    IN UINTN        DestX,
-    IN UINTN        DestY
+// ── Draw one glitch frame ─────────────────────────────────────────────────────
+
+STATIC VOID
+DrawGlitchFrame (
+    IN UINTN FrameIdx
     )
 {
-    if (!GraphicsIsAvailable()) {
-        return EFI_NOT_READY;
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *Con = gST->ConOut;
+    UINTN TitleRow, MottoRow, TitleCol, MottoCol;
+    UINTN Intensity;
+    UINTN NewBars, i;
+
+    TitleRow = mNumRows / 2 - 1;
+    MottoRow = TitleRow + 1;
+    TitleCol = (mNumCols > TITLE_LEN) ? (mNumCols - TITLE_LEN) / 2 : 0;
+    MottoCol = (mNumCols > MOTTO_LEN) ? (mNumCols - MOTTO_LEN) / 2 : 0;
+
+    // ── 1. Clear screen to black (single firmware call) ───────────────────────
+    Con->SetAttribute(Con, ATTR_BLANK);
+    Con->ClearScreen(Con);
+
+    // ── 2. Decide intensity for this frame ────────────────────────────────────
+    //   0-1 = quiet,  2-6 = normal,  7-9 = heavy
+    Intensity = RngNext() % 10;
+
+    if      (Intensity < 2) NewBars = RngNext() % 2;           // 0-1
+    else if (Intensity < 7) NewBars = 1 + RngNext() % 3;       // 1-3
+    else                    NewBars = 3 + RngNext() % 4;       // 3-6
+
+    for (i = 0; i < NewBars; i++) {
+        UINTN Row      = RngRange(0, (UINT32)(mNumRows - 1));
+        UINTN Width    = RngRange(4, (UINT32)mNumCols);
+        UINTN ColStart = (Width < mNumCols) ? RngRange(0, (UINT32)(mNumCols - Width)) : 0;
+        UINTN Attr     = GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT];
+        UINTN Life     = RngRange(1, 3);
+        SpawnBar(Row, ColStart, Width, Attr, Life);
     }
 
-    if (Buffer == NULL || Width == 0 || Height == 0) {
-        return EFI_INVALID_PARAMETER;
+    // ── 3. Draw + age active bars ─────────────────────────────────────────────
+    for (i = 0; i < MAX_BARS; i++) {
+        UINTN W, C, MaxW;
+
+        if (!mBars[i].Active) continue;
+
+        // Avoid writing to the very last cell (would cause auto-scroll)
+        MaxW = (mBars[i].Row == mNumRows - 1) ? mNumCols - 1 : mNumCols;
+        C = mBars[i].ColStart;
+        W = mBars[i].Width;
+        if (C >= MaxW)              { mBars[i].Active = FALSE; continue; }
+        if (C + W > MaxW)           { W = MaxW - C; }
+        if (W == 0)                 { mBars[i].Active = FALSE; continue; }
+
+        FillGlitchStr(W);
+        Con->SetCursorPosition(Con, C, mBars[i].Row);
+        Con->SetAttribute(Con, mBars[i].Attr);
+        Con->OutputString(Con, mLineBuf);
+
+        if (mBars[i].Life > 0) mBars[i].Life--;
+        if (mBars[i].Life == 0) mBars[i].Active = FALSE;
     }
 
-    //
-    // Clip to screen bounds
-    //
-    if (DestX >= mScreenWidth || DestY >= mScreenHeight) {
-        return EFI_SUCCESS;  // Completely off-screen
+    // ── 4. Scatter noise on heavy frames ─────────────────────────────────────
+    if (Intensity >= 7) {
+        UINTN Scatter = RngRange(4, 20);
+        for (i = 0; i < Scatter; i++) {
+            UINTN R  = RngRange(0, (UINT32)(mNumRows - 1));
+            UINTN C2 = RngRange(0, (UINT32)(mNumCols - 2));
+            mLineBuf[0] = GLITCH_CHARS[RngNext() % GLITCH_CHAR_COUNT];
+            mLineBuf[1] = L'\0';
+            Con->SetCursorPosition(Con, C2, R);
+            Con->SetAttribute(Con, GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT]);
+            Con->OutputString(Con, mLineBuf);
+        }
     }
 
-    UINTN DrawWidth = Width;
-    UINTN DrawHeight = Height;
+    // ── 5. Title — occasionally corrupted, otherwise steady shimmer ───────────
+    {
+        BOOLEAN Corrupt = (Intensity >= 8) && ((RngNext() % 3) == 0);
 
-    if (DestX + DrawWidth > mScreenWidth) {
-        DrawWidth = mScreenWidth - DestX;
-    }
-    if (DestY + DrawHeight > mScreenHeight) {
-        DrawHeight = mScreenHeight - DestY;
+        Con->SetCursorPosition(Con, TitleCol, TitleRow);
+
+        if (Corrupt) {
+            // Replace a few chars with random glitch chars
+            CHAR16 Buf[TITLE_LEN + 1];
+            UINTN  j;
+            for (j = 0; j < TITLE_LEN; j++) {
+                Buf[j] = ((RngNext() % 5) == 0)
+                         ? GLITCH_CHARS[RngNext() % GLITCH_CHAR_COUNT]
+                         : TITLE[j];
+            }
+            Buf[TITLE_LEN] = L'\0';
+            Con->SetAttribute(Con, GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT]);
+            Con->OutputString(Con, Buf);
+        } else {
+            // Slow shimmer: white → light-green every 4 frames
+            UINTN TAttr = ((FrameIdx / 4) & 1)
+                          ? ATTR_TITLE
+                          : EFI_TEXT_ATTR(EFI_LIGHTGREEN, EFI_BACKGROUND_BLACK);
+            Con->SetAttribute(Con, TAttr);
+            Con->OutputString(Con, (CHAR16 *)TITLE);
+        }
     }
 
-    //
-    // Buffer is BGRA32, which matches EFI_GRAPHICS_OUTPUT_BLT_PIXEL layout
-    // (Blue, Green, Red, Reserved) when using PixelBlueGreenRedReserved8BitPerColor
-    //
-    // For maximum compatibility, we use EfiBltBufferToVideo which handles
-    // pixel format conversion if needed.
-    //
-    return mGop->Blt(
-        mGop,
-        (EFI_GRAPHICS_OUTPUT_BLT_PIXEL *)Buffer,
-        EfiBltBufferToVideo,
-        0, 0,                    // Source X, Y in buffer
-        DestX, DestY,            // Dest X, Y on screen
-        DrawWidth,
-        DrawHeight,
-        Width * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)  // Source stride
-    );
+    // ── 6. Motto — always steady ──────────────────────────────────────────────
+    Con->SetCursorPosition(Con, MottoCol, MottoRow);
+    Con->SetAttribute(Con, ATTR_MOTTO);
+    Con->OutputString(Con, (CHAR16 *)MOTTO);
 }
+
+// ── Public entry point ────────────────────────────────────────────────────────
 
 VOID
-GraphicsPlayAnimation(
+GraphicsPlayAnimation (
     IN UINTN DurationMs
     )
 {
-    UINTN FrameIndex;
-    UINTN ElapsedMs;
-    UINTN FrameDelay;
-    UINTN CenterX;
-    UINTN CenterY;
-    UINTN X, Y;
-    UINTN SrcX, SrcY;
-    UINTN DrawWidth, DrawHeight;
-    EFI_STATUS Status;
-    CONST UINT8 *FrameData;
-    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Pixel;
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *Con = gST->ConOut;
+    UINTN TotalFrames, FrameIdx, i;
+    UINTN Cols = 0, Rows = 0;
 
-    //
-    // Initialize graphics if not already done
-    //
-    Status = GraphicsInit();
-    if (EFI_ERROR(Status)) {
-        // Graphics not available, fall back to delay only
+    if (Con == NULL) {
         gBS->Stall(DurationMs * 1000);
         return;
     }
 
-    //
-    // If no back buffer, fall back to direct drawing (may tear)
-    //
-    if (mBackBuffer == NULL) {
-        GraphicsClearScreen();
-        
-        if (mScreenWidth > ANIMATION_WIDTH) {
-            CenterX = (mScreenWidth - ANIMATION_WIDTH) / 2;
-        } else {
-            CenterX = 0;
-        }
-        if (mScreenHeight > ANIMATION_HEIGHT) {
-            CenterY = (mScreenHeight - ANIMATION_HEIGHT) / 2;
-        } else {
-            CenterY = 0;
-        }
-        
-        ElapsedMs = 0;
-        FrameIndex = 0;
-        while (ElapsedMs < DurationMs) {
-            GraphicsDrawImage(AnimationFrames[FrameIndex], ANIMATION_WIDTH, ANIMATION_HEIGHT, CenterX, CenterY);
-            FrameDelay = AnimationDelays[FrameIndex];
-            if (ElapsedMs + FrameDelay > DurationMs) {
-                FrameDelay = DurationMs - ElapsedMs;
-            }
-            gBS->Stall(FrameDelay * 1000);
-            ElapsedMs += FrameDelay;
-            FrameIndex = (FrameIndex + 1) % ANIMATION_FRAME_COUNT;
-        }
+    Con->QueryMode(Con, Con->Mode->Mode, &Cols, &Rows);
+    if (Cols < 10 || Rows < 5) {
+        gBS->Stall(DurationMs * 1000);
         return;
     }
 
-    //
-    // Calculate center position for animation
-    //
-    if (mScreenWidth > ANIMATION_WIDTH) {
-        CenterX = (mScreenWidth - ANIMATION_WIDTH) / 2;
-    } else {
-        CenterX = 0;
+    mNumCols = (Cols < MAX_COLS) ? Cols : MAX_COLS;
+    mNumRows = (Rows < MAX_ROWS) ? Rows : MAX_ROWS;
+
+    // Clear bar state
+    mRng = 1337;
+    for (i = 0; i < MAX_BARS; i++) {
+        mBars[i].Active = FALSE;
     }
 
-    if (mScreenHeight > ANIMATION_HEIGHT) {
-        CenterY = (mScreenHeight - ANIMATION_HEIGHT) / 2;
-    } else {
-        CenterY = 0;
+    Con->EnableCursor(Con, FALSE);
+
+    TotalFrames = DurationMs / FRAME_MS;
+    if (TotalFrames == 0) TotalFrames = 1;
+
+    for (FrameIdx = 0; FrameIdx < TotalFrames; FrameIdx++) {
+        DrawGlitchFrame(FrameIdx);
+        gBS->Stall(FRAME_MS * 1000);
     }
 
-    //
-    // Calculate actual draw dimensions (clip to screen)
-    //
-    DrawWidth = ANIMATION_WIDTH;
-    DrawHeight = ANIMATION_HEIGHT;
-    if (CenterX + DrawWidth > mScreenWidth) {
-        DrawWidth = mScreenWidth - CenterX;
-    }
-    if (CenterY + DrawHeight > mScreenHeight) {
-        DrawHeight = mScreenHeight - CenterY;
-    }
-
-    //
-    // Play animation loop with double buffering
-    //
-    ElapsedMs = 0;
-    FrameIndex = 0;
-
-    while (ElapsedMs < DurationMs) {
-        //
-        // Clear back buffer to black
-        //
-        SetMem(mBackBuffer, mBackBufferSize, 0);
-
-        //
-        // Copy animation frame to center of back buffer
-        //
-        FrameData = AnimationFrames[FrameIndex];
-        for (Y = 0; Y < DrawHeight; Y++) {
-            for (X = 0; X < DrawWidth; X++) {
-                SrcX = X;
-                SrcY = Y;
-                
-                // Source pixel from animation frame (BGRA32)
-                UINTN SrcOffset = (SrcY * ANIMATION_WIDTH + SrcX) * 4;
-                
-                // Destination pixel in back buffer
-                Pixel = &mBackBuffer[(CenterY + Y) * mScreenWidth + (CenterX + X)];
-                
-                Pixel->Blue     = FrameData[SrcOffset + 0];
-                Pixel->Green    = FrameData[SrcOffset + 1];
-                Pixel->Red      = FrameData[SrcOffset + 2];
-                Pixel->Reserved = 0;
-            }
-        }
-
-        //
-        // Blit entire back buffer to screen (single operation = no tearing)
-        //
-        mGop->Blt(
-            mGop,
-            mBackBuffer,
-            EfiBltBufferToVideo,
-            0, 0,           // Source X, Y
-            0, 0,           // Dest X, Y
-            mScreenWidth,
-            mScreenHeight,
-            0               // Delta
-        );
-
-        //
-        // Wait for frame delay
-        //
-        FrameDelay = AnimationDelays[FrameIndex];
-        if (ElapsedMs + FrameDelay > DurationMs) {
-            FrameDelay = DurationMs - ElapsedMs;
-        }
-
-        gBS->Stall(FrameDelay * 1000);  // Stall takes microseconds
-        ElapsedMs += FrameDelay;
-
-        //
-        // Advance to next frame (loop)
-        //
-        FrameIndex++;
-        if (FrameIndex >= ANIMATION_FRAME_COUNT) {
-            FrameIndex = 0;
-        }
-    }
-
-    //
-    // Free back buffer
-    //
-    if (mBackBuffer != NULL) {
-        FreePool(mBackBuffer);
-        mBackBuffer = NULL;
-        mBackBufferSize = 0;
-    }
+    // Restore
+    Con->SetAttribute(Con, EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BACKGROUND_BLACK));
+    Con->ClearScreen(Con);
+    Con->EnableCursor(Con, TRUE);
 }
