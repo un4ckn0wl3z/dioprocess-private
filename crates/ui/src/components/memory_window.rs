@@ -644,6 +644,60 @@ pub fn MemoryWindow(pid: u32, process_name: String) -> Element {
                                             span { "💾" }
                                             span { "Dump to File" }
                                         }
+
+                                        // Hide Memory submenu (requires driver)
+                                        div {
+                                            class: "context-menu-submenu",
+                                            div {
+                                                class: if callback::is_driver_loaded() { "context-menu-submenu-trigger" } else { "context-menu-submenu-trigger disabled" },
+                                                span { "🛡" }
+                                                span { "Hide Memory" }
+                                                span { class: "arrow", "▶" }
+                                            }
+                                            if callback::is_driver_loaded() {
+                                                div {
+                                                    class: "context-menu-submenu-content",
+                                                    {
+                                                        let protections: &[(&str, u32)] = &[
+                                                            ("Zero Access", 0),
+                                                            ("Read Only", 1),
+                                                            ("Read Write", 4),
+                                                            ("Execute", 2),
+                                                            ("Execute Read", 3),
+                                                            ("Execute Read Write", 6),
+                                                            ("No Access", 0x18),
+                                                        ];
+                                                        rsx! {
+                                                            for (label, value) in protections.iter() {
+                                                                button {
+                                                                    class: "context-menu-item",
+                                                                    onclick: {
+                                                                        let label = label.to_string();
+                                                                        let value = *value;
+                                                                        move |_| {
+                                                                            match callback::hide_memory(pid, ctx_base as u64, value) {
+                                                                                Ok(()) => {
+                                                                                    status_message.set(format!("✓ Hidden 0x{:X} as {}", ctx_base, label));
+                                                                                }
+                                                                                Err(err) => {
+                                                                                    status_message.set(format!("✗ Hide memory failed: {}", err));
+                                                                                }
+                                                                            }
+                                                                            spawn(async move {
+                                                                                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                                                                status_message.set(String::new());
+                                                                            });
+                                                                            context_menu.set(MemoryContextMenuState::default());
+                                                                        }
+                                                                    },
+                                                                    span { "{label}" }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
 
                                     if ctx_is_reserved {

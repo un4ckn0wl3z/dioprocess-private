@@ -139,6 +139,10 @@
     <ClInclude Include="FileHide\FileHide.h" />
     <ClInclude Include="DKOM\ProcessHide.h" />
     <ClInclude Include="Memory\PhysicalMemory.h" />
+    <ClInclude Include="Memory\HideMemory.h" />
+    <ClInclude Include="Memory\hde\hde64.h" />
+    <ClInclude Include="Memory\hde\pstdint.h" />
+    <ClInclude Include="Memory\hde\table64.h" />
     <ClInclude Include="NSI\PortHide.h" />
     <ClInclude Include="EptHook\UsermodeEptHook.h" />
     <ClInclude Include="EptHook\RegisterChange.h" />
@@ -216,6 +220,12 @@
 
     <!-- Physical Memory -->
     <ClCompile Include="Memory\PhysicalMemory.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Memory\HideMemory.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Memory\hde\hde64.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
 

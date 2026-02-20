@@ -9,6 +9,7 @@
 #include "../NSI/PortHide.h"
 #include "../EptHook/UsermodeEptHook.h"
 #include "../EptHook/RegisterChange.h"
+#include "../Memory/HideMemory.h"
 
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
@@ -24,6 +25,9 @@ NTSTATUS HandleRegChangeInstall(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR i
 NTSTATUS HandleRegChangeRemove(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandleRegChangeList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleRegChangeRemoveAll(PIRP Irp, PIO_STACK_LOCATION irpSp);
+
+// Forward declaration for HideMemory handler
+NTSTATUS HandleHideMemory(PIRP Irp, PIO_STACK_LOCATION irpSp);
 
 // ============== IOCTL Device Control Dispatcher ==============
 
@@ -339,6 +343,11 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_REG_CHANGE_REMOVE_ALL:
 		status = HandleRegChangeRemoveAll(Irp, irpSp);
+		break;
+
+	// Memory Protection Hiding
+	case IOCTL_DIOPROCESS_HIDE_MEMORY:
+		status = HandleHideMemory(Irp, irpSp);
 		break;
 
 	default:
@@ -4173,4 +4182,23 @@ NTSTATUS HandleRegChangeRemoveAll(PIRP Irp, PIO_STACK_LOCATION irpSp)
 	UNREFERENCED_PARAMETER(irpSp);
 
 	return RegisterChange_RemoveAll();
+}
+
+// ============== Memory Protection Hiding Handler ==============
+
+NTSTATUS HandleHideMemory(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(HideMemoryRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HideMemoryRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	return HideMemorySetProtection(request->ProcessId, request->VirtualAddress, request->Protection);
 }

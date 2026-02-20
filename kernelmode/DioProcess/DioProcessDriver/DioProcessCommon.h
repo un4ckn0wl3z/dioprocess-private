@@ -883,6 +883,19 @@ struct EptHookListResponse
 	EptHookListEntry Entries[MAX_EPT_HOOK_LIST_ENTRIES];
 };
 
+// ============== Memory Protection Hiding IOCTLs ==============
+// Manipulate _MMPFN.OriginalPte.Protection to hide memory page attributes
+
+#define IOCTL_DIOPROCESS_HIDE_MEMORY \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8D0, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+struct HideMemoryRequest
+{
+	ULONG ProcessId;
+	ULONG64 VirtualAddress;
+	ULONG Protection;  // MM_READONLY=1, MM_READWRITE=4, MM_EXECUTE_READWRITE=6, etc.
+};
+
 // ============== EPT Register Change IOCTLs ==============
 // Modify guest registers at a specific RIP via EPT + MTF (no code patching)
 

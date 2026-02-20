@@ -2451,3 +2451,55 @@ pub fn kernel_copy_memory(pid: u32, source_address: u64, buffer: &mut [u8]) -> R
         }
     }
 }
+
+// ============== Memory Protection Hiding ==============
+
+const IOCTL_DIOPROCESS_HIDE_MEMORY: u32 = 0x00222340; // CTL_CODE(0x22, 0x8D0, 0, 0)
+
+#[repr(C)]
+struct HideMemoryRequest {
+    process_id: u32,
+    virtual_address: u64,
+    protection: u32,
+}
+
+/// Modify the OriginalPte.Protection field of a memory page in the PFN database.
+/// This changes how the page's protection appears to the OS memory manager
+/// without modifying the live PTE.
+///
+/// # Arguments
+/// * `pid` - Target process ID
+/// * `virtual_address` - Virtual address of the page to modify
+/// * `protection` - New MM protection value (1=ReadOnly, 4=ReadWrite, 6=ExecuteReadWrite, etc.)
+pub fn hide_memory(pid: u32, virtual_address: u64, protection: u32) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = HideMemoryRequest {
+            process_id: pid,
+            virtual_address,
+            protection,
+        };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_HIDE_MEMORY,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<HideMemoryRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}

@@ -260,6 +260,32 @@ const ULONG OBJECT_TYPE_CALLBACKLIST_OFFSET[] =
 	0xC8    // WINDOWS_11_24H2  (26100)
 };
 
+// OriginalPte offset in _MMPFN (PFN database entry)
+// Used by HideMemory for PTE protection manipulation
+// Offset is 0x10 across all supported Windows 10/11 x64 builds
+const ULONG MMPFN_ORIGINALPTE_OFFSET[] =
+{
+	0x00,   // WINDOWS_UNSUPPORTED
+	0x10,   // WINDOWS_10_1507  (10240)
+	0x10,   // WINDOWS_10_1511  (10586)
+	0x10,   // WINDOWS_10_1607  (14393)
+	0x10,   // WINDOWS_10_1703  (15063)
+	0x10,   // WINDOWS_10_1709  (16299)
+	0x10,   // WINDOWS_10_1803  (17134)
+	0x10,   // WINDOWS_10_1809  (17763)
+	0x10,   // WINDOWS_10_1903  (18362)
+	0x10,   // WINDOWS_10_1909  (18363)
+	0x10,   // WINDOWS_10_2004  (19041)
+	0x10,   // WINDOWS_10_20H2  (19042)
+	0x10,   // WINDOWS_10_21H1  (19043)
+	0x10,   // WINDOWS_10_21H2  (19044)
+	0x10,   // WINDOWS_10_22H2  (19045)
+	0x10,   // WINDOWS_11_21H2  (22000)
+	0x10,   // WINDOWS_11_22H2  (22621)
+	0x10,   // WINDOWS_11_23H2  (22631)
+	0x10    // WINDOWS_11_24H2  (26100)
+};
+
 // ============== Object Callback Internal Structures ==============
 // These are undocumented structures used by ObRegisterCallbacks
 

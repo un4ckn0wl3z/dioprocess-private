@@ -49,6 +49,18 @@
     <ClInclude Include="Memory\PhysicalMemory.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Memory\HideMemory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Memory\hde\hde64.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Memory\hde\pstdint.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Memory\hde\table64.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="NSI\PortHide.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -85,6 +97,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Memory\PhysicalMemory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Memory\HideMemory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Memory\hde\hde64.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="EptHook\UsermodeEptHook.cpp">
