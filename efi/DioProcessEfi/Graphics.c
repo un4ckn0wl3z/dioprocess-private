@@ -1,30 +1,34 @@
 /** @file
   GOP-based glitch boot animation — Damned Software boot screen.
 
-  Uses EFI_GRAPHICS_OUTPUT_PROTOCOL for direct framebuffer access.
-  Much more reliable across real hardware than text console.
+  Uses EFI_GRAPHICS_OUTPUT_PROTOCOL Blt() for hardware-accelerated rendering.
+  Much faster and more reliable than direct framebuffer writes.
 
   Copyright (c) 2024, DioProcess. All rights reserved.
 **/
 
 #include <Uefi.h>
 #include <Library/UefiBootServicesTableLib.h>
+#include <Library/MemoryAllocationLib.h>
+#include <Library/BaseMemoryLib.h>
 #include <Protocol/GraphicsOutput.h>
 
 #include "Graphics.h"
 
 // ── Timing ────────────────────────────────────────────────────────────────────
-#define FRAME_MS   50       // 20 fps (safer for real hardware)
+#define FRAME_MS   80       // ~12 fps (safe for real hardware)
 
-// ── Colors (BGRX format — most common GOP pixel format) ──────────────────────
-#define COLOR_BLACK      0x00000000
-#define COLOR_WHITE      0x00FFFFFF
-#define COLOR_GREEN      0x0000FF00
-#define COLOR_DARK_GREEN 0x00008800
-#define COLOR_CYAN       0x00FFFF00
-#define COLOR_VIOLET     0x00FF00FF
-#define COLOR_GRAY       0x00404040
-#define COLOR_DARK_GRAY  0x00202020
+// ── Colors (EFI_GRAPHICS_OUTPUT_BLT_PIXEL is BGRA) ───────────────────────────
+#define MAKE_COLOR(R, G, B) { (B), (G), (R), 0 }
+
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL COLOR_BLACK      = MAKE_COLOR(0x00, 0x00, 0x00);
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL COLOR_WHITE      = MAKE_COLOR(0xFF, 0xFF, 0xFF);
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL COLOR_GREEN      = MAKE_COLOR(0x00, 0xFF, 0x00);
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL COLOR_DARK_GREEN = MAKE_COLOR(0x00, 0x88, 0x00);
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL COLOR_CYAN       = MAKE_COLOR(0x00, 0xFF, 0xFF);
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL COLOR_VIOLET     = MAKE_COLOR(0xFF, 0x00, 0xFF);
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL COLOR_GRAY       = MAKE_COLOR(0x40, 0x40, 0x40);
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL COLOR_DARK_GRAY  = MAKE_COLOR(0x20, 0x20, 0x20);
 
 // ── LCG PRNG ─────────────────────────────────────────────────────────────────
 STATIC UINT32 mRng = 1337;
@@ -43,10 +47,7 @@ RngRange(IN UINT32 Lo, IN UINT32 Hi)
     return Lo + (RngNext() % (Hi - Lo + 1));
 }
 
-// ── 8x16 Bitmap Font (ASCII 32-95) ───────────────────────────────────────────
-// Each character is 8 pixels wide, 16 pixels tall
-// Stored as 16 bytes per character (1 byte per row, MSB = leftmost pixel)
-
+// ── 8x16 Bitmap Font (ASCII 32-122) ──────────────────────────────────────────
 STATIC CONST UINT8 FONT_8X16[] = {
     // Space (32)
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -240,7 +241,6 @@ STATIC CONST UINT8 FONT_8X16[] = {
     // _ (95)
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00,
-    // a-z lowercase (96-122) - simplified, using uppercase glyphs
     // ` (96)
     0x00, 0x30, 0x18, 0x0C, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -331,10 +331,12 @@ STATIC CONST UINT8 FONT_8X16[] = {
 
 // ── GOP state ────────────────────────────────────────────────────────────────
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL *mGop = NULL;
-STATIC UINT32                       *mFrameBuffer = NULL;
 STATIC UINTN                         mScreenWidth = 0;
 STATIC UINTN                         mScreenHeight = 0;
-STATIC UINTN                         mPixelsPerScanLine = 0;
+
+// ── Back buffer for double-buffering ─────────────────────────────────────────
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL *mBackBuffer = NULL;
+STATIC UINTN                          mBackBufferSize = 0;
 
 // ── Branding ─────────────────────────────────────────────────────────────────
 STATIC CONST CHAR8 *TITLE = "DAMNED SOFTWARE";
@@ -343,38 +345,25 @@ STATIC CONST CHAR8 *MOTTO = "deeper than ring zero";
 #define MOTTO_LEN  21
 
 // ── Glitch colors ────────────────────────────────────────────────────────────
-STATIC CONST UINT32 GLITCH_COLORS[] = {
-    COLOR_GREEN,
-    COLOR_DARK_GREEN,
-    COLOR_CYAN,
-    COLOR_VIOLET,
-    COLOR_GRAY,
-    COLOR_DARK_GRAY,
-    COLOR_WHITE,
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL GLITCH_COLORS[] = {
+    MAKE_COLOR(0x00, 0xFF, 0x00),  // Green
+    MAKE_COLOR(0x00, 0x88, 0x00),  // Dark green
+    MAKE_COLOR(0x00, 0xFF, 0xFF),  // Cyan
+    MAKE_COLOR(0xFF, 0x00, 0xFF),  // Violet
+    MAKE_COLOR(0x40, 0x40, 0x40),  // Gray
+    MAKE_COLOR(0x20, 0x20, 0x20),  // Dark gray
+    MAKE_COLOR(0xFF, 0xFF, 0xFF),  // White
 };
 #define GLITCH_COLOR_COUNT  7
 
-// ── Helper: Set pixel ────────────────────────────────────────────────────────
-STATIC VOID
-PutPixel(
-    IN UINTN X,
-    IN UINTN Y,
-    IN UINT32 Color
-    )
-{
-    if (X < mScreenWidth && Y < mScreenHeight) {
-        mFrameBuffer[Y * mPixelsPerScanLine + X] = Color;
-    }
-}
-
-// ── Helper: Fill rectangle ───────────────────────────────────────────────────
+// ── Helper: Fill rectangle in back buffer ────────────────────────────────────
 STATIC VOID
 FillRect(
     IN UINTN X,
     IN UINTN Y,
     IN UINTN W,
     IN UINTN H,
-    IN UINT32 Color
+    IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL Color
     )
 {
     UINTN i, j;
@@ -383,22 +372,23 @@ FillRect(
 
     if (EndX > mScreenWidth) EndX = mScreenWidth;
     if (EndY > mScreenHeight) EndY = mScreenHeight;
+    if (X >= mScreenWidth || Y >= mScreenHeight) return;
 
     for (j = Y; j < EndY; j++) {
-        UINT32 *Row = &mFrameBuffer[j * mPixelsPerScanLine + X];
+        EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Row = &mBackBuffer[j * mScreenWidth + X];
         for (i = 0; i < (EndX - X); i++) {
             Row[i] = Color;
         }
     }
 }
 
-// ── Helper: Draw character ───────────────────────────────────────────────────
+// ── Helper: Draw character to back buffer ────────────────────────────────────
 STATIC VOID
 DrawChar(
     IN UINTN X,
     IN UINTN Y,
     IN CHAR8 Ch,
-    IN UINT32 Color,
+    IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL Color,
     IN UINTN Scale
     )
 {
@@ -417,14 +407,13 @@ DrawChar(
         UINT8 Bits = Glyph[Row];
         for (Col = 0; Col < FONT_WIDTH; Col++) {
             if (Bits & (0x80 >> Col)) {
-                // Draw scaled pixel
                 for (SY = 0; SY < Scale; SY++) {
                     for (SX = 0; SX < Scale; SX++) {
-                        PutPixel(
-                            X + Col * Scale + SX,
-                            Y + Row * Scale + SY,
-                            Color
-                        );
+                        UINTN PX = X + Col * Scale + SX;
+                        UINTN PY = Y + Row * Scale + SY;
+                        if (PX < mScreenWidth && PY < mScreenHeight) {
+                            mBackBuffer[PY * mScreenWidth + PX] = Color;
+                        }
                     }
                 }
             }
@@ -432,13 +421,13 @@ DrawChar(
     }
 }
 
-// ── Helper: Draw string ──────────────────────────────────────────────────────
+// ── Helper: Draw string to back buffer ───────────────────────────────────────
 STATIC VOID
 DrawString(
     IN UINTN X,
     IN UINTN Y,
     IN CONST CHAR8 *Str,
-    IN UINT32 Color,
+    IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL Color,
     IN UINTN Scale
     )
 {
@@ -459,7 +448,7 @@ StringWidth(
     return Len * FONT_WIDTH * Scale;
 }
 
-// ── Draw glitch frame ────────────────────────────────────────────────────────
+// ── Draw glitch frame to back buffer ─────────────────────────────────────────
 STATIC VOID
 DrawGlitchFrame(
     IN UINTN FrameIdx
@@ -471,10 +460,10 @@ DrawGlitchFrame(
     UINTN TitleW, MottoW;
     UINTN TitleX, TitleY;
     UINTN MottoX, MottoY;
-    UINT32 TitleColor;
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL TitleColor;
 
-    // Clear to black
-    FillRect(0, 0, mScreenWidth, mScreenHeight, COLOR_BLACK);
+    // Clear back buffer to black
+    SetMem(mBackBuffer, mBackBufferSize, 0);
 
     // Decide intensity for this frame (0-9)
     Intensity = RngNext() % 10;
@@ -483,29 +472,28 @@ DrawGlitchFrame(
     if (Intensity < 2) {
         NumBars = RngRange(0, 2);
     } else if (Intensity < 7) {
-        NumBars = RngRange(2, 5);
+        NumBars = RngRange(2, 4);
     } else {
-        NumBars = RngRange(5, 12);
+        NumBars = RngRange(4, 8);
     }
 
     for (i = 0; i < NumBars; i++) {
         UINTN BarY = RngRange(0, (UINT32)(mScreenHeight - 1));
-        UINTN BarH = RngRange(2, 20);
+        UINTN BarH = RngRange(2, 16);
         UINTN BarX = RngRange(0, (UINT32)(mScreenWidth / 2));
         UINTN BarW = RngRange(50, (UINT32)(mScreenWidth - BarX));
-        UINT32 BarColor = GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT];
+        EFI_GRAPHICS_OUTPUT_BLT_PIXEL BarColor = GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT];
         FillRect(BarX, BarY, BarW, BarH, BarColor);
     }
 
-    // Draw scattered noise pixels on heavy frames
+    // Draw scattered noise on heavy frames
     if (Intensity >= 7) {
-        UINTN NumPixels = RngRange(50, 200);
-        for (i = 0; i < NumPixels; i++) {
-            UINTN PX = RngRange(0, (UINT32)(mScreenWidth - 1));
-            UINTN PY = RngRange(0, (UINT32)(mScreenHeight - 1));
-            UINT32 PColor = GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT];
-            // Draw small block instead of single pixel for visibility
-            FillRect(PX, PY, 3, 3, PColor);
+        UINTN NumBlocks = RngRange(20, 60);
+        for (i = 0; i < NumBlocks; i++) {
+            UINTN PX = RngRange(0, (UINT32)(mScreenWidth - 4));
+            UINTN PY = RngRange(0, (UINT32)(mScreenHeight - 4));
+            EFI_GRAPHICS_OUTPUT_BLT_PIXEL PColor = GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT];
+            FillRect(PX, PY, 4, 4, PColor);
         }
     }
 
@@ -523,36 +511,17 @@ DrawGlitchFrame(
 
     // Title with occasional glitch
     if (Intensity >= 8 && (RngNext() % 3) == 0) {
-        // Glitched title - draw with random color and slight offset
-        UINTN OffsetX = RngRange(0, 5);
-        UINTN OffsetY = RngRange(0, 3);
+        UINTN OffsetX = RngRange(0, 4);
+        UINTN OffsetY = RngRange(0, 2);
         TitleColor = GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT];
         DrawString(TitleX + OffsetX, TitleY + OffsetY, TITLE, TitleColor, TitleScale);
     } else {
-        // Normal title with shimmer
-        TitleColor = ((FrameIdx / 4) & 1) ? COLOR_WHITE : COLOR_GREEN;
+        TitleColor = ((FrameIdx / 3) & 1) ? COLOR_WHITE : COLOR_GREEN;
         DrawString(TitleX, TitleY, TITLE, TitleColor, TitleScale);
     }
 
     // Motto - always steady green
     DrawString(MottoX, MottoY, MOTTO, COLOR_GREEN, MottoScale);
-
-    // Occasional scanline effect
-    if (Intensity >= 6) {
-        UINTN ScanY;
-        for (ScanY = 0; ScanY < mScreenHeight; ScanY += 4) {
-            if ((RngNext() % 10) < 2) {
-                // Dim this scanline
-                UINTN ScanX;
-                for (ScanX = 0; ScanX < mScreenWidth; ScanX++) {
-                    UINT32 Pixel = mFrameBuffer[ScanY * mPixelsPerScanLine + ScanX];
-                    // Dim by shifting right (divide RGB by 2)
-                    Pixel = ((Pixel >> 1) & 0x7F7F7F7F);
-                    mFrameBuffer[ScanY * mPixelsPerScanLine + ScanX] = Pixel;
-                }
-            }
-        }
-    }
 }
 
 // ── Fallback: Text console animation ─────────────────────────────────────────
@@ -577,7 +546,6 @@ TextFallbackAnimation(
         return;
     }
 
-    // Simple static display for fallback
     Con->SetAttribute(Con, EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BACKGROUND_BLACK));
     Con->ClearScreen(Con);
     Con->EnableCursor(Con, FALSE);
@@ -610,8 +578,6 @@ GraphicsPlayAnimation(
 {
     EFI_STATUS Status;
     UINTN TotalFrames, FrameIdx;
-    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *ModeInfo;
-    UINTN ModeInfoSize;
 
     // Try to locate GOP
     Status = gBS->LocateProtocol(
@@ -621,44 +587,28 @@ GraphicsPlayAnimation(
     );
 
     if (EFI_ERROR(Status) || mGop == NULL) {
-        // GOP not available, fall back to text console
         TextFallbackAnimation(DurationMs);
         return;
     }
 
-    // Get current mode info
-    Status = mGop->QueryMode(
-        mGop,
-        mGop->Mode->Mode,
-        &ModeInfoSize,
-        &ModeInfo
-    );
+    // Get screen dimensions
+    mScreenWidth = mGop->Mode->Info->HorizontalResolution;
+    mScreenHeight = mGop->Mode->Info->VerticalResolution;
 
-    if (EFI_ERROR(Status)) {
+    if (mScreenWidth < 640 || mScreenHeight < 480) {
         TextFallbackAnimation(DurationMs);
         return;
     }
 
-    // Verify pixel format is compatible (BGR or RGB)
-    if (ModeInfo->PixelFormat != PixelBlueGreenRedReserved8BitPerColor &&
-        ModeInfo->PixelFormat != PixelRedGreenBlueReserved8BitPerColor) {
-        // Unsupported pixel format
+    // Allocate back buffer (in regular RAM - fast writes)
+    mBackBufferSize = mScreenWidth * mScreenHeight * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL);
+    mBackBuffer = AllocatePool(mBackBufferSize);
+    if (mBackBuffer == NULL) {
         TextFallbackAnimation(DurationMs);
         return;
     }
 
-    // Set up framebuffer access
-    mScreenWidth = ModeInfo->HorizontalResolution;
-    mScreenHeight = ModeInfo->VerticalResolution;
-    mPixelsPerScanLine = ModeInfo->PixelsPerScanLine;
-    mFrameBuffer = (UINT32 *)(UINTN)mGop->Mode->FrameBufferBase;
-
-    if (mFrameBuffer == NULL || mScreenWidth < 640 || mScreenHeight < 480) {
-        TextFallbackAnimation(DurationMs);
-        return;
-    }
-
-    // Seed RNG with something semi-random
+    // Seed RNG
     mRng = (UINT32)(mScreenWidth * mScreenHeight + DurationMs);
 
     // Calculate frame count
@@ -667,10 +617,38 @@ GraphicsPlayAnimation(
 
     // Animation loop
     for (FrameIdx = 0; FrameIdx < TotalFrames; FrameIdx++) {
+        // Draw to back buffer (fast - regular RAM)
         DrawGlitchFrame(FrameIdx);
+
+        // Blit back buffer to screen (single fast transfer)
+        mGop->Blt(
+            mGop,
+            mBackBuffer,
+            EfiBltBufferToVideo,
+            0, 0,    // Source X, Y
+            0, 0,    // Dest X, Y
+            mScreenWidth,
+            mScreenHeight,
+            0        // Delta (0 = use Width)
+        );
+
         gBS->Stall(FRAME_MS * 1000);
     }
 
-    // Clear screen to black when done
-    FillRect(0, 0, mScreenWidth, mScreenHeight, COLOR_BLACK);
+    // Clear screen to black
+    SetMem(mBackBuffer, mBackBufferSize, 0);
+    mGop->Blt(
+        mGop,
+        mBackBuffer,
+        EfiBltBufferToVideo,
+        0, 0,
+        0, 0,
+        mScreenWidth,
+        mScreenHeight,
+        0
+    );
+
+    // Free back buffer
+    FreePool(mBackBuffer);
+    mBackBuffer = NULL;
 }
