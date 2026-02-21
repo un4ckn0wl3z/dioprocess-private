@@ -1,8 +1,8 @@
 /** @file
-  Text-mode Matrix rain animation for UEFI boot screen.
+  GOP-based boot animation for UEFI boot screen.
 
-  Drives gST->ConOut (EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL) directly.
-  No GOP, no pixel buffers, no Animation.h — the EFI binary stays tiny.
+  Uses EFI_GRAPHICS_OUTPUT_PROTOCOL for consistent rendering across
+  real hardware. Falls back to text console if GOP unavailable.
 
   Copyright (c) 2024, DioProcess. All rights reserved.
 **/
@@ -13,11 +13,10 @@
 #include <Uefi.h>
 
 /**
-  Play the Matrix rain boot animation for the specified duration.
+  Play the glitch boot animation for the specified duration.
 
-  Uses the UEFI text console (gST->ConOut) to render falling green
-  characters with "DAMNED SOFTWARE" and motto overlaid in the centre.
-  Hides the cursor during playback and restores it afterwards.
+  Uses GOP (Graphics Output Protocol) for direct framebuffer access.
+  Falls back to simple text display if GOP is not available.
 
   @param[in] DurationMs   Total animation duration in milliseconds.
 **/

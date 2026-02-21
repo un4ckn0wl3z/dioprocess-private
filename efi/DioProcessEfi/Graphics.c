@@ -1,250 +1,570 @@
 /** @file
-  Glitch effect boot animation — Damned Software boot screen.
+  GOP-based glitch boot animation — Damned Software boot screen.
 
-  Drives gST->ConOut with random horizontal noise bars, scatter chars,
-  and occasional title corruption. ClearScreen + targeted draws keeps
-  the firmware call count very low (~50 per frame vs 2000 for rain).
+  Uses EFI_GRAPHICS_OUTPUT_PROTOCOL for direct framebuffer access.
+  Much more reliable across real hardware than text console.
 
   Copyright (c) 2024, DioProcess. All rights reserved.
 **/
 
 #include <Uefi.h>
 #include <Library/UefiBootServicesTableLib.h>
+#include <Protocol/GraphicsOutput.h>
 
 #include "Graphics.h"
 
-// ── Branding ──────────────────────────────────────────────────────────────────
-STATIC CONST CHAR16 *TITLE = L"DAMNED SOFTWARE";
-STATIC CONST CHAR16 *MOTTO = L"deeper than ring zero";
-#define TITLE_LEN  15
-#define MOTTO_LEN  21
-
 // ── Timing ────────────────────────────────────────────────────────────────────
-#define FRAME_MS   40       // ~25 fps
+#define FRAME_MS   50       // 20 fps (safer for real hardware)
 
-// ── Console caps ─────────────────────────────────────────────────────────────
-#define MAX_COLS  200
-#define MAX_ROWS   60
+// ── Colors (BGRX format — most common GOP pixel format) ──────────────────────
+#define COLOR_BLACK      0x00000000
+#define COLOR_WHITE      0x00FFFFFF
+#define COLOR_GREEN      0x0000FF00
+#define COLOR_DARK_GREEN 0x00008800
+#define COLOR_CYAN       0x00FFFF00
+#define COLOR_VIOLET     0x00FF00FF
+#define COLOR_GRAY       0x00404040
+#define COLOR_DARK_GRAY  0x00202020
 
-// ── Colour attributes ────────────────────────────────────────────────────────
-#define ATTR_BLANK  EFI_TEXT_ATTR(EFI_BLACK,       EFI_BACKGROUND_BLACK)
-#define ATTR_TITLE  EFI_TEXT_ATTR(EFI_WHITE,        EFI_BACKGROUND_BLACK)
-#define ATTR_MOTTO  EFI_TEXT_ATTR(EFI_LIGHTGREEN,   EFI_BACKGROUND_BLACK)
-
-#define GLITCH_COLOR_COUNT 7
-STATIC CONST UINTN GLITCH_COLORS[GLITCH_COLOR_COUNT] = {
-    EFI_TEXT_ATTR(EFI_DARKGRAY,    EFI_BACKGROUND_BLACK),
-    EFI_TEXT_ATTR(EFI_GREEN,       EFI_BACKGROUND_BLACK),
-    EFI_TEXT_ATTR(EFI_LIGHTGREEN,  EFI_BACKGROUND_BLACK),
-    EFI_TEXT_ATTR(EFI_CYAN,        EFI_BACKGROUND_BLACK),
-    EFI_TEXT_ATTR(EFI_LIGHTCYAN,   EFI_BACKGROUND_BLACK),
-    EFI_TEXT_ATTR(EFI_LIGHTGRAY,   EFI_BACKGROUND_BLACK),
-    EFI_TEXT_ATTR(EFI_WHITE,       EFI_BACKGROUND_BLACK),
-};
-
-// ── Glitch character set ──────────────────────────────────────────────────────
-STATIC CONST CHAR16 GLITCH_CHARS[] =
-    L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    L"0123456789!@#$%^&*<>|/\\{}[]+-=~_";
-#define GLITCH_CHAR_COUNT  ((sizeof(GLITCH_CHARS) / sizeof(CHAR16)) - 1)
-
-// ── LCG PRNG (no stdlib) ──────────────────────────────────────────────────────
+// ── LCG PRNG ─────────────────────────────────────────────────────────────────
 STATIC UINT32 mRng = 1337;
 
 STATIC UINT32
-RngNext (VOID)
+RngNext(VOID)
 {
     mRng = mRng * 1664525u + 1013904223u;
     return mRng;
 }
 
 STATIC UINT32
-RngRange (IN UINT32 Lo, IN UINT32 Hi)
+RngRange(IN UINT32 Lo, IN UINT32 Hi)
 {
     if (Hi <= Lo) return Lo;
     return Lo + (RngNext() % (Hi - Lo + 1));
 }
 
-// ── Console size ──────────────────────────────────────────────────────────────
-STATIC UINTN mNumCols;
-STATIC UINTN mNumRows;
+// ── 8x16 Bitmap Font (ASCII 32-95) ───────────────────────────────────────────
+// Each character is 8 pixels wide, 16 pixels tall
+// Stored as 16 bytes per character (1 byte per row, MSB = leftmost pixel)
 
-// ── String buffer for bar content ─────────────────────────────────────────────
-STATIC CHAR16 mLineBuf[MAX_COLS + 1];
+STATIC CONST UINT8 FONT_8X16[] = {
+    // Space (32)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // ! (33)
+    0x00, 0x00, 0x18, 0x3C, 0x3C, 0x3C, 0x18, 0x18,
+    0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,
+    // " (34)
+    0x00, 0x66, 0x66, 0x66, 0x24, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // # (35)
+    0x00, 0x00, 0x00, 0x6C, 0x6C, 0xFE, 0x6C, 0x6C,
+    0x6C, 0xFE, 0x6C, 0x6C, 0x00, 0x00, 0x00, 0x00,
+    // $ (36)
+    0x18, 0x18, 0x7C, 0xC6, 0xC2, 0xC0, 0x7C, 0x06,
+    0x06, 0x86, 0xC6, 0x7C, 0x18, 0x18, 0x00, 0x00,
+    // % (37)
+    0x00, 0x00, 0x00, 0x00, 0xC2, 0xC6, 0x0C, 0x18,
+    0x30, 0x60, 0xC6, 0x86, 0x00, 0x00, 0x00, 0x00,
+    // & (38)
+    0x00, 0x00, 0x38, 0x6C, 0x6C, 0x38, 0x76, 0xDC,
+    0xCC, 0xCC, 0xCC, 0x76, 0x00, 0x00, 0x00, 0x00,
+    // ' (39)
+    0x00, 0x30, 0x30, 0x30, 0x60, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // ( (40)
+    0x00, 0x00, 0x0C, 0x18, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x18, 0x0C, 0x00, 0x00, 0x00, 0x00,
+    // ) (41)
+    0x00, 0x00, 0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x0C,
+    0x0C, 0x0C, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00,
+    // * (42)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x3C, 0xFF,
+    0x3C, 0x66, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // + (43)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x7E,
+    0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // , (44)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x18, 0x18, 0x18, 0x30, 0x00, 0x00, 0x00,
+    // - (45)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFE,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // . (46)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,
+    // / (47)
+    0x00, 0x00, 0x00, 0x00, 0x02, 0x06, 0x0C, 0x18,
+    0x30, 0x60, 0xC0, 0x80, 0x00, 0x00, 0x00, 0x00,
+    // 0 (48)
+    0x00, 0x00, 0x38, 0x6C, 0xC6, 0xC6, 0xD6, 0xD6,
+    0xC6, 0xC6, 0x6C, 0x38, 0x00, 0x00, 0x00, 0x00,
+    // 1 (49)
+    0x00, 0x00, 0x18, 0x38, 0x78, 0x18, 0x18, 0x18,
+    0x18, 0x18, 0x18, 0x7E, 0x00, 0x00, 0x00, 0x00,
+    // 2 (50)
+    0x00, 0x00, 0x7C, 0xC6, 0x06, 0x0C, 0x18, 0x30,
+    0x60, 0xC0, 0xC6, 0xFE, 0x00, 0x00, 0x00, 0x00,
+    // 3 (51)
+    0x00, 0x00, 0x7C, 0xC6, 0x06, 0x06, 0x3C, 0x06,
+    0x06, 0x06, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // 4 (52)
+    0x00, 0x00, 0x0C, 0x1C, 0x3C, 0x6C, 0xCC, 0xFE,
+    0x0C, 0x0C, 0x0C, 0x1E, 0x00, 0x00, 0x00, 0x00,
+    // 5 (53)
+    0x00, 0x00, 0xFE, 0xC0, 0xC0, 0xC0, 0xFC, 0x06,
+    0x06, 0x06, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // 6 (54)
+    0x00, 0x00, 0x38, 0x60, 0xC0, 0xC0, 0xFC, 0xC6,
+    0xC6, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // 7 (55)
+    0x00, 0x00, 0xFE, 0xC6, 0x06, 0x06, 0x0C, 0x18,
+    0x30, 0x30, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00,
+    // 8 (56)
+    0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xC6, 0x7C, 0xC6,
+    0xC6, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // 9 (57)
+    0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xC6, 0x7E, 0x06,
+    0x06, 0x06, 0x0C, 0x78, 0x00, 0x00, 0x00, 0x00,
+    // : (58)
+    0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00,
+    0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // ; (59)
+    0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00,
+    0x00, 0x18, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00,
+    // < (60)
+    0x00, 0x00, 0x00, 0x06, 0x0C, 0x18, 0x30, 0x60,
+    0x30, 0x18, 0x0C, 0x06, 0x00, 0x00, 0x00, 0x00,
+    // = (61)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x7E, 0x00, 0x00,
+    0x7E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // > (62)
+    0x00, 0x00, 0x00, 0x60, 0x30, 0x18, 0x0C, 0x06,
+    0x0C, 0x18, 0x30, 0x60, 0x00, 0x00, 0x00, 0x00,
+    // ? (63)
+    0x00, 0x00, 0x7C, 0xC6, 0xC6, 0x0C, 0x18, 0x18,
+    0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,
+    // @ (64)
+    0x00, 0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xDE, 0xDE,
+    0xDE, 0xDC, 0xC0, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // A (65)
+    0x00, 0x00, 0x10, 0x38, 0x6C, 0xC6, 0xC6, 0xFE,
+    0xC6, 0xC6, 0xC6, 0xC6, 0x00, 0x00, 0x00, 0x00,
+    // B (66)
+    0x00, 0x00, 0xFC, 0x66, 0x66, 0x66, 0x7C, 0x66,
+    0x66, 0x66, 0x66, 0xFC, 0x00, 0x00, 0x00, 0x00,
+    // C (67)
+    0x00, 0x00, 0x3C, 0x66, 0xC2, 0xC0, 0xC0, 0xC0,
+    0xC0, 0xC2, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,
+    // D (68)
+    0x00, 0x00, 0xF8, 0x6C, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x6C, 0xF8, 0x00, 0x00, 0x00, 0x00,
+    // E (69)
+    0x00, 0x00, 0xFE, 0x66, 0x62, 0x68, 0x78, 0x68,
+    0x60, 0x62, 0x66, 0xFE, 0x00, 0x00, 0x00, 0x00,
+    // F (70)
+    0x00, 0x00, 0xFE, 0x66, 0x62, 0x68, 0x78, 0x68,
+    0x60, 0x60, 0x60, 0xF0, 0x00, 0x00, 0x00, 0x00,
+    // G (71)
+    0x00, 0x00, 0x3C, 0x66, 0xC2, 0xC0, 0xC0, 0xDE,
+    0xC6, 0xC6, 0x66, 0x3A, 0x00, 0x00, 0x00, 0x00,
+    // H (72)
+    0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0xFE, 0xC6,
+    0xC6, 0xC6, 0xC6, 0xC6, 0x00, 0x00, 0x00, 0x00,
+    // I (73)
+    0x00, 0x00, 0x3C, 0x18, 0x18, 0x18, 0x18, 0x18,
+    0x18, 0x18, 0x18, 0x3C, 0x00, 0x00, 0x00, 0x00,
+    // J (74)
+    0x00, 0x00, 0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C,
+    0xCC, 0xCC, 0xCC, 0x78, 0x00, 0x00, 0x00, 0x00,
+    // K (75)
+    0x00, 0x00, 0xE6, 0x66, 0x66, 0x6C, 0x78, 0x78,
+    0x6C, 0x66, 0x66, 0xE6, 0x00, 0x00, 0x00, 0x00,
+    // L (76)
+    0x00, 0x00, 0xF0, 0x60, 0x60, 0x60, 0x60, 0x60,
+    0x60, 0x62, 0x66, 0xFE, 0x00, 0x00, 0x00, 0x00,
+    // M (77)
+    0x00, 0x00, 0xC6, 0xEE, 0xFE, 0xFE, 0xD6, 0xC6,
+    0xC6, 0xC6, 0xC6, 0xC6, 0x00, 0x00, 0x00, 0x00,
+    // N (78)
+    0x00, 0x00, 0xC6, 0xE6, 0xF6, 0xFE, 0xDE, 0xCE,
+    0xC6, 0xC6, 0xC6, 0xC6, 0x00, 0x00, 0x00, 0x00,
+    // O (79)
+    0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6,
+    0xC6, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // P (80)
+    0x00, 0x00, 0xFC, 0x66, 0x66, 0x66, 0x7C, 0x60,
+    0x60, 0x60, 0x60, 0xF0, 0x00, 0x00, 0x00, 0x00,
+    // Q (81)
+    0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6,
+    0xC6, 0xD6, 0xDE, 0x7C, 0x0C, 0x0E, 0x00, 0x00,
+    // R (82)
+    0x00, 0x00, 0xFC, 0x66, 0x66, 0x66, 0x7C, 0x6C,
+    0x66, 0x66, 0x66, 0xE6, 0x00, 0x00, 0x00, 0x00,
+    // S (83)
+    0x00, 0x00, 0x7C, 0xC6, 0xC6, 0x60, 0x38, 0x0C,
+    0x06, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // T (84)
+    0x00, 0x00, 0xFF, 0xDB, 0x99, 0x18, 0x18, 0x18,
+    0x18, 0x18, 0x18, 0x3C, 0x00, 0x00, 0x00, 0x00,
+    // U (85)
+    0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6,
+    0xC6, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // V (86)
+    0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6,
+    0xC6, 0x6C, 0x38, 0x10, 0x00, 0x00, 0x00, 0x00,
+    // W (87)
+    0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0xD6, 0xD6,
+    0xD6, 0xFE, 0xEE, 0x6C, 0x00, 0x00, 0x00, 0x00,
+    // X (88)
+    0x00, 0x00, 0xC6, 0xC6, 0x6C, 0x7C, 0x38, 0x38,
+    0x7C, 0x6C, 0xC6, 0xC6, 0x00, 0x00, 0x00, 0x00,
+    // Y (89)
+    0x00, 0x00, 0xC3, 0xC3, 0xC3, 0x66, 0x3C, 0x18,
+    0x18, 0x18, 0x18, 0x3C, 0x00, 0x00, 0x00, 0x00,
+    // Z (90)
+    0x00, 0x00, 0xFE, 0xC6, 0x86, 0x0C, 0x18, 0x30,
+    0x60, 0xC2, 0xC6, 0xFE, 0x00, 0x00, 0x00, 0x00,
+    // [ (91)
+    0x00, 0x00, 0x3C, 0x30, 0x30, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x3C, 0x00, 0x00, 0x00, 0x00,
+    // \ (92)
+    0x00, 0x00, 0x00, 0x80, 0xC0, 0x60, 0x30, 0x18,
+    0x0C, 0x06, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // ] (93)
+    0x00, 0x00, 0x3C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C,
+    0x0C, 0x0C, 0x0C, 0x3C, 0x00, 0x00, 0x00, 0x00,
+    // ^ (94)
+    0x10, 0x38, 0x6C, 0xC6, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // _ (95)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00,
+    // a-z lowercase (96-122) - simplified, using uppercase glyphs
+    // ` (96)
+    0x00, 0x30, 0x18, 0x0C, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    // a (97)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x78, 0x0C, 0x7C,
+    0xCC, 0xCC, 0xCC, 0x76, 0x00, 0x00, 0x00, 0x00,
+    // b (98)
+    0x00, 0x00, 0xE0, 0x60, 0x60, 0x78, 0x6C, 0x66,
+    0x66, 0x66, 0x66, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // c (99)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x7C, 0xC6, 0xC0,
+    0xC0, 0xC0, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // d (100)
+    0x00, 0x00, 0x1C, 0x0C, 0x0C, 0x3C, 0x6C, 0xCC,
+    0xCC, 0xCC, 0xCC, 0x76, 0x00, 0x00, 0x00, 0x00,
+    // e (101)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x7C, 0xC6, 0xFE,
+    0xC0, 0xC0, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // f (102)
+    0x00, 0x00, 0x38, 0x6C, 0x64, 0x60, 0xF0, 0x60,
+    0x60, 0x60, 0x60, 0xF0, 0x00, 0x00, 0x00, 0x00,
+    // g (103)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x76, 0xCC, 0xCC,
+    0xCC, 0xCC, 0xCC, 0x7C, 0x0C, 0xCC, 0x78, 0x00,
+    // h (104)
+    0x00, 0x00, 0xE0, 0x60, 0x60, 0x6C, 0x76, 0x66,
+    0x66, 0x66, 0x66, 0xE6, 0x00, 0x00, 0x00, 0x00,
+    // i (105)
+    0x00, 0x00, 0x18, 0x18, 0x00, 0x38, 0x18, 0x18,
+    0x18, 0x18, 0x18, 0x3C, 0x00, 0x00, 0x00, 0x00,
+    // j (106)
+    0x00, 0x00, 0x06, 0x06, 0x00, 0x0E, 0x06, 0x06,
+    0x06, 0x06, 0x06, 0x06, 0x66, 0x66, 0x3C, 0x00,
+    // k (107)
+    0x00, 0x00, 0xE0, 0x60, 0x60, 0x66, 0x6C, 0x78,
+    0x78, 0x6C, 0x66, 0xE6, 0x00, 0x00, 0x00, 0x00,
+    // l (108)
+    0x00, 0x00, 0x38, 0x18, 0x18, 0x18, 0x18, 0x18,
+    0x18, 0x18, 0x18, 0x3C, 0x00, 0x00, 0x00, 0x00,
+    // m (109)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xEC, 0xFE, 0xD6,
+    0xD6, 0xD6, 0xD6, 0xC6, 0x00, 0x00, 0x00, 0x00,
+    // n (110)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xDC, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00,
+    // o (111)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x7C, 0xC6, 0xC6,
+    0xC6, 0xC6, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // p (112)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xDC, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x7C, 0x60, 0x60, 0xF0, 0x00,
+    // q (113)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x76, 0xCC, 0xCC,
+    0xCC, 0xCC, 0xCC, 0x7C, 0x0C, 0x0C, 0x1E, 0x00,
+    // r (114)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xDC, 0x76, 0x66,
+    0x60, 0x60, 0x60, 0xF0, 0x00, 0x00, 0x00, 0x00,
+    // s (115)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x7C, 0xC6, 0x60,
+    0x38, 0x0C, 0xC6, 0x7C, 0x00, 0x00, 0x00, 0x00,
+    // t (116)
+    0x00, 0x00, 0x10, 0x30, 0x30, 0xFC, 0x30, 0x30,
+    0x30, 0x30, 0x36, 0x1C, 0x00, 0x00, 0x00, 0x00,
+    // u (117)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xCC, 0xCC, 0xCC,
+    0xCC, 0xCC, 0xCC, 0x76, 0x00, 0x00, 0x00, 0x00,
+    // v (118)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xC3, 0xC3, 0xC3,
+    0xC3, 0x66, 0x3C, 0x18, 0x00, 0x00, 0x00, 0x00,
+    // w (119)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xC6, 0xC6, 0xD6,
+    0xD6, 0xD6, 0xFE, 0x6C, 0x00, 0x00, 0x00, 0x00,
+    // x (120)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xC6, 0x6C, 0x38,
+    0x38, 0x38, 0x6C, 0xC6, 0x00, 0x00, 0x00, 0x00,
+    // y (121)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xC6, 0xC6, 0xC6,
+    0xC6, 0xC6, 0xC6, 0x7E, 0x06, 0x0C, 0xF8, 0x00,
+    // z (122)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xFE, 0xCC, 0x18,
+    0x30, 0x60, 0xC6, 0xFE, 0x00, 0x00, 0x00, 0x00,
+};
 
+#define FONT_WIDTH   8
+#define FONT_HEIGHT  16
+#define FONT_FIRST   32
+#define FONT_LAST    122
+
+// ── GOP state ────────────────────────────────────────────────────────────────
+STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL *mGop = NULL;
+STATIC UINT32                       *mFrameBuffer = NULL;
+STATIC UINTN                         mScreenWidth = 0;
+STATIC UINTN                         mScreenHeight = 0;
+STATIC UINTN                         mPixelsPerScanLine = 0;
+
+// ── Branding ─────────────────────────────────────────────────────────────────
+STATIC CONST CHAR8 *TITLE = "DAMNED SOFTWARE";
+STATIC CONST CHAR8 *MOTTO = "deeper than ring zero";
+#define TITLE_LEN  15
+#define MOTTO_LEN  21
+
+// ── Glitch colors ────────────────────────────────────────────────────────────
+STATIC CONST UINT32 GLITCH_COLORS[] = {
+    COLOR_GREEN,
+    COLOR_DARK_GREEN,
+    COLOR_CYAN,
+    COLOR_VIOLET,
+    COLOR_GRAY,
+    COLOR_DARK_GRAY,
+    COLOR_WHITE,
+};
+#define GLITCH_COLOR_COUNT  7
+
+// ── Helper: Set pixel ────────────────────────────────────────────────────────
 STATIC VOID
-FillGlitchStr (IN UINTN Len)
-{
-    UINTN i;
-    if (Len > MAX_COLS) Len = MAX_COLS;
-    for (i = 0; i < Len; i++) {
-        mLineBuf[i] = GLITCH_CHARS[RngNext() % GLITCH_CHAR_COUNT];
-    }
-    mLineBuf[Len] = L'\0';
-}
-
-// ── Active glitch bars ────────────────────────────────────────────────────────
-#define MAX_BARS  8
-
-typedef struct {
-    BOOLEAN Active;
-    UINTN   Row;
-    UINTN   ColStart;
-    UINTN   Width;
-    UINTN   Attr;
-    UINTN   Life;       // frames remaining
-} GLITCH_BAR;
-
-STATIC GLITCH_BAR mBars[MAX_BARS];
-
-STATIC VOID
-SpawnBar (
-    IN UINTN Row,
-    IN UINTN ColStart,
-    IN UINTN Width,
-    IN UINTN Attr,
-    IN UINTN Life
+PutPixel(
+    IN UINTN X,
+    IN UINTN Y,
+    IN UINT32 Color
     )
 {
-    UINTN i;
-    for (i = 0; i < MAX_BARS; i++) {
-        if (!mBars[i].Active) {
-            mBars[i].Active   = TRUE;
-            mBars[i].Row      = Row;
-            mBars[i].ColStart = ColStart;
-            mBars[i].Width    = Width;
-            mBars[i].Attr     = Attr;
-            mBars[i].Life     = Life;
-            return;
-        }
+    if (X < mScreenWidth && Y < mScreenHeight) {
+        mFrameBuffer[Y * mPixelsPerScanLine + X] = Color;
     }
-    // All slots full — evict oldest (slot 0) and reuse
-    mBars[0].Row      = Row;
-    mBars[0].ColStart = ColStart;
-    mBars[0].Width    = Width;
-    mBars[0].Attr     = Attr;
-    mBars[0].Life     = Life;
 }
 
-// ── Draw one glitch frame ─────────────────────────────────────────────────────
-
+// ── Helper: Fill rectangle ───────────────────────────────────────────────────
 STATIC VOID
-DrawGlitchFrame (
+FillRect(
+    IN UINTN X,
+    IN UINTN Y,
+    IN UINTN W,
+    IN UINTN H,
+    IN UINT32 Color
+    )
+{
+    UINTN i, j;
+    UINTN EndX = X + W;
+    UINTN EndY = Y + H;
+
+    if (EndX > mScreenWidth) EndX = mScreenWidth;
+    if (EndY > mScreenHeight) EndY = mScreenHeight;
+
+    for (j = Y; j < EndY; j++) {
+        UINT32 *Row = &mFrameBuffer[j * mPixelsPerScanLine + X];
+        for (i = 0; i < (EndX - X); i++) {
+            Row[i] = Color;
+        }
+    }
+}
+
+// ── Helper: Draw character ───────────────────────────────────────────────────
+STATIC VOID
+DrawChar(
+    IN UINTN X,
+    IN UINTN Y,
+    IN CHAR8 Ch,
+    IN UINT32 Color,
+    IN UINTN Scale
+    )
+{
+    UINTN CharIndex;
+    CONST UINT8 *Glyph;
+    UINTN Row, Col, SY, SX;
+
+    if (Ch < FONT_FIRST || Ch > FONT_LAST) {
+        Ch = ' ';
+    }
+
+    CharIndex = (UINTN)(Ch - FONT_FIRST);
+    Glyph = &FONT_8X16[CharIndex * FONT_HEIGHT];
+
+    for (Row = 0; Row < FONT_HEIGHT; Row++) {
+        UINT8 Bits = Glyph[Row];
+        for (Col = 0; Col < FONT_WIDTH; Col++) {
+            if (Bits & (0x80 >> Col)) {
+                // Draw scaled pixel
+                for (SY = 0; SY < Scale; SY++) {
+                    for (SX = 0; SX < Scale; SX++) {
+                        PutPixel(
+                            X + Col * Scale + SX,
+                            Y + Row * Scale + SY,
+                            Color
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Helper: Draw string ──────────────────────────────────────────────────────
+STATIC VOID
+DrawString(
+    IN UINTN X,
+    IN UINTN Y,
+    IN CONST CHAR8 *Str,
+    IN UINT32 Color,
+    IN UINTN Scale
+    )
+{
+    while (*Str) {
+        DrawChar(X, Y, *Str, Color, Scale);
+        X += FONT_WIDTH * Scale;
+        Str++;
+    }
+}
+
+// ── Helper: Measure string width ─────────────────────────────────────────────
+STATIC UINTN
+StringWidth(
+    IN UINTN Len,
+    IN UINTN Scale
+    )
+{
+    return Len * FONT_WIDTH * Scale;
+}
+
+// ── Draw glitch frame ────────────────────────────────────────────────────────
+STATIC VOID
+DrawGlitchFrame(
     IN UINTN FrameIdx
     )
 {
-    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *Con = gST->ConOut;
-    UINTN TitleRow, MottoRow, TitleCol, MottoCol;
     UINTN Intensity;
-    UINTN NewBars, i;
+    UINTN NumBars, i;
+    UINTN TitleScale, MottoScale;
+    UINTN TitleW, MottoW;
+    UINTN TitleX, TitleY;
+    UINTN MottoX, MottoY;
+    UINT32 TitleColor;
 
-    TitleRow = mNumRows / 2 - 1;
-    MottoRow = TitleRow + 1;
-    TitleCol = (mNumCols > TITLE_LEN) ? (mNumCols - TITLE_LEN) / 2 : 0;
-    MottoCol = (mNumCols > MOTTO_LEN) ? (mNumCols - MOTTO_LEN) / 2 : 0;
+    // Clear to black
+    FillRect(0, 0, mScreenWidth, mScreenHeight, COLOR_BLACK);
 
-    // ── 1. Clear screen to black (single firmware call) ───────────────────────
-    Con->SetAttribute(Con, ATTR_BLANK);
-    Con->ClearScreen(Con);
-
-    // ── 2. Decide intensity for this frame ────────────────────────────────────
-    //   0-1 = quiet,  2-6 = normal,  7-9 = heavy
+    // Decide intensity for this frame (0-9)
     Intensity = RngNext() % 10;
 
-    if      (Intensity < 2) NewBars = RngNext() % 2;           // 0-1
-    else if (Intensity < 7) NewBars = 1 + RngNext() % 3;       // 1-3
-    else                    NewBars = 3 + RngNext() % 4;       // 3-6
-
-    for (i = 0; i < NewBars; i++) {
-        UINTN Row      = RngRange(0, (UINT32)(mNumRows - 1));
-        UINTN Width    = RngRange(4, (UINT32)mNumCols);
-        UINTN ColStart = (Width < mNumCols) ? RngRange(0, (UINT32)(mNumCols - Width)) : 0;
-        UINTN Attr     = GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT];
-        UINTN Life     = RngRange(1, 3);
-        SpawnBar(Row, ColStart, Width, Attr, Life);
+    // Draw horizontal glitch bars
+    if (Intensity < 2) {
+        NumBars = RngRange(0, 2);
+    } else if (Intensity < 7) {
+        NumBars = RngRange(2, 5);
+    } else {
+        NumBars = RngRange(5, 12);
     }
 
-    // ── 3. Draw + age active bars ─────────────────────────────────────────────
-    for (i = 0; i < MAX_BARS; i++) {
-        UINTN W, C, MaxW;
-
-        if (!mBars[i].Active) continue;
-
-        // Avoid writing to the very last cell (would cause auto-scroll)
-        MaxW = (mBars[i].Row == mNumRows - 1) ? mNumCols - 1 : mNumCols;
-        C = mBars[i].ColStart;
-        W = mBars[i].Width;
-        if (C >= MaxW)              { mBars[i].Active = FALSE; continue; }
-        if (C + W > MaxW)           { W = MaxW - C; }
-        if (W == 0)                 { mBars[i].Active = FALSE; continue; }
-
-        FillGlitchStr(W);
-        Con->SetCursorPosition(Con, C, mBars[i].Row);
-        Con->SetAttribute(Con, mBars[i].Attr);
-        Con->OutputString(Con, mLineBuf);
-
-        if (mBars[i].Life > 0) mBars[i].Life--;
-        if (mBars[i].Life == 0) mBars[i].Active = FALSE;
+    for (i = 0; i < NumBars; i++) {
+        UINTN BarY = RngRange(0, (UINT32)(mScreenHeight - 1));
+        UINTN BarH = RngRange(2, 20);
+        UINTN BarX = RngRange(0, (UINT32)(mScreenWidth / 2));
+        UINTN BarW = RngRange(50, (UINT32)(mScreenWidth - BarX));
+        UINT32 BarColor = GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT];
+        FillRect(BarX, BarY, BarW, BarH, BarColor);
     }
 
-    // ── 4. Scatter noise on heavy frames ─────────────────────────────────────
+    // Draw scattered noise pixels on heavy frames
     if (Intensity >= 7) {
-        UINTN Scatter = RngRange(4, 20);
-        for (i = 0; i < Scatter; i++) {
-            UINTN R  = RngRange(0, (UINT32)(mNumRows - 1));
-            UINTN C2 = RngRange(0, (UINT32)(mNumCols - 2));
-            mLineBuf[0] = GLITCH_CHARS[RngNext() % GLITCH_CHAR_COUNT];
-            mLineBuf[1] = L'\0';
-            Con->SetCursorPosition(Con, C2, R);
-            Con->SetAttribute(Con, GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT]);
-            Con->OutputString(Con, mLineBuf);
+        UINTN NumPixels = RngRange(50, 200);
+        for (i = 0; i < NumPixels; i++) {
+            UINTN PX = RngRange(0, (UINT32)(mScreenWidth - 1));
+            UINTN PY = RngRange(0, (UINT32)(mScreenHeight - 1));
+            UINT32 PColor = GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT];
+            // Draw small block instead of single pixel for visibility
+            FillRect(PX, PY, 3, 3, PColor);
         }
     }
 
-    // ── 5. Title — occasionally corrupted, otherwise steady shimmer ───────────
-    {
-        BOOLEAN Corrupt = (Intensity >= 8) && ((RngNext() % 3) == 0);
+    // Calculate text positioning
+    TitleScale = (mScreenWidth >= 1920) ? 4 : (mScreenWidth >= 1024) ? 3 : 2;
+    MottoScale = (mScreenWidth >= 1920) ? 2 : (mScreenWidth >= 1024) ? 2 : 1;
 
-        Con->SetCursorPosition(Con, TitleCol, TitleRow);
+    TitleW = StringWidth(TITLE_LEN, TitleScale);
+    MottoW = StringWidth(MOTTO_LEN, MottoScale);
 
-        if (Corrupt) {
-            // Replace a few chars with random glitch chars
-            CHAR16 Buf[TITLE_LEN + 1];
-            UINTN  j;
-            for (j = 0; j < TITLE_LEN; j++) {
-                Buf[j] = ((RngNext() % 5) == 0)
-                         ? GLITCH_CHARS[RngNext() % GLITCH_CHAR_COUNT]
-                         : TITLE[j];
+    TitleX = (mScreenWidth - TitleW) / 2;
+    TitleY = (mScreenHeight / 2) - (FONT_HEIGHT * TitleScale);
+    MottoX = (mScreenWidth - MottoW) / 2;
+    MottoY = TitleY + (FONT_HEIGHT * TitleScale) + 10;
+
+    // Title with occasional glitch
+    if (Intensity >= 8 && (RngNext() % 3) == 0) {
+        // Glitched title - draw with random color and slight offset
+        UINTN OffsetX = RngRange(0, 5);
+        UINTN OffsetY = RngRange(0, 3);
+        TitleColor = GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT];
+        DrawString(TitleX + OffsetX, TitleY + OffsetY, TITLE, TitleColor, TitleScale);
+    } else {
+        // Normal title with shimmer
+        TitleColor = ((FrameIdx / 4) & 1) ? COLOR_WHITE : COLOR_GREEN;
+        DrawString(TitleX, TitleY, TITLE, TitleColor, TitleScale);
+    }
+
+    // Motto - always steady green
+    DrawString(MottoX, MottoY, MOTTO, COLOR_GREEN, MottoScale);
+
+    // Occasional scanline effect
+    if (Intensity >= 6) {
+        UINTN ScanY;
+        for (ScanY = 0; ScanY < mScreenHeight; ScanY += 4) {
+            if ((RngNext() % 10) < 2) {
+                // Dim this scanline
+                UINTN ScanX;
+                for (ScanX = 0; ScanX < mScreenWidth; ScanX++) {
+                    UINT32 Pixel = mFrameBuffer[ScanY * mPixelsPerScanLine + ScanX];
+                    // Dim by shifting right (divide RGB by 2)
+                    Pixel = ((Pixel >> 1) & 0x7F7F7F7F);
+                    mFrameBuffer[ScanY * mPixelsPerScanLine + ScanX] = Pixel;
+                }
             }
-            Buf[TITLE_LEN] = L'\0';
-            Con->SetAttribute(Con, GLITCH_COLORS[RngNext() % GLITCH_COLOR_COUNT]);
-            Con->OutputString(Con, Buf);
-        } else {
-            // Slow shimmer: white → light-green every 4 frames
-            UINTN TAttr = ((FrameIdx / 4) & 1)
-                          ? ATTR_TITLE
-                          : EFI_TEXT_ATTR(EFI_LIGHTGREEN, EFI_BACKGROUND_BLACK);
-            Con->SetAttribute(Con, TAttr);
-            Con->OutputString(Con, (CHAR16 *)TITLE);
         }
     }
-
-    // ── 6. Motto — always steady ──────────────────────────────────────────────
-    Con->SetCursorPosition(Con, MottoCol, MottoRow);
-    Con->SetAttribute(Con, ATTR_MOTTO);
-    Con->OutputString(Con, (CHAR16 *)MOTTO);
 }
 
-// ── Public entry point ────────────────────────────────────────────────────────
-
-VOID
-GraphicsPlayAnimation (
+// ── Fallback: Text console animation ─────────────────────────────────────────
+STATIC VOID
+TextFallbackAnimation(
     IN UINTN DurationMs
     )
 {
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *Con = gST->ConOut;
-    UINTN TotalFrames, FrameIdx, i;
     UINTN Cols = 0, Rows = 0;
+    UINTN TitleCol, TitleRow;
+    UINTN MottoCol, MottoRow;
 
     if (Con == NULL) {
         gBS->Stall(DurationMs * 1000);
@@ -252,32 +572,105 @@ GraphicsPlayAnimation (
     }
 
     Con->QueryMode(Con, Con->Mode->Mode, &Cols, &Rows);
-    if (Cols < 10 || Rows < 5) {
+    if (Cols < 40 || Rows < 10) {
         gBS->Stall(DurationMs * 1000);
         return;
     }
 
-    mNumCols = (Cols < MAX_COLS) ? Cols : MAX_COLS;
-    mNumRows = (Rows < MAX_ROWS) ? Rows : MAX_ROWS;
-
-    // Clear bar state
-    mRng = 1337;
-    for (i = 0; i < MAX_BARS; i++) {
-        mBars[i].Active = FALSE;
-    }
-
+    // Simple static display for fallback
+    Con->SetAttribute(Con, EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BACKGROUND_BLACK));
+    Con->ClearScreen(Con);
     Con->EnableCursor(Con, FALSE);
 
+    TitleCol = (Cols > TITLE_LEN) ? (Cols - TITLE_LEN) / 2 : 0;
+    TitleRow = Rows / 2 - 1;
+    MottoCol = (Cols > MOTTO_LEN) ? (Cols - MOTTO_LEN) / 2 : 0;
+    MottoRow = TitleRow + 1;
+
+    Con->SetCursorPosition(Con, TitleCol, TitleRow);
+    Con->SetAttribute(Con, EFI_TEXT_ATTR(EFI_WHITE, EFI_BACKGROUND_BLACK));
+    Con->OutputString(Con, L"DAMNED SOFTWARE");
+
+    Con->SetCursorPosition(Con, MottoCol, MottoRow);
+    Con->SetAttribute(Con, EFI_TEXT_ATTR(EFI_LIGHTGREEN, EFI_BACKGROUND_BLACK));
+    Con->OutputString(Con, L"deeper than ring zero");
+
+    gBS->Stall(DurationMs * 1000);
+
+    Con->SetAttribute(Con, EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BACKGROUND_BLACK));
+    Con->ClearScreen(Con);
+    Con->EnableCursor(Con, TRUE);
+}
+
+// ── Public entry point ───────────────────────────────────────────────────────
+VOID
+GraphicsPlayAnimation(
+    IN UINTN DurationMs
+    )
+{
+    EFI_STATUS Status;
+    UINTN TotalFrames, FrameIdx;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *ModeInfo;
+    UINTN ModeInfoSize;
+
+    // Try to locate GOP
+    Status = gBS->LocateProtocol(
+        &gEfiGraphicsOutputProtocolGuid,
+        NULL,
+        (VOID **)&mGop
+    );
+
+    if (EFI_ERROR(Status) || mGop == NULL) {
+        // GOP not available, fall back to text console
+        TextFallbackAnimation(DurationMs);
+        return;
+    }
+
+    // Get current mode info
+    Status = mGop->QueryMode(
+        mGop,
+        mGop->Mode->Mode,
+        &ModeInfoSize,
+        &ModeInfo
+    );
+
+    if (EFI_ERROR(Status)) {
+        TextFallbackAnimation(DurationMs);
+        return;
+    }
+
+    // Verify pixel format is compatible (BGR or RGB)
+    if (ModeInfo->PixelFormat != PixelBlueGreenRedReserved8BitPerColor &&
+        ModeInfo->PixelFormat != PixelRedGreenBlueReserved8BitPerColor) {
+        // Unsupported pixel format
+        TextFallbackAnimation(DurationMs);
+        return;
+    }
+
+    // Set up framebuffer access
+    mScreenWidth = ModeInfo->HorizontalResolution;
+    mScreenHeight = ModeInfo->VerticalResolution;
+    mPixelsPerScanLine = ModeInfo->PixelsPerScanLine;
+    mFrameBuffer = (UINT32 *)(UINTN)mGop->Mode->FrameBufferBase;
+
+    if (mFrameBuffer == NULL || mScreenWidth < 640 || mScreenHeight < 480) {
+        TextFallbackAnimation(DurationMs);
+        return;
+    }
+
+    // Seed RNG with something semi-random
+    mRng = (UINT32)(mScreenWidth * mScreenHeight + DurationMs);
+
+    // Calculate frame count
     TotalFrames = DurationMs / FRAME_MS;
     if (TotalFrames == 0) TotalFrames = 1;
 
+    // Animation loop
     for (FrameIdx = 0; FrameIdx < TotalFrames; FrameIdx++) {
         DrawGlitchFrame(FrameIdx);
         gBS->Stall(FRAME_MS * 1000);
     }
 
-    // Restore
-    Con->SetAttribute(Con, EFI_TEXT_ATTR(EFI_LIGHTGRAY, EFI_BACKGROUND_BLACK));
-    Con->ClearScreen(Con);
-    Con->EnableCursor(Con, TRUE);
+    // Clear screen to black when done
+    FillRect(0, 0, mScreenWidth, mScreenHeight, COLOR_BLACK);
 }
