@@ -1065,23 +1065,25 @@ const BASE_STYLES: &str = r#"
     }
     .handle-filter-input {
         padding: 6px 12px;
-        border: none;
+        border: 1px solid var(--border-primary);
         border-radius: 6px;
-        background: rgba(255, 255, 255, 0.1);
-        color: white;
+        background: var(--bg-input);
+        color: var(--text-primary);
         font-size: 13px;
         width: 150px;
         outline: none;
+        transition: all 0.15s;
     }
     .handle-filter-input:focus {
-        background: rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.12);
+        border-color: var(--border-accent);
     }
     .handle-filter-input::placeholder {
-        color: #6b7280;
+        color: var(--text-muted);
     }
     select.handle-filter-input option {
         background: #1e293b;
-        color: white;
+        color: var(--text-primary);
     }
     .cell-handle {
         font-family: monospace;

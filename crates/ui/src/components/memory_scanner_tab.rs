@@ -1702,7 +1702,7 @@ pub fn MemoryScannerTab() -> Element {
                                         textarea {
                                             class: "handle-filter-input",
                                             placeholder: "nop\nmov rax, 0x1234\nret",
-                                            style: "width: 100%; height: 120px; font-family: 'Consolas', monospace; font-size: 13px; resize: vertical; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 8px;",
+                                            style: "width: 100%; height: 120px; font-family: 'Consolas', monospace; font-size: 13px; resize: vertical; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-primary); border-radius: 4px; padding: 8px;",
                                             value: "{ept_hook_asm_input}",
                                             oninput: {
                                                 move |e: Event<FormData>| {
@@ -1826,7 +1826,7 @@ pub fn MemoryScannerTab() -> Element {
 
                                 // Detour input mode
                                 if input_mode == EptHookInputMode::Detour {
-                                    div { style: "margin-bottom: 8px; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; border: 1px solid var(--border-color);",
+                                    div { style: "margin-bottom: 8px; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; border: 1px solid var(--border-primary);",
                                         div { style: "color: var(--text-secondary); font-size: 11px; margin-bottom: 8px;",
                                             "Allocates RWX memory near the hook point, writes detour code there, and places a JMP on the EPT exec page. Return jump is auto-appended."
                                         }
@@ -1856,7 +1856,7 @@ pub fn MemoryScannerTab() -> Element {
                                         textarea {
                                             class: "handle-filter-input",
                                             placeholder: "; Your detour code here\n; Return jump is auto-appended\nadd [rbx+0x7F8], edx",
-                                            style: "width: 100%; height: 160px; font-family: 'Consolas', monospace; font-size: 13px; resize: vertical; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 8px;",
+                                            style: "width: 100%; height: 160px; font-family: 'Consolas', monospace; font-size: 13px; resize: vertical; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-primary); border-radius: 4px; padding: 8px;",
                                             value: "{detour_asm_input}",
                                             oninput: {
                                                 move |e: Event<FormData>| {
