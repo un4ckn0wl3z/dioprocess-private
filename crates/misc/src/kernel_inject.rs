@@ -47,6 +47,7 @@ struct KernelInjectDllResponse {
 }
 
 #[repr(C, packed)]
+#[allow(dead_code)]
 struct KernelManualMapRequest {
     target_process_id: u32,
     flags: u32,
