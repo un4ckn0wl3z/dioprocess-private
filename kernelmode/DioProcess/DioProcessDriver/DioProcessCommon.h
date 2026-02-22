@@ -167,6 +167,8 @@ struct EventData
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80C, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_DIOPROCESS_KERNEL_INJECT_DLL \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80D, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_KERNEL_MANUAL_MAP \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80E, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 // PspCidTable enumeration IOCTL
 #define IOCTL_DIOPROCESS_ENUM_PSPCIDTABLE \
@@ -320,6 +322,33 @@ struct KernelInjectDllResponse
 {
 	ULONG64 AllocatedAddress;  // Where DLL path was written
 	ULONG64 LoadLibraryAddress;  // Address of LoadLibraryW
+	BOOLEAN Success;
+};
+
+// ============== Kernel Manual Map Structures ==============
+
+// Manual map flags
+#define MANUAL_MAP_FLAG_NONE            0x00000000
+#define MANUAL_MAP_FLAG_ERASE_HEADERS   0x00000001  // Erase PE headers after mapping
+#define MANUAL_MAP_FLAG_NO_ENTRY_POINT  0x00000002  // Don't call DllMain
+#define MANUAL_MAP_FLAG_NO_IMPORTS      0x00000004  // Don't resolve imports
+
+// Request for kernel manual map injection
+// DLL bytes are passed directly in the request buffer
+struct KernelManualMapRequest
+{
+	ULONG TargetProcessId;                        // Target process PID
+	ULONG Flags;                                  // MANUAL_MAP_FLAG_* options
+	ULONG DllSize;                                // Size of DLL bytes
+	UCHAR DllBytes[1];                            // Variable length DLL file bytes
+};
+
+// Response for kernel manual map injection
+struct KernelManualMapResponse
+{
+	ULONG64 MappedBase;                           // Base address where DLL was mapped
+	ULONG64 MappedSize;                           // Total size of mapped image
+	ULONG64 EntryPoint;                           // DllMain address
 	BOOLEAN Success;
 };
 

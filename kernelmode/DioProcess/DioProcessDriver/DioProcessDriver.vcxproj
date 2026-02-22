@@ -136,6 +136,7 @@
     <ClInclude Include="DioProcessCommon.h" />
     <ClInclude Include="DioProcessGlobals.h" />
     <ClInclude Include="Injection\EarlyInjection.h" />
+    <ClInclude Include="Injection\ManualMap.h" />
     <ClInclude Include="FileHide\FileHide.h" />
     <ClInclude Include="DKOM\ProcessHide.h" />
     <ClInclude Include="Memory\PhysicalMemory.h" />
@@ -203,6 +204,7 @@
     <!-- Injection -->
     <ClCompile Include="Injection\KernelInject.cpp" />
     <ClCompile Include="Injection\EarlyInjection.cpp" />
+    <ClCompile Include="Injection\ManualMap.cpp" />
 
     <!-- DKOM Process Hiding -->
     <ClCompile Include="DKOM\ProcessHide.cpp">

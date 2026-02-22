@@ -1,0 +1,10 @@
+^D:\AICODING\DIOPROCESS\TOOLS\TEST_DLL\BUILD\CMAKEFILES\7CBD9B096F897024A20E089A5E826936\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/AICoding/dioprocess/tools/test_dll -BD:/AICoding/dioprocess/tools/test_dll/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file D:/AICoding/dioprocess/tools/test_dll/build/HelloWorldDll.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

@@ -1,0 +1,10 @@
+^D:\AICODING\DIOPROCESS\TOOLS\TEST_DLL\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/AICoding/dioprocess/tools/test_dll -BD:/AICoding/dioprocess/tools/test_dll/build --check-stamp-file D:/AICoding/dioprocess/tools/test_dll/build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

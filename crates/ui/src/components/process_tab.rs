@@ -1694,6 +1694,55 @@ pub fn ProcessTab() -> Element {
                                         span { "Inject DLL" }
                                     }
 
+                                    // Kernel Manual Map DLL Injection
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            if let Some(pid) = ctx_menu.pid {
+                                                let pid_for_spawn = pid;
+                                                context_menu.set(ContextMenuState::default());
+                                                spawn(async move {
+                                                    let file = rfd::AsyncFileDialog::new()
+                                                        .add_filter("DLL Files", &["dll"])
+                                                        .add_filter("All Files", &["*"])
+                                                        .set_title("Select DLL for Kernel Manual Map")
+                                                        .pick_file()
+                                                        .await;
+                                                    if let Some(file) = file {
+                                                        match std::fs::read(file.path()) {
+                                                            Ok(dll_bytes) => {
+                                                                match misc::kernel_manual_map_dll(pid_for_spawn, &dll_bytes, misc::MANUAL_MAP_FLAG_NONE) {
+                                                                    Ok(result) => {
+                                                                        status_message.set(format!(
+                                                                            "✓ Kernel manual map — PID: {}, Base: 0x{:X}, Size: 0x{:X}",
+                                                                            pid_for_spawn, result.mapped_base, result.mapped_size
+                                                                        ));
+                                                                    }
+                                                                    Err(e) => {
+                                                                        status_message.set(format!(
+                                                                            "✗ Kernel manual map failed: {}",
+                                                                            e
+                                                                        ));
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                status_message.set(format!("✗ Failed to read DLL: {}", e));
+                                                            }
+                                                        }
+                                                        spawn(async move {
+                                                            tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+                                                            status_message.set(String::new());
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        span { "🗺️" }
+                                        span { "Manual Map DLL" }
+                                    }
+
                                     // Dump Process button (kernel memory read)
                                     button {
                                         class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },

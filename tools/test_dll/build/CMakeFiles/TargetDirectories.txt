@@ -1,0 +1,3 @@
+D:/AICoding/dioprocess/tools/test_dll/build/CMakeFiles/HelloWorld.dir
+D:/AICoding/dioprocess/tools/test_dll/build/CMakeFiles/ALL_BUILD.dir
+D:/AICoding/dioprocess/tools/test_dll/build/CMakeFiles/ZERO_CHECK.dir

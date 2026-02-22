@@ -3,6 +3,7 @@
 #include "Locker.h"
 #include "Hypervisor/HvProtection.h"
 #include "../Injection/EarlyInjection.h"
+#include "../Injection/ManualMap.h"
 #include "../FileHide/FileHide.h"
 #include "../DKOM/ProcessHide.h"
 #include "../Memory/PhysicalMemory.h"
@@ -29,6 +30,9 @@ NTSTATUS HandleRegChangeRemoveAll(PIRP Irp, PIO_STACK_LOCATION irpSp);
 
 // Forward declaration for HideMemory handler
 NTSTATUS HandleHideMemory(PIRP Irp, PIO_STACK_LOCATION irpSp);
+
+// Forward declaration for Kernel Manual Map handler
+NTSTATUS HandleKernelManualMap(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 
 // ============== IOCTL Device Control Dispatcher ==============
 
@@ -164,6 +168,10 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_KERNEL_INJECT_DLL:
 		status = HandleKernelInjectDll(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_KERNEL_MANUAL_MAP:
+		status = HandleKernelManualMap(Irp, irpSp, &info);
 		break;
 
 	// Hypervisor Control IOCTLs
@@ -2502,6 +2510,71 @@ NTSTATUS HandleKernelInjectDll(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR in
 		response->LoadLibraryAddress = 0;
 		*info = sizeof(KernelInjectDllResponse);
 		KdPrint((DRIVER_PREFIX "Kernel DLL injection failed: 0x%X\n", status));
+	}
+
+	return status;
+}
+
+// ============== Kernel Manual Map Handler ==============
+
+NTSTATUS HandleKernelManualMap(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "Kernel manual map injection request\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(KernelManualMapRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	if (outputLen < sizeof(KernelManualMapResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (KernelManualMapRequest*)Irp->AssociatedIrp.SystemBuffer;
+	auto response = (KernelManualMapResponse*)Irp->AssociatedIrp.SystemBuffer;
+
+	if (!request || request->DllSize == 0)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Validate buffer size includes DLL bytes
+	SIZE_T expectedSize = FIELD_OFFSET(KernelManualMapRequest, DllBytes) + request->DllSize;
+	if (inputLen < expectedSize)
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	KdPrint((DRIVER_PREFIX "Manual mapping %u bytes DLL into PID %u, flags: 0x%X\n",
+		request->DllSize, request->TargetProcessId, request->Flags));
+
+	ManualMapResult result = { 0 };
+	NTSTATUS status = KernelManualMapDll(
+		request->DllBytes,
+		request->DllSize,
+		request->TargetProcessId,
+		request->Flags,
+		&result
+	);
+
+	response->MappedBase = (ULONG64)result.MappedBase;
+	response->MappedSize = (ULONG64)result.MappedSize;
+	response->EntryPoint = (ULONG64)result.EntryPoint;
+	response->Success = result.Success;
+	*info = sizeof(KernelManualMapResponse);
+
+	if (result.Success)
+	{
+		KdPrint((DRIVER_PREFIX "Manual map successful: base=0x%llX, size=0x%llX\n",
+			response->MappedBase, response->MappedSize));
+	}
+	else
+	{
+		KdPrint((DRIVER_PREFIX "Manual map failed: 0x%X\n", status));
 	}
 
 	return status;
