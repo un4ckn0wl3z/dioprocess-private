@@ -113,6 +113,13 @@ pub struct RespawnTarget {
     pub last_killed_pid: Option<u32>,
 }
 
+/// Respawn monitor global state — persists across tab switches
+pub static RESPAWN_TARGETS: GlobalSignal<Vec<RespawnTarget>> = Signal::global(Vec::new);
+pub static RESPAWN_MONITORING_ACTIVE: GlobalSignal<bool> = Signal::global(|| false);
+pub static RESPAWN_STATUS: GlobalSignal<String> = Signal::global(|| String::new());
+pub static RESPAWN_IS_ERROR: GlobalSignal<bool> = Signal::global(|| false);
+pub static RESPAWN_INITIALIZED: GlobalSignal<bool> = Signal::global(|| false);
+
 // ============================================================================
 // Physical Memory Tab State - persist across tab switches
 // ============================================================================

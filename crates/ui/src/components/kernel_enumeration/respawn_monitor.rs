@@ -4,7 +4,10 @@ use dioxus::prelude::*;
 
 use crate::config::get_config_storage;
 use crate::helpers::copy_to_clipboard;
-use crate::state::{RespawnTarget, RESPAWN_MONITOR_SEARCH_QUERY};
+use crate::state::{
+    RespawnTarget, RESPAWN_INITIALIZED, RESPAWN_IS_ERROR, RESPAWN_MONITORING_ACTIVE,
+    RESPAWN_MONITOR_SEARCH_QUERY, RESPAWN_STATUS, RESPAWN_TARGETS,
+};
 
 /// Kill method display name
 fn kill_method_name(method: u32) -> &'static str {
@@ -38,22 +41,17 @@ struct RespawnContextMenu {
 /// Respawn Monitor sub-tab component
 #[component]
 pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
-    let mut targets = use_signal(|| Vec::<RespawnTarget>::new());
-    let mut status_message = use_signal(|| String::new());
-    let mut is_error = use_signal(|| false);
     let mut name_input = use_signal(|| String::new());
     let mut kill_method = use_signal(|| 0u32);
     let mut scan_interval = use_signal(|| 2u32);
-    let mut monitoring_active = use_signal(|| false);
     let mut context_menu = use_signal(|| RespawnContextMenu::default());
-    let mut initialized = use_signal(|| false);
 
-    // On mount: load persisted targets from SQLite
+    // On mount: load persisted targets from SQLite (once)
     use_effect(move || {
-        if *initialized.read() {
+        if *RESPAWN_INITIALIZED.read() {
             return;
         }
-        initialized.set(true);
+        *RESPAWN_INITIALIZED.write() = true;
 
         spawn(async move {
             let stored = tokio::task::spawn_blocking(|| {
@@ -64,26 +62,25 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
 
             if !stored.is_empty() {
                 let count = stored.len();
-                targets.set(stored);
-                status_message.set(format!("Loaded {} target(s) from config", count));
-                is_error.set(false);
+                *RESPAWN_TARGETS.write() = stored;
+                *RESPAWN_STATUS.write() = format!("Loaded {} target(s) from config", count);
+                *RESPAWN_IS_ERROR.write() = false;
             }
         });
     });
 
-    // Monitoring coroutine
+    // Monitoring coroutine — reads global signals so it works across tab switches
     let _monitor = use_coroutine(move |mut rx: UnboundedReceiver<bool>| async move {
         loop {
             // Wait for start signal or check current state
-            if !*monitoring_active.read() {
-                // Poll every 500ms waiting for activation
+            if !*RESPAWN_MONITORING_ACTIVE.read() {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 continue;
             }
 
-            let current_targets = targets.read().clone();
+            let current_targets = RESPAWN_TARGETS.read().clone();
             if current_targets.is_empty() {
-                monitoring_active.set(false);
+                *RESPAWN_MONITORING_ACTIVE.write() = false;
                 continue;
             }
 
@@ -98,7 +95,7 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
             tokio::time::sleep(std::time::Duration::from_secs(interval_secs as u64)).await;
 
             // Check if still active after sleep
-            if !*monitoring_active.read() {
+            if !*RESPAWN_MONITORING_ACTIVE.read() {
                 continue;
             }
 
@@ -107,7 +104,7 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
                 .await
                 .unwrap_or_default();
 
-            let mut updated_targets = targets.read().clone();
+            let mut updated_targets = RESPAWN_TARGETS.read().clone();
             let mut any_killed = false;
 
             for target in updated_targets.iter_mut() {
@@ -133,7 +130,7 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
             }
 
             if any_killed {
-                targets.set(updated_targets);
+                *RESPAWN_TARGETS.write() = updated_targets;
             }
 
             // Drain any pending messages
@@ -143,7 +140,7 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
 
     // Save targets to SQLite
     let save_targets = move || {
-        let t = targets.read().clone();
+        let t = RESPAWN_TARGETS.read().clone();
         spawn(async move {
             let _ = tokio::task::spawn_blocking(move || {
                 crate::config::save_respawn_targets(&t);
@@ -156,19 +153,19 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
     let mut add_target = move || {
         let name = name_input.read().trim().to_string();
         if name.is_empty() {
-            status_message.set("Enter a process name".to_string());
-            is_error.set(true);
+            *RESPAWN_STATUS.write() = "Enter a process name".to_string();
+            *RESPAWN_IS_ERROR.write() = true;
             return;
         }
 
         // Check for duplicate
-        if targets
+        if RESPAWN_TARGETS
             .read()
             .iter()
             .any(|t| t.process_name.eq_ignore_ascii_case(&name))
         {
-            status_message.set(format!("'{}' is already monitored", name));
-            is_error.set(true);
+            *RESPAWN_STATUS.write() = format!("'{}' is already monitored", name);
+            *RESPAWN_IS_ERROR.write() = true;
             return;
         }
 
@@ -180,24 +177,24 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
             last_killed_pid: None,
         };
 
-        targets.write().push(new_target);
+        RESPAWN_TARGETS.write().push(new_target);
         name_input.set(String::new());
-        status_message.set(format!("Added '{}' to respawn monitor", name));
-        is_error.set(false);
+        *RESPAWN_STATUS.write() = format!("Added '{}' to respawn monitor", name);
+        *RESPAWN_IS_ERROR.write() = false;
         save_targets();
     };
 
     // Remove target handler
-    let mut remove_target = move |name: String| {
-        targets.write().retain(|t| t.process_name != name);
+    let remove_target = move |name: String| {
+        RESPAWN_TARGETS.write().retain(|t| t.process_name != name);
         save_targets();
-        status_message.set(format!("Removed '{}'", name));
-        is_error.set(false);
+        *RESPAWN_STATUS.write() = format!("Removed '{}'", name);
+        *RESPAWN_IS_ERROR.write() = false;
     };
 
     // Filter targets
     let search = RESPAWN_MONITOR_SEARCH_QUERY.read().to_lowercase();
-    let filtered_targets: Vec<RespawnTarget> = targets
+    let filtered_targets: Vec<RespawnTarget> = RESPAWN_TARGETS
         .read()
         .iter()
         .filter(|t| {
@@ -220,10 +217,10 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
             },
 
             // Status message
-            if !status_message.read().is_empty() {
+            if !RESPAWN_STATUS.read().is_empty() {
                 div {
-                    class: if *is_error.read() { "status-message error" } else { "status-message success" },
-                    "{status_message}"
+                    class: if *RESPAWN_IS_ERROR.read() { "status-message error" } else { "status-message success" },
+                    "{RESPAWN_STATUS}"
                 }
             }
 
@@ -285,30 +282,30 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
                 div { style: "flex: 1;" }
 
                 button {
-                    class: if *monitoring_active.read() { "btn btn-danger" } else { "btn btn-primary" },
-                    disabled: !driver_loaded || targets.read().is_empty(),
+                    class: if *RESPAWN_MONITORING_ACTIVE.read() { "btn btn-danger" } else { "btn btn-primary" },
+                    disabled: !driver_loaded || RESPAWN_TARGETS.read().is_empty(),
                     onclick: move |_| {
-                        let new_state = !*monitoring_active.read();
-                        monitoring_active.set(new_state);
+                        let new_state = !*RESPAWN_MONITORING_ACTIVE.read();
+                        *RESPAWN_MONITORING_ACTIVE.write() = new_state;
                         if new_state {
-                            status_message.set("Monitoring started".to_string());
+                            *RESPAWN_STATUS.write() = "Monitoring started".to_string();
                         } else {
-                            status_message.set("Monitoring stopped".to_string());
+                            *RESPAWN_STATUS.write() = "Monitoring stopped".to_string();
                         }
-                        is_error.set(false);
+                        *RESPAWN_IS_ERROR.write() = false;
                     },
-                    if *monitoring_active.read() { "Stop Monitoring" } else { "Start Monitoring" }
+                    if *RESPAWN_MONITORING_ACTIVE.read() { "Stop Monitoring" } else { "Start Monitoring" }
                 }
 
                 button {
                     class: "btn btn-secondary",
-                    disabled: targets.read().is_empty(),
+                    disabled: RESPAWN_TARGETS.read().is_empty(),
                     onclick: move |_| {
-                        monitoring_active.set(false);
-                        targets.write().clear();
+                        *RESPAWN_MONITORING_ACTIVE.write() = false;
+                        RESPAWN_TARGETS.write().clear();
                         save_targets();
-                        status_message.set("All targets cleared".to_string());
-                        is_error.set(false);
+                        *RESPAWN_STATUS.write() = "All targets cleared".to_string();
+                        *RESPAWN_IS_ERROR.write() = false;
                     },
                     "Clear All"
                 }
@@ -331,7 +328,7 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
                     "{filtered_targets.len()} target(s)"
                 }
 
-                if *monitoring_active.read() {
+                if *RESPAWN_MONITORING_ACTIVE.read() {
                     span {
                         class: "driver-status driver-status-loaded",
                         style: "animation: pulse 1.5s infinite;",
@@ -345,16 +342,17 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
                 class: "table-container",
 
                 table {
-                    class: "data-table",
+                    class: "process-table",
 
                     thead {
+                        class: "table-header",
                         tr {
-                            th { style: "width: 30%;", "Process Name" }
-                            th { style: "width: 15%;", "Kill Method" }
-                            th { style: "width: 10%;", "Interval" }
-                            th { style: "width: 12%;", "Kill Count" }
-                            th { style: "width: 15%;", "Last Killed PID" }
-                            th { style: "width: 18%;", "Actions" }
+                            th { class: "th", style: "width: 30%;", "Process Name" }
+                            th { class: "th", style: "width: 15%;", "Kill Method" }
+                            th { class: "th", style: "width: 10%;", "Interval" }
+                            th { class: "th", style: "width: 12%;", "Kill Count" }
+                            th { class: "th", style: "width: 15%;", "Last Killed PID" }
+                            th { class: "th", style: "width: 18%;", "Actions" }
                         }
                     }
 
@@ -362,9 +360,10 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
                         if filtered_targets.is_empty() {
                             tr {
                                 td {
+                                    class: "cell",
                                     colspan: "6",
                                     style: "text-align: center; padding: 40px; color: var(--text-secondary);",
-                                    if targets.read().is_empty() {
+                                    if RESPAWN_TARGETS.read().is_empty() {
                                         "No targets configured. Add a process name to monitor."
                                     } else {
                                         "No targets match the filter."
@@ -385,7 +384,7 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
 
                                 rsx! {
                                     tr {
-                                        class: "data-row",
+                                        class: "process-row",
                                         oncontextmenu: move |evt| {
                                             evt.prevent_default();
                                             let coords = evt.client_coordinates();
@@ -398,16 +397,18 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
                                         },
 
                                         td {
-                                            class: "name-cell",
+                                            class: "cell",
                                             span { class: "process-name", "{name}" }
                                         }
-                                        td { "{kill_method_name(method)}" }
-                                        td { "{interval}s" }
+                                        td { class: "cell", "{kill_method_name(method)}" }
+                                        td { class: "cell", "{interval}s" }
                                         td {
+                                            class: "cell",
                                             style: if kill_count > 0 { "color: var(--accent-danger); font-weight: bold;" } else { "" },
                                             "{kill_count}"
                                         }
                                         td {
+                                            class: "cell mono",
                                             if let Some(pid) = last_pid {
                                                 "{pid}"
                                             } else {
@@ -415,6 +416,7 @@ pub fn RespawnMonitorTab(driver_loaded: bool) -> Element {
                                             }
                                         }
                                         td {
+                                            class: "cell",
                                             button {
                                                 class: "btn btn-danger",
                                                 style: "padding: 2px 8px; font-size: 11px;",
