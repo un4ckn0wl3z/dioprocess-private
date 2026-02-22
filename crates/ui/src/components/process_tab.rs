@@ -1919,6 +1919,113 @@ pub fn ProcessTab() -> Element {
 
                                     div { class: "context-menu-separator" }
 
+                                    // Kill (ZwTerminateProcess)
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match callback::kill_process_terminate(pid) {
+                                                        Ok(()) => {
+                                                            status_message.set(format!(
+                                                                "✓ Process {} killed (ZwTerminateProcess)",
+                                                                pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ Kill (ZwTerminate) failed: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "💀" }
+                                        span { "Kill (ZwTerminate)" }
+                                    }
+
+                                    // Kill (Unmap Section)
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match callback::kill_process_unmap(pid) {
+                                                        Ok(()) => {
+                                                            status_message.set(format!(
+                                                                "✓ Process {} killed (MmUnmapViewOfSection)",
+                                                                pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ Kill (Unmap Section) failed: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "🗑️" }
+                                        span { "Kill (Unmap Section)" }
+                                    }
+
+                                    // Kill (PEB Corrupt)
+                                    button {
+                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
+                                        disabled: !is_driver_loaded(),
+                                        onclick: move |_| {
+                                            let target_pid = ctx_menu.pid;
+                                            context_menu.set(ContextMenuState::default());
+
+                                            if let Some(pid) = target_pid {
+                                                spawn(async move {
+                                                    match callback::kill_process_peb_corrupt(pid) {
+                                                        Ok(()) => {
+                                                            status_message.set(format!(
+                                                                "✓ Process {} killed (PEB Corrupt)",
+                                                                pid
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            status_message.set(format!(
+                                                                "✗ Kill (PEB Corrupt) failed: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
+                                                    spawn(async move {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                        status_message.set(String::new());
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        span { "💥" }
+                                        span { "Kill (PEB Corrupt)" }
+                                    }
+
+                                    div { class: "context-menu-separator" }
+
                                     // Hide Process (DKOM) button
                                     button {
                                         class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },

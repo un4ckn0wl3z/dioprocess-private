@@ -70,6 +70,9 @@
     <ClInclude Include="EptHook\RegisterChange.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="ProcessKill\ProcessKill.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="DioProcessDriver.cpp">
@@ -109,6 +112,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="EptHook\RegisterChange.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ProcessKill\ProcessKill.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

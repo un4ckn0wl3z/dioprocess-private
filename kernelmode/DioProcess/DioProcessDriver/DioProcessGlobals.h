@@ -228,3 +228,8 @@ NTSTATUS HandlePhysReadVm(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandlePortHide(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandlePortUnhide(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandlePortHideList(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// Process Kill Handlers
+NTSTATUS HandleKillTerminate(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleKillUnmap(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleKillPebCorrupt(PIRP Irp, PIO_STACK_LOCATION irpSp);

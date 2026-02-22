@@ -10,6 +10,7 @@
 #include "../EptHook/UsermodeEptHook.h"
 #include "../EptHook/RegisterChange.h"
 #include "../Memory/HideMemory.h"
+#include "../ProcessKill/ProcessKill.h"
 
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
@@ -348,6 +349,19 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 	// Memory Protection Hiding
 	case IOCTL_DIOPROCESS_HIDE_MEMORY:
 		status = HandleHideMemory(Irp, irpSp);
+		break;
+
+	// Process Kill IOCTLs
+	case IOCTL_DIOPROCESS_KILL_TERMINATE:
+		status = HandleKillTerminate(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_KILL_UNMAP:
+		status = HandleKillUnmap(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_KILL_PEB_CORRUPT:
+		status = HandleKillPebCorrupt(Irp, irpSp);
 		break;
 
 	default:

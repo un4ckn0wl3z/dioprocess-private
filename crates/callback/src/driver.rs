@@ -26,6 +26,9 @@ const IOCTL_DIOPROCESS_PROTECT_PROCESS: u32 = 0x00222014;
 const IOCTL_DIOPROCESS_UNPROTECT_PROCESS: u32 = 0x00222018;
 const IOCTL_DIOPROCESS_ENABLE_PRIVILEGES: u32 = 0x0022201C;
 const IOCTL_DIOPROCESS_CLEAR_DEBUG_FLAGS: u32 = 0x00222020;
+const IOCTL_DIOPROCESS_KILL_TERMINATE: u32 = 0x00222380; // CTL_CODE(0x22, 0x8E0, 0, 0)
+const IOCTL_DIOPROCESS_KILL_UNMAP: u32 = 0x00222384; // CTL_CODE(0x22, 0x8E1, 0, 0)
+const IOCTL_DIOPROCESS_KILL_PEB_CORRUPT: u32 = 0x00222388; // CTL_CODE(0x22, 0x8E2, 0, 0)
 const IOCTL_DIOPROCESS_ENUM_PROCESS_CALLBACKS: u32 = 0x00222024;
 const IOCTL_DIOPROCESS_ENUM_THREAD_CALLBACKS: u32 = 0x00222028;
 const IOCTL_DIOPROCESS_ENUM_IMAGE_CALLBACKS: u32 = 0x0022202C;
@@ -1235,6 +1238,101 @@ pub fn clear_debug_flags(pid: u32) -> Result<(), CallbackError> {
     Ok(())
 }
 
+
+// ============== Process Kill Functions ==============
+
+/// Kill a process using ZwTerminateProcess (kernel-level)
+/// Direct kernel API termination - cleanest approach
+pub fn kill_process_terminate(pid: u32) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = pid;
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_KILL_TERMINATE,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<u32>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Kill a process by unmapping its image section (kernel-level)
+/// Causes crash by removing PE image from process memory
+pub fn kill_process_unmap(pid: u32) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = pid;
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_KILL_UNMAP,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<u32>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Kill a process by corrupting its PEB with INT3 (0xCC) (kernel-level)
+/// Fills PEB with breakpoint instructions causing exception
+pub fn kill_process_peb_corrupt(pid: u32) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = pid;
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_KILL_PEB_CORRUPT,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<u32>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
 
 /// Information about a kernel callback (TCKC style with RVA offset)
 #[derive(Debug, Clone)]

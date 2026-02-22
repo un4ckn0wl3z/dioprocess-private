@@ -6,6 +6,7 @@ mod filehide;
 mod hypervisor;
 mod minifilters;
 mod pspcidtable;
+mod respawn_monitor;
 
 use dioxus::prelude::*;
 
@@ -14,6 +15,7 @@ use drivers::DriversTab;
 use filehide::FileHideTab;
 use minifilters::MinifiltersTab;
 use pspcidtable::PspCidTableTab;
+use respawn_monitor::RespawnMonitorTab;
 
 // Re-export HypervisorTab as its own top-level tab
 pub use hypervisor::HypervisorTab;
@@ -26,6 +28,7 @@ enum KernelUtilityTab {
     Minifilters,
     Drivers,
     HideFiles,
+    RespawnMonitor,
 }
 
 /// Sort order (shared across sub-tabs)
@@ -95,6 +98,12 @@ pub fn KernelUtilitiesTab() -> Element {
                     onclick: move |_| active_tab.set(KernelUtilityTab::HideFiles),
                     "Hide Files"
                 }
+
+                button {
+                    class: if *active_tab.read() == KernelUtilityTab::RespawnMonitor { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| active_tab.set(KernelUtilityTab::RespawnMonitor),
+                    "Respawn Monitor"
+                }
             }
 
             // Tab content
@@ -104,6 +113,7 @@ pub fn KernelUtilitiesTab() -> Element {
                 KernelUtilityTab::Minifilters => rsx! { MinifiltersTab { driver_loaded } },
                 KernelUtilityTab::Drivers => rsx! { DriversTab { driver_loaded } },
                 KernelUtilityTab::HideFiles => rsx! { FileHideTab { driver_loaded } },
+                KernelUtilityTab::RespawnMonitor => rsx! { RespawnMonitorTab { driver_loaded } },
             }
         }
     }

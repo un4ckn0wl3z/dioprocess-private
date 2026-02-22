@@ -100,6 +100,19 @@ pub static MINIFILTERS_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| St
 /// Drivers tab search query
 pub static DRIVERS_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
 
+/// Respawn monitor search query
+pub static RESPAWN_MONITOR_SEARCH_QUERY: GlobalSignal<String> = Signal::global(|| String::new());
+
+/// Respawn monitor target configuration
+#[derive(Clone, Debug)]
+pub struct RespawnTarget {
+    pub process_name: String,
+    pub kill_method: u32,     // 0=ZwTerminate, 1=Unmap, 2=PEB Corrupt
+    pub scan_interval: u32,   // seconds
+    pub kill_count: u32,
+    pub last_killed_pid: Option<u32>,
+}
+
 // ============================================================================
 // Physical Memory Tab State - persist across tab switches
 // ============================================================================

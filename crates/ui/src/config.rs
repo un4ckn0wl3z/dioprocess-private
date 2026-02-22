@@ -153,6 +153,16 @@ impl ConfigStorage {
             [],
         )?;
 
+        // Create respawn_targets table for process respawn monitor persistence
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS respawn_targets (
+                process_name TEXT PRIMARY KEY,
+                kill_method INTEGER NOT NULL,
+                scan_interval INTEGER NOT NULL DEFAULT 2
+            )",
+            [],
+        )?;
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -427,6 +437,40 @@ impl ConfigStorage {
         };
         result
     }
+
+    /// Save respawn monitor targets (full replace)
+    pub fn save_respawn_targets(&self, targets: &[crate::state::RespawnTarget]) {
+        let conn = self.conn.lock();
+        let _ = conn.execute("DELETE FROM respawn_targets", []);
+        for t in targets {
+            let _ = conn.execute(
+                "INSERT INTO respawn_targets (process_name, kill_method, scan_interval) VALUES (?, ?, ?)",
+                params![t.process_name, t.kill_method as i64, t.scan_interval as i64],
+            );
+        }
+    }
+
+    /// Load respawn monitor targets
+    pub fn load_respawn_targets(&self) -> Vec<crate::state::RespawnTarget> {
+        let conn = self.conn.lock();
+        let mut stmt = match conn.prepare("SELECT process_name, kill_method, scan_interval FROM respawn_targets ORDER BY process_name") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let result: Vec<crate::state::RespawnTarget> = match stmt.query_map([], |row| {
+            Ok(crate::state::RespawnTarget {
+                process_name: row.get(0)?,
+                kill_method: row.get::<_, i64>(1)? as u32,
+                scan_interval: row.get::<_, i64>(2)? as u32,
+                kill_count: 0,
+                last_killed_pid: None,
+            })
+        }) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        };
+        result
+    }
 }
 
 /// Get the config database path (separate from events.db)
@@ -495,6 +539,16 @@ pub fn save_dpr_scripts(scripts: &[DprScript]) {
 /// Load DPR scripts from config (convenience function)
 pub fn load_dpr_scripts() -> Vec<DprScript> {
     get_config_storage().load_dpr_scripts()
+}
+
+/// Save respawn monitor targets (convenience function)
+pub fn save_respawn_targets(targets: &[crate::state::RespawnTarget]) {
+    get_config_storage().save_respawn_targets(targets);
+}
+
+/// Load respawn monitor targets (convenience function)
+pub fn load_respawn_targets() -> Vec<crate::state::RespawnTarget> {
+    get_config_storage().load_respawn_targets()
 }
 
 /// Simple base64 encode function
