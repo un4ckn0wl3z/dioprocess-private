@@ -9,7 +9,8 @@ use crate::error::CallbackError;
 use windows::Win32::Foundation::{CloseHandle, GetLastError};
 use windows::Win32::System::IO::DeviceIoControl;
 
-const IOCTL_DIOPROCESS_PHYS_READ_VM: u32 = 0x0022224C; // CTL_CODE(0x22, 0x893, 0, 0)
+const IOCTL_DIOPROCESS_PHYS_READ_VM: u32 = 0x0022224C;  // CTL_CODE(0x22, 0x893, 0, 0)
+const IOCTL_DIOPROCESS_ENUM_VM_REGIONS: u32 = 0x00222250; // CTL_CODE(0x22, 0x894, 0, 0)
 
 /// Maximum bytes per bulk read IOCTL call (64KB)
 const PHYS_READ_VM_MAX_SIZE: usize = 64 * 1024;
@@ -740,4 +741,93 @@ pub fn write_scan_value(
     }
     crate::physical_memory::write_physical_memory(pa, value_bytes)?;
     Ok(())
+}
+
+// ============== Kernel VM Region Enumeration ==============
+
+/// Max entries returned by IOCTL_DIOPROCESS_ENUM_VM_REGIONS
+const ENUM_VM_REGIONS_MAX: usize = 4096;
+
+#[repr(C)]
+struct EnumVmRegionsRequest {
+    process_id: u32,
+}
+
+/// Raw wire layout of a single VmRegionEntry (matches kernel struct exactly)
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct VmRegionEntryRaw {
+    base_address: u64,
+    region_size: u64,
+    state: u32,
+    protect: u32,
+    mem_type: u32,
+    _pad: u32,
+}
+
+/// Header of the EnumVmRegionsResponse (entries follow immediately in memory)
+#[repr(C)]
+struct EnumVmRegionsResponseHeader {
+    count: u32,
+    _pad: u32,
+}
+
+/// Enumerate virtual memory regions of a process via the kernel driver.
+///
+/// Uses `ZwQueryVirtualMemory` from kernel mode while attached to the target process —
+/// no `OpenProcess` / `PROCESS_QUERY_INFORMATION` rights required.
+/// Works on PPL and other protected processes.
+pub fn enum_vm_regions(pid: u32) -> Result<Vec<ScanRegion>, CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = EnumVmRegionsRequest { process_id: pid };
+
+        let header_size = std::mem::size_of::<EnumVmRegionsResponseHeader>();
+        let entry_size  = std::mem::size_of::<VmRegionEntryRaw>();
+        let output_size = header_size + ENUM_VM_REGIONS_MAX * entry_size;
+
+        let mut output_buf = vec![0u8; output_size];
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_ENUM_VM_REGIONS,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<EnumVmRegionsRequest>() as u32,
+            Some(output_buf.as_mut_ptr() as *mut _),
+            output_size as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+
+        let header = &*(output_buf.as_ptr() as *const EnumVmRegionsResponseHeader);
+        let count  = header.count as usize;
+
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let entries_ptr = output_buf.as_ptr().add(header_size) as *const VmRegionEntryRaw;
+        let mut regions = Vec::with_capacity(count);
+
+        for i in 0..count.min(ENUM_VM_REGIONS_MAX) {
+            let raw = &*entries_ptr.add(i);
+            regions.push(ScanRegion {
+                base_address: raw.base_address,
+                region_size:  raw.region_size,
+                state:        raw.state,
+                protect:      raw.protect,
+            });
+        }
+
+        Ok(regions)
+    }
 }

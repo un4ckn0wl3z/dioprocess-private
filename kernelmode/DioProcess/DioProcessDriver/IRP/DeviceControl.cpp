@@ -16,6 +16,9 @@
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 
+// Forward declaration for VM region enumeration
+NTSTATUS HandleEnumVmRegions(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
 // Forward declarations for EPT Hook handlers
 NTSTATUS HandleEptHookInstall(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleEptHookInstallDetour(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
@@ -305,6 +308,10 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_PHYS_READ_VM:
 		status = HandlePhysReadVm(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_ENUM_VM_REGIONS:
+		status = HandleEnumVmRegions(Irp, irpSp, &info);
 		break;
 
 	// NSI Port Hiding IOCTLs
@@ -3954,6 +3961,62 @@ NTSTATUS HandlePhysReadVm(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
 
 	ExFreePoolWithTag(kernelBuf, 'rVmP');
 	return STATUS_SUCCESS;
+}
+
+// ============== VM Region Enumeration Handler ==============
+
+NTSTATUS HandleEnumVmRegions(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint(("DioProcess: EnumVmRegions request\n"));
+
+	auto inputLen  = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(EnumVmRegionsRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (EnumVmRegionsRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->ProcessId == 0)
+		return STATUS_INVALID_PARAMETER;
+
+	ULONG pid = request->ProcessId;
+
+	// Calculate how many entries fit in the caller's output buffer
+	// FIELD_OFFSET is the WDK equivalent of offsetof
+	ULONG headerSize    = FIELD_OFFSET(EnumVmRegionsResponse, Entries);
+	ULONG entrySize     = (ULONG)sizeof(VmRegionEntry);
+
+	if (outputLen < headerSize + entrySize)
+		return STATUS_BUFFER_TOO_SMALL;
+
+	ULONG maxFromBuf    = (outputLen - headerSize) / entrySize;
+	ULONG maxEntries    = min(maxFromBuf, (ULONG)MAX_VM_REGION_ENTRIES);
+
+	// Allocate temporary kernel buffer for entries
+	SIZE_T entriesBufSize = (SIZE_T)maxEntries * entrySize;
+	VmRegionEntry* entries = (VmRegionEntry*)ExAllocatePoolWithTag(NonPagedPool, entriesBufSize, 'gRmV');
+	if (!entries)
+		return STATUS_INSUFFICIENT_RESOURCES;
+
+	RtlZeroMemory(entries, entriesBufSize);
+
+	ULONG count  = 0;
+	NTSTATUS status = PhysMemEnumVmRegions(pid, entries, maxEntries, &count);
+
+	if (NT_SUCCESS(status))
+	{
+		auto response        = (EnumVmRegionsResponse*)Irp->AssociatedIrp.SystemBuffer;
+		response->Count      = count;
+		response->_pad       = 0;
+
+		if (count > 0)
+			RtlCopyMemory(response->Entries, entries, (SIZE_T)count * entrySize);
+
+		*info = headerSize + (ULONG_PTR)count * entrySize;
+	}
+
+	ExFreePoolWithTag(entries, 'gRmV');
+	return NT_SUCCESS(status) ? STATUS_SUCCESS : status;
 }
 
 // ============== NSI Port Hiding Handlers ==============

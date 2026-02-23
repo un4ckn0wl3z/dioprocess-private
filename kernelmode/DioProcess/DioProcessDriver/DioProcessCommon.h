@@ -1021,3 +1021,34 @@ struct PortHideListResponse
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8E1, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_DIOPROCESS_KILL_PEB_CORRUPT \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8E2, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// ============== VM Region Enumeration IOCTL ==============
+// Enumerate virtual memory regions via ZwQueryVirtualMemory (kernel-side, no OpenProcess needed)
+// Allows scanning protected/PPL processes without PROCESS_QUERY_INFORMATION handle rights
+
+#define IOCTL_DIOPROCESS_ENUM_VM_REGIONS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x894, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define MAX_VM_REGION_ENTRIES 4096
+
+struct EnumVmRegionsRequest
+{
+	ULONG ProcessId;
+};
+
+struct VmRegionEntry
+{
+	ULONG64 BaseAddress;
+	ULONG64 RegionSize;
+	ULONG   State;    // MEM_FREE / MEM_COMMIT / MEM_RESERVE
+	ULONG   Protect;  // PAGE_* protection flags
+	ULONG   Type;     // MEM_IMAGE / MEM_MAPPED / MEM_PRIVATE
+	ULONG   _pad;     // alignment padding
+};
+
+struct EnumVmRegionsResponse
+{
+	ULONG Count;
+	ULONG _pad;
+	VmRegionEntry Entries[1]; // variable-length; allocate for MAX_VM_REGION_ENTRIES
+};

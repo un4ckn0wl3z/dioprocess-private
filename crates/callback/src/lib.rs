@@ -62,9 +62,9 @@ pub use physical_memory::{
 };
 pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
 pub use scanner::{
-    first_scan, next_scan, parse_aob_pattern, parse_scan_value, phys_read_virtual_memory,
-    write_scan_value, format_bytes_as_value, AobPattern, ScanDataType, ScanRegion, ScanResult,
-    ScanType,
+    enum_vm_regions, first_scan, next_scan, parse_aob_pattern, parse_scan_value,
+    phys_read_virtual_memory, write_scan_value, format_bytes_as_value,
+    AobPattern, ScanDataType, ScanRegion, ScanResult, ScanType,
 };
 pub use storage::{EventFilter, EventStorage};
 pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};

@@ -36,3 +36,8 @@ void PhysMemDecodePte(ULONG64 RawPte, ULONG64 EntryVirtualAddr, PageTableEntryRe
    Translates each page VA->PA and reads physical memory.
    Handles page boundaries and unmapped pages (fills zeros). */
 NTSTATUS PhysMemReadVirtualMemory(ULONG ProcessId, ULONG64 VirtualAddress, PVOID Buffer, SIZE_T Size, PSIZE_T BytesRead);
+
+/* Enumerate virtual memory regions in a target process via ZwQueryVirtualMemory.
+   Attaches to the process context, enumerates all VA regions, then detaches.
+   No OpenProcess / PROCESS_QUERY_INFORMATION handle required. */
+NTSTATUS PhysMemEnumVmRegions(ULONG ProcessId, VmRegionEntry* Entries, ULONG MaxEntries, PULONG Count);

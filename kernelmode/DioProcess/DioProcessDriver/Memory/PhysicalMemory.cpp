@@ -256,6 +256,74 @@ static ULONG64 TranslateVaToPA(ULONG64 Cr3, ULONG64 VirtualAddress)
 	return (pte & PTE_PHYS_MASK) + offset;
 }
 
+// ============== VM Region Enumeration via ZwQueryVirtualMemory ==============
+
+NTSTATUS PhysMemEnumVmRegions(ULONG ProcessId, VmRegionEntry* Entries, ULONG MaxEntries, PULONG Count)
+{
+	if (!Entries || !Count || MaxEntries == 0)
+		return STATUS_INVALID_PARAMETER;
+
+	*Count = 0;
+
+	PEPROCESS process = NULL;
+	NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)ProcessId, &process);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "PhysMemEnumVmRegions: PsLookupProcessByProcessId failed for PID %u (0x%08X)\n", ProcessId, status));
+		return status;
+	}
+
+	KAPC_STATE apcState;
+	KeStackAttachProcess(process, &apcState);
+
+	ULONG count = 0;
+	PVOID address = NULL;
+
+	while (count < MaxEntries)
+	{
+		MEMORY_BASIC_INFORMATION mbi = {};
+		SIZE_T returnLen = 0;
+
+		status = ZwQueryVirtualMemory(
+			ZwCurrentProcess(),
+			address,
+			MemoryBasicInformation,
+			&mbi,
+			sizeof(mbi),
+			&returnLen
+		);
+
+		if (!NT_SUCCESS(status))
+			break;
+
+		Entries[count].BaseAddress = (ULONG64)mbi.BaseAddress;
+		Entries[count].RegionSize  = (ULONG64)mbi.RegionSize;
+		Entries[count].State       = mbi.State;
+		Entries[count].Protect     = mbi.Protect;
+		Entries[count].Type        = mbi.Type;
+		Entries[count]._pad        = 0;
+		count++;
+
+		// Advance past this region
+		ULONG_PTR next = (ULONG_PTR)mbi.BaseAddress + mbi.RegionSize;
+		if (next <= (ULONG_PTR)address)
+			break; // overflow / wrap protection
+
+		address = (PVOID)next;
+
+		// Stop at top of 64-bit usermode address space
+		if (next >= (ULONG_PTR)0x00007FFFFFFFFFFF)
+			break;
+	}
+
+	KeUnstackDetachProcess(&apcState);
+	ObDereferenceObject(process);
+
+	*Count = count;
+	KdPrint((DRIVER_PREFIX "PhysMemEnumVmRegions: PID %u -> %u regions\n", ProcessId, count));
+	return STATUS_SUCCESS;
+}
+
 NTSTATUS PhysMemReadVirtualMemory(ULONG ProcessId, ULONG64 VirtualAddress, PVOID Buffer, SIZE_T Size, PSIZE_T BytesRead)
 {
 	if (!Buffer || !Size || !BytesRead)

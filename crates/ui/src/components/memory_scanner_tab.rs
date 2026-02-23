@@ -1,9 +1,9 @@
 //! Memory Scanner tab — Cheat Engine-like memory scanner via physical memory (CR3 walk)
 
 use callback::{
-    assemble, first_scan, format_bytes_hex, hv_is_running, install_ept_hook, is_driver_loaded,
-    list_ept_hooks, next_scan, parse_aob_pattern, parse_scan_value, remove_ept_hook,
-    write_scan_value, ScanDataType, ScanRegion, ScanResult, ScanType,
+    assemble, enum_vm_regions, first_scan, format_bytes_hex, hv_is_running, install_ept_hook,
+    is_driver_loaded, list_ept_hooks, next_scan, parse_aob_pattern, parse_scan_value,
+    remove_ept_hook, write_scan_value, ScanDataType, ScanResult, ScanType,
 };
 use dioxus::prelude::*;
 use misc::{allocate_near_address, free_remote_memory, write_process_memory_bytes};
@@ -172,17 +172,7 @@ pub fn MemoryScannerTab() -> Element {
 
         spawn(async move {
             let result = tokio::task::spawn_blocking(move || {
-                let raw_regions = process::get_process_memory_regions(pid);
-                let regions: Vec<ScanRegion> = raw_regions
-                    .iter()
-                    .map(|r| ScanRegion {
-                        base_address: r.base_address as u64,
-                        region_size: r.region_size as u64,
-                        state: r.state,
-                        protect: r.protect,
-                    })
-                    .collect();
-
+                let regions = enum_vm_regions(pid)?;
                 first_scan(pid, &regions, &target_bytes, dt, st, aob_pat.as_ref())
             })
             .await;
