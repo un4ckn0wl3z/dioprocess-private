@@ -363,3 +363,9 @@ pub static PACKET_MANAGER_SAVE_TAGS: GlobalSignal<String> = Signal::global(|| St
 pub static PACKET_CAPTURE_VIEW_MODE: GlobalSignal<usize> = Signal::global(|| 0);
 /// Sort order: false = oldest first (ascending), true = newest first (descending)
 pub static PACKET_CAPTURE_SORT_DESC: GlobalSignal<bool> = Signal::global(|| false);
+
+// Resend loop settings
+pub static PACKET_RESEND_COUNT: GlobalSignal<String> = Signal::global(|| "1".to_string());
+pub static PACKET_RESEND_INTERVAL_MS: GlobalSignal<String> = Signal::global(|| "100".to_string());
+pub static PACKET_RESEND_RUNNING: GlobalSignal<bool> = Signal::global(|| false);
+pub static PACKET_RESEND_STOP: GlobalSignal<bool> = Signal::global(|| false);

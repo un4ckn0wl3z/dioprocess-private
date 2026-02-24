@@ -2943,4 +2943,39 @@ const BASE_STYLES: &str = r#"
         opacity: 0.7;
     }
 
+    .resend-settings {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 6px;
+        margin-bottom: 12px;
+    }
+
+    .resend-label {
+        color: var(--text-secondary);
+        font-size: 12px;
+    }
+
+    .resend-input {
+        width: 70px;
+        padding: 6px 8px;
+        border: 1px solid var(--border-primary);
+        border-radius: 4px;
+        background: var(--bg-input);
+        color: var(--text-primary);
+        font-size: 12px;
+        outline: none;
+    }
+
+    .resend-input:focus {
+        border-color: var(--border-accent);
+    }
+
+    .resend-input::-webkit-inner-spin-button,
+    .resend-input::-webkit-outer-spin-button {
+        opacity: 1;
+    }
+
 "#;

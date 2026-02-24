@@ -13,7 +13,8 @@ use crate::state::{
     PACKET_CAPTURE_SELECTED, PACKET_CAPTURE_STATUS, PACKET_CAPTURE_IS_ERROR,
     PACKET_CAPTURE_AUTO_SCROLL, PACKET_CAPTURE_EDIT_MODE, PACKET_CAPTURE_EDIT_PAYLOAD,
     PACKET_CAPTURE_EDIT_ASCII, PACKET_CAPTURE_FILTER_RULES, PACKET_CAPTURE_VIEW_MODE,
-    PACKET_CAPTURE_SORT_DESC,
+    PACKET_CAPTURE_SORT_DESC, PACKET_RESEND_COUNT, PACKET_RESEND_INTERVAL_MS,
+    PACKET_RESEND_RUNNING, PACKET_RESEND_STOP,
     PACKET_MANAGER_PACKETS, PACKET_MANAGER_SELECTED, PACKET_MANAGER_SEARCH,
     PACKET_MANAGER_STATUS, PACKET_MANAGER_IS_ERROR, PACKET_MANAGER_SHOW_SAVE_MODAL,
     PACKET_MANAGER_SAVE_NAME, PACKET_MANAGER_SAVE_DESC, PACKET_MANAGER_SAVE_TAGS,
@@ -63,6 +64,10 @@ pub fn PacketCaptureTab() -> Element {
     let mut edit_payload = PACKET_CAPTURE_EDIT_PAYLOAD.signal();
     let mut edit_ascii = PACKET_CAPTURE_EDIT_ASCII.signal();
     let mut sort_desc = PACKET_CAPTURE_SORT_DESC.signal();
+    let mut resend_count = PACKET_RESEND_COUNT.signal();
+    let mut resend_interval = PACKET_RESEND_INTERVAL_MS.signal();
+    let mut resend_running = PACKET_RESEND_RUNNING.signal();
+    let mut resend_stop = PACKET_RESEND_STOP.signal();
     
     // Local state for filter input (doesn't need persistence)
     let mut new_filter_port = use_signal(|| String::new());
@@ -563,38 +568,84 @@ pub fn PacketCaptureTab() -> Element {
                                                     },
                                                     "{edit_btn_text}"
                                                 }
-                                                button {
-                                                    class: "btn btn-primary btn-small",
-                                                    title: "Resend packet at network layer",
-                                                    onclick: move |_| {
-                                                        let mut p = packet_clone.clone();
-                                                        if *edit_mode.read() {
-                                                            let is_ascii = *edit_ascii.read();
-                                                            let payload_str = edit_payload.read().clone();
-                                                            let bytes: Vec<u8> = if is_ascii {
-                                                                // ASCII mode - direct string to bytes
-                                                                payload_str.into_bytes()
+                                                if *resend_running.read() {
+                                                    button {
+                                                        class: "btn btn-danger btn-small",
+                                                        onclick: move |_| {
+                                                            resend_stop.set(true);
+                                                        },
+                                                        "Stop"
+                                                    }
+                                                } else {
+                                                    button {
+                                                        class: "btn btn-primary btn-small",
+                                                        title: "Resend packet (use loop settings below)",
+                                                        onclick: move |_| {
+                                                            let mut p = packet_clone.clone();
+                                                            if *edit_mode.read() {
+                                                                let is_ascii = *edit_ascii.read();
+                                                                let payload_str = edit_payload.read().clone();
+                                                                let bytes: Vec<u8> = if is_ascii {
+                                                                    payload_str.into_bytes()
+                                                                } else {
+                                                                    payload_str
+                                                                        .split_whitespace()
+                                                                        .filter_map(|s| u8::from_str_radix(s, 16).ok())
+                                                                        .collect()
+                                                                };
+                                                                p.payload = bytes;
+                                                            }
+                                                            let count: u32 = resend_count.read().parse().unwrap_or(1).max(1);
+                                                            let interval: u64 = resend_interval.read().parse().unwrap_or(100).max(1);
+                                                            
+                                                            if count == 1 {
+                                                                // Single send - no async needed
+                                                                match inject_packet(&p) {
+                                                                    Ok(()) => {
+                                                                        status_message.set("Packet sent".to_string());
+                                                                        is_error.set(false);
+                                                                    }
+                                                                    Err(e) => {
+                                                                        status_message.set(format!("Send failed: {:?}", e));
+                                                                        is_error.set(true);
+                                                                    }
+                                                                }
                                                             } else {
-                                                                // Hex mode - parse hex string
-                                                                payload_str
-                                                                    .split_whitespace()
-                                                                    .filter_map(|s| u8::from_str_radix(s, 16).ok())
-                                                                    .collect()
-                                                            };
-                                                            p.payload = bytes;
-                                                        }
-                                                        match inject_packet(&p) {
-                                                            Ok(()) => {
-                                                                status_message.set("Packet injected successfully".to_string());
-                                                                is_error.set(false);
+                                                                // Loop send - async
+                                                                resend_running.set(true);
+                                                                resend_stop.set(false);
+                                                                spawn(async move {
+                                                                    let mut sent = 0u32;
+                                                                    for i in 0..count {
+                                                                        if *resend_stop.read() {
+                                                                            status_message.set(format!("Stopped after {} packets", sent));
+                                                                            break;
+                                                                        }
+                                                                        match inject_packet(&p) {
+                                                                            Ok(()) => {
+                                                                                sent += 1;
+                                                                                status_message.set(format!("Sending {}/{}", i + 1, count));
+                                                                                is_error.set(false);
+                                                                            }
+                                                                            Err(e) => {
+                                                                                status_message.set(format!("Failed at {}: {:?}", i + 1, e));
+                                                                                is_error.set(true);
+                                                                                break;
+                                                                            }
+                                                                        }
+                                                                        if i < count - 1 {
+                                                                            tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+                                                                        }
+                                                                    }
+                                                                    if !*resend_stop.read() {
+                                                                        status_message.set(format!("Sent {} packets", sent));
+                                                                    }
+                                                                    resend_running.set(false);
+                                                                });
                                                             }
-                                                            Err(e) => {
-                                                                status_message.set(format!("Resend failed: {:?}", e));
-                                                                is_error.set(true);
-                                                            }
-                                                        }
-                                                    },
-                                                    "Resend"
+                                                        },
+                                                        "Send"
+                                                    }
                                                 }
                                                 button {
                                                     class: "btn btn-secondary btn-small",
@@ -613,6 +664,31 @@ pub fn PacketCaptureTab() -> Element {
                                             div { "Protocol: ", span { "{proto_str}" } }
                                             div { "Local: ", span { "{local_str}" } }
                                             div { "Remote: ", span { "{remote_str}" } }
+                                        }
+                                        // Resend loop settings
+                                        div {
+                                            class: "resend-settings",
+                                            span { class: "resend-label", "Loop:" }
+                                            input {
+                                                r#type: "number",
+                                                class: "resend-input",
+                                                placeholder: "Count",
+                                                title: "Number of times to send (1 = single send)",
+                                                min: "1",
+                                                value: "{resend_count}",
+                                                oninput: move |e| resend_count.set(e.value().clone()),
+                                            }
+                                            span { class: "resend-label", "×" }
+                                            input {
+                                                r#type: "number",
+                                                class: "resend-input",
+                                                placeholder: "Interval (ms)",
+                                                title: "Delay between sends in milliseconds",
+                                                min: "1",
+                                                value: "{resend_interval}",
+                                                oninput: move |e| resend_interval.set(e.value().clone()),
+                                            }
+                                            span { class: "resend-label", "ms" }
                                         }
                                         if editing {
                                             div {
@@ -856,22 +932,68 @@ pub fn PacketCaptureTab() -> Element {
                                                 span { class: "packet-details-title", "{saved.name}" }
                                                 div {
                                                     class: "packet-details-actions",
-                                                    button {
-                                                        class: "btn btn-primary btn-small",
-                                                        onclick: move |_| {
-                                                            let packet = saved_for_inject.to_captured_packet();
-                                                            match inject_packet(&packet) {
-                                                                Ok(()) => {
-                                                                    manager_status.set("Packet sent".to_string());
-                                                                    manager_is_error.set(false);
+                                                    if *resend_running.read() {
+                                                        button {
+                                                            class: "btn btn-danger btn-small",
+                                                            onclick: move |_| {
+                                                                resend_stop.set(true);
+                                                            },
+                                                            "Stop"
+                                                        }
+                                                    } else {
+                                                        button {
+                                                            class: "btn btn-primary btn-small",
+                                                            onclick: move |_| {
+                                                                let packet = saved_for_inject.to_captured_packet();
+                                                                let count: u32 = resend_count.read().parse().unwrap_or(1).max(1);
+                                                                let interval: u64 = resend_interval.read().parse().unwrap_or(100).max(1);
+                                                                
+                                                                if count == 1 {
+                                                                    match inject_packet(&packet) {
+                                                                        Ok(()) => {
+                                                                            manager_status.set("Packet sent".to_string());
+                                                                            manager_is_error.set(false);
+                                                                        }
+                                                                        Err(e) => {
+                                                                            manager_status.set(format!("Send failed: {:?}", e));
+                                                                            manager_is_error.set(true);
+                                                                        }
+                                                                    }
+                                                                } else {
+                                                                    resend_running.set(true);
+                                                                    resend_stop.set(false);
+                                                                    spawn(async move {
+                                                                        let mut sent = 0u32;
+                                                                        for i in 0..count {
+                                                                            if *resend_stop.read() {
+                                                                                manager_status.set(format!("Stopped after {} packets", sent));
+                                                                                break;
+                                                                            }
+                                                                            match inject_packet(&packet) {
+                                                                                Ok(()) => {
+                                                                                    sent += 1;
+                                                                                    manager_status.set(format!("Sending {}/{}", i + 1, count));
+                                                                                    manager_is_error.set(false);
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    manager_status.set(format!("Failed at {}: {:?}", i + 1, e));
+                                                                                    manager_is_error.set(true);
+                                                                                    break;
+                                                                                }
+                                                                            }
+                                                                            if i < count - 1 {
+                                                                                tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+                                                                            }
+                                                                        }
+                                                                        if !*resend_stop.read() {
+                                                                            manager_status.set(format!("Sent {} packets", sent));
+                                                                        }
+                                                                        resend_running.set(false);
+                                                                    });
                                                                 }
-                                                                Err(e) => {
-                                                                    manager_status.set(format!("Send failed: {:?}", e));
-                                                                    manager_is_error.set(true);
-                                                                }
-                                                            }
-                                                        },
-                                                        "Send"
+                                                            },
+                                                            "Send"
+                                                        }
                                                     }
                                                     button {
                                                         class: "btn btn-secondary btn-small",
@@ -917,6 +1039,31 @@ pub fn PacketCaptureTab() -> Element {
                                                 div { "Local: ", span { "{saved.local_addr}:{saved.local_port}" } }
                                                 div { "Remote: ", span { "{saved.remote_addr}:{saved.remote_port}" } }
                                                 div { "Tags: ", span { "{saved.tags:?}" } }
+                                            }
+                                            // Resend loop settings
+                                            div {
+                                                class: "resend-settings",
+                                                span { class: "resend-label", "Loop:" }
+                                                input {
+                                                    r#type: "number",
+                                                    class: "resend-input",
+                                                    placeholder: "Count",
+                                                    title: "Number of times to send (1 = single send)",
+                                                    min: "1",
+                                                    value: "{resend_count}",
+                                                    oninput: move |e| resend_count.set(e.value().clone()),
+                                                }
+                                                span { class: "resend-label", "×" }
+                                                input {
+                                                    r#type: "number",
+                                                    class: "resend-input",
+                                                    placeholder: "Interval (ms)",
+                                                    title: "Delay between sends in milliseconds",
+                                                    min: "1",
+                                                    value: "{resend_interval}",
+                                                    oninput: move |e| resend_interval.set(e.value().clone()),
+                                                }
+                                                span { class: "resend-label", "ms" }
                                             }
                                             div {
                                                 class: "hex-section",
