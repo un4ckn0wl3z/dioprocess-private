@@ -56,6 +56,7 @@ struct HvWriteVmResponse {
 }
 
 #[repr(C)]
+#[allow(dead_code)]
 struct HvAllocWriteNearRequest {
     process_id: u32,
     near_address: u64,
