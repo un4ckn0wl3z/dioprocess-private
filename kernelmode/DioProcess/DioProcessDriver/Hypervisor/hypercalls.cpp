@@ -279,35 +279,59 @@ void query_process_cr3(vcpu* const cpu) {
   auto const apl_offset = ghv.eprocess_unique_process_id_offset + 8;
   auto const head = ghv.system_eprocess + apl_offset;
   auto curr_entry = head;
+  int iterations = 0;
+  const int max_iterations = 2000; // Safety limit
 
   // iterate over every EPROCESS in the APL linked list
   do {
-    // get the next entry in the linked list
-    if (sizeof(curr_entry) != read_guest_virtual_memory(ghv.system_cr3,
-        curr_entry + offsetof(LIST_ENTRY, Flink), &curr_entry, sizeof(curr_entry)))
+    if (++iterations > max_iterations) {
+      HV_LOG_ERROR("query_process_cr3: Max iterations reached for PID %llu", target_pid);
       break;
+    }
+
+    // get the next entry in the linked list
+    uint64_t next_entry = 0;
+    auto bytes_read = read_guest_virtual_memory(ghv.system_cr3,
+        reinterpret_cast<void*>(curr_entry + offsetof(LIST_ENTRY, Flink)), &next_entry, sizeof(next_entry));
+    if (bytes_read != sizeof(next_entry)) {
+      HV_LOG_ERROR("query_process_cr3: Failed to read Flink at %p (read %zu bytes)", 
+        (void*)(curr_entry + offsetof(LIST_ENTRY, Flink)), bytes_read);
+      break;
+    }
+    curr_entry = reinterpret_cast<uint8_t*>(next_entry);
 
     // EPROCESS
     auto const process = curr_entry - apl_offset;
 
     // EPROCESS::UniqueProcessId
     uint64_t pid = 0;
-    if (sizeof(pid) != read_guest_virtual_memory(ghv.system_cr3,
-        process + ghv.eprocess_unique_process_id_offset, &pid, sizeof(pid)))
+    bytes_read = read_guest_virtual_memory(ghv.system_cr3,
+        reinterpret_cast<void*>(process + ghv.eprocess_unique_process_id_offset), &pid, sizeof(pid));
+    if (bytes_read != sizeof(pid)) {
+      HV_LOG_ERROR("query_process_cr3: Failed to read PID at EPROCESS %p", (void*)process);
       break;
+    }
 
     // we found the target process
     if (target_pid == pid) {
       // EPROCESS::DirectoryTableBase
       uint64_t cr3 = 0;
-      if (sizeof(cr3) != read_guest_virtual_memory(ghv.system_cr3,
-          process + ghv.kprocess_directory_table_base_offset, &cr3, sizeof(cr3)))
+      bytes_read = read_guest_virtual_memory(ghv.system_cr3,
+          reinterpret_cast<void*>(process + ghv.kprocess_directory_table_base_offset), &cr3, sizeof(cr3));
+      if (bytes_read != sizeof(cr3)) {
+        HV_LOG_ERROR("query_process_cr3: Failed to read CR3 at EPROCESS %p for PID %llu", (void*)process, pid);
         break;
+      }
 
       cpu->ctx->rax = cr3;
+      HV_LOG_INFO("query_process_cr3: Found PID %llu, CR3=%llx, EPROCESS=%p", pid, cr3, (void*)process);
       break;
     }
   } while (curr_entry != head);
+
+  if (cpu->ctx->rax == 0) {
+    HV_LOG_ERROR("query_process_cr3: PID %llu not found after %d iterations", target_pid, iterations);
+  }
 
   skip_instruction();
 }

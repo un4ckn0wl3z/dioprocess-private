@@ -1,8 +1,8 @@
 //! Memory Scanner tab — Cheat Engine-like memory scanner via physical memory (CR3 walk)
 
 use callback::{
-    assemble, enum_vm_regions, first_scan, format_bytes_hex, hv_is_running, install_ept_hook,
-    is_driver_loaded, list_ept_hooks, next_scan, parse_aob_pattern, parse_scan_value,
+    assemble, enum_vm_regions, first_scan, format_bytes_hex, hv_is_running, hv_write_virtual_memory,
+    install_ept_hook, is_driver_loaded, list_ept_hooks, next_scan, parse_aob_pattern, parse_scan_value,
     remove_ept_hook, write_scan_value, ScanDataType, ScanResult, ScanType,
 };
 use dioxus::prelude::*;
@@ -2060,8 +2060,24 @@ pub fn MemoryScannerTab() -> Element {
                                                     full_code.extend_from_slice(&[0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]);
                                                     full_code.extend_from_slice(&return_addr.to_le_bytes());
 
-                                                    // Step 4: Write detour code to allocated memory
-                                                    if let Err(e) = write_process_memory_bytes(pid, alloc_addr, &full_code) {
+                                                    // Step 4: Write detour code to allocated memory (try HV for stealth, fallback to usermode)
+                                                    let (write_result, write_method): (Result<(), String>, &str) = if hv_is_running() {
+                                                        // Touch memory first to page it in (HV can only write to paged-in memory)
+                                                        let _ = write_process_memory_bytes(pid, alloc_addr, &[0u8]);
+                                                        // Now use HV write for the actual shellcode (stealthy)
+                                                        match hv_write_virtual_memory(pid, alloc_addr, &full_code) {
+                                                            Ok(_) => (Ok(()), "HV (Ring -1)"),
+                                                            Err(_) => {
+                                                                // HV write failed, fallback to usermode
+                                                                (write_process_memory_bytes(pid, alloc_addr, &full_code)
+                                                                    .map_err(|e| format!("{}", e)), "Usermode (fallback)")
+                                                            }
+                                                        }
+                                                    } else {
+                                                        (write_process_memory_bytes(pid, alloc_addr, &full_code)
+                                                            .map_err(|e| format!("{}", e)), "Usermode")
+                                                    };
+                                                    if let Err(e) = write_result {
                                                         let _ = free_remote_memory(pid, alloc_addr);
                                                         ept_hook_status.set(format!("Write failed: {}", e));
                                                         ept_hook_is_error.set(true);
@@ -2086,8 +2102,8 @@ pub fn MemoryScannerTab() -> Element {
                                                             // Track allocation for cleanup on removal
                                                             detour_allocs.write().insert(idx, (pid, alloc_addr));
                                                             ept_hook_status.set(format!(
-                                                                "Detour hook #{} installed: JMP@0x{:X} -> 0x{:X} ({} bytes detour)",
-                                                                idx, addr, alloc_addr, detour_bytes.len()
+                                                                "Detour hook #{} installed via {}: JMP@0x{:X} -> 0x{:X} ({} bytes detour)",
+                                                                idx, write_method, addr, alloc_addr, detour_bytes.len()
                                                             ));
                                                             ept_hook_is_error.set(false);
                                                             if let Ok(hooks) = list_ept_hooks() {
@@ -2594,7 +2610,24 @@ fn apply_dph_script(
             full_code.extend_from_slice(&[0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]);
             full_code.extend_from_slice(&return_addr.to_le_bytes());
 
-            if let Err(e) = write_process_memory_bytes(pid, alloc_addr, &full_code) {
+            // Try HV write for stealth, fallback to usermode if it fails
+            let write_result: Result<(), String> = if hv_is_running() {
+                // Touch memory first to page it in (HV can only write to paged-in memory)
+                let _ = write_process_memory_bytes(pid, alloc_addr, &[0u8]);
+                // Now use HV write for the actual shellcode (stealthy)
+                match hv_write_virtual_memory(pid, alloc_addr, &full_code) {
+                    Ok(_) => Ok(()),
+                    Err(_) => {
+                        // HV write failed, fallback to usermode
+                        write_process_memory_bytes(pid, alloc_addr, &full_code)
+                            .map_err(|e| format!("{}", e))
+                    }
+                }
+            } else {
+                write_process_memory_bytes(pid, alloc_addr, &full_code)
+                    .map_err(|e| format!("{}", e))
+            };
+            if let Err(e) = write_result {
                 let _ = free_remote_memory(pid, alloc_addr);
                 let msg = format!("Write failed: {}", e);
                 if let Some(s) = dph_scripts.write().get_mut(script_idx) { s.status = format!("Error: {}", msg); }
@@ -2729,7 +2762,24 @@ pub fn apply_dph_file_to_process(pid: u32, file_path: &str) -> Result<String, St
             full_code.extend_from_slice(&[0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]);
             full_code.extend_from_slice(&return_addr.to_le_bytes());
 
-            if let Err(e) = write_process_memory_bytes(pid, alloc_addr, &full_code) {
+            // Try HV write for stealth, fallback to usermode if it fails
+            let write_result: Result<(), String> = if hv_is_running() {
+                // Touch memory first to page it in (HV can only write to paged-in memory)
+                let _ = write_process_memory_bytes(pid, alloc_addr, &[0u8]);
+                // Now use HV write for the actual shellcode (stealthy)
+                match hv_write_virtual_memory(pid, alloc_addr, &full_code) {
+                    Ok(_) => Ok(()),
+                    Err(_) => {
+                        // HV write failed, fallback to usermode
+                        write_process_memory_bytes(pid, alloc_addr, &full_code)
+                            .map_err(|e| format!("{}", e))
+                    }
+                }
+            } else {
+                write_process_memory_bytes(pid, alloc_addr, &full_code)
+                    .map_err(|e| format!("{}", e))
+            };
+            if let Err(e) = write_result {
                 let _ = free_remote_memory(pid, alloc_addr);
                 return Err(format!("Write failed: {}", e));
             }
