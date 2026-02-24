@@ -4,9 +4,15 @@ use callback::packet_capture::{
     add_packet_filter, clear_packet_buffer, clear_packet_filters, export_to_pcap,
     format_timestamp, get_capture_state, get_captured_packets, inject_packet,
     remove_packet_filter, start_packet_capture, stop_packet_capture,
-    CapturedPacket, CaptureState, FilterAction, PacketDirection, PacketFilterRule, PacketProtocol,
+    FilterAction, PacketDirection, PacketFilterRule, PacketProtocol,
 };
 use callback::{hv_is_running, is_driver_loaded};
+use crate::state::{
+    PACKET_CAPTURE_PID, PACKET_CAPTURE_PACKETS, PACKET_CAPTURE_STATE,
+    PACKET_CAPTURE_SELECTED, PACKET_CAPTURE_STATUS, PACKET_CAPTURE_IS_ERROR,
+    PACKET_CAPTURE_AUTO_SCROLL, PACKET_CAPTURE_EDIT_MODE, PACKET_CAPTURE_EDIT_PAYLOAD,
+    PACKET_CAPTURE_EDIT_ASCII, PACKET_CAPTURE_FILTER_RULES,
+};
 use dioxus::prelude::*;
 
 fn direction_str(dir: PacketDirection) -> &'static str {
@@ -39,23 +45,22 @@ fn filter_action_class(action: FilterAction) -> &'static str {
 
 #[component]
 pub fn PacketCaptureTab() -> Element {
-    let mut pid_input = use_signal(|| String::new());
-    let mut packets = use_signal(|| Vec::<CapturedPacket>::new());
-    let mut capture_state = use_signal(|| CaptureState {
-        is_capturing: false,
-        target_pid: 0,
-        packet_count: 0,
-        dropped_count: 0,
-    });
-    let mut selected_packet_idx = use_signal(|| None::<usize>);
-    let mut status_message = use_signal(|| String::new());
-    let mut is_error = use_signal(|| false);
-    let mut auto_scroll = use_signal(|| true);
-    let mut filter_rules = use_signal(|| Vec::<(PacketFilterRule, usize)>::new());
+    // Use global state for persistence across tab switches
+    let mut pid_input = PACKET_CAPTURE_PID.signal();
+    let mut packets = PACKET_CAPTURE_PACKETS.signal();
+    let mut capture_state = PACKET_CAPTURE_STATE.signal();
+    let mut selected_packet_idx = PACKET_CAPTURE_SELECTED.signal();
+    let mut status_message = PACKET_CAPTURE_STATUS.signal();
+    let mut is_error = PACKET_CAPTURE_IS_ERROR.signal();
+    let mut auto_scroll = PACKET_CAPTURE_AUTO_SCROLL.signal();
+    let mut filter_rules = PACKET_CAPTURE_FILTER_RULES.signal();
+    let mut edit_mode = PACKET_CAPTURE_EDIT_MODE.signal();
+    let mut edit_payload = PACKET_CAPTURE_EDIT_PAYLOAD.signal();
+    let mut edit_ascii = PACKET_CAPTURE_EDIT_ASCII.signal();
+    
+    // Local state for filter input (doesn't need persistence)
     let mut new_filter_port = use_signal(|| String::new());
     let mut new_filter_action = use_signal(|| 0usize); // 0 = Block, 1 = Allow
-    let mut edit_mode = use_signal(|| false);
-    let mut edit_payload = use_signal(|| String::new());
 
     let driver_loaded = is_driver_loaded();
     let hv_running = hv_is_running();
@@ -130,6 +135,7 @@ pub fn PacketCaptureTab() -> Element {
 
     let clear_packets = move |_| {
         packets.write().clear();
+        selected_packet_idx.set(None);
         let _ = clear_packet_buffer();
         status_message.set("Packets cleared".to_string());
         is_error.set(false);
@@ -466,11 +472,18 @@ pub fn PacketCaptureTab() -> Element {
                                                     onclick: move |_| {
                                                         let mut p = packet_clone.clone();
                                                         if *edit_mode.read() {
-                                                            let hex_str = edit_payload.read().clone();
-                                                            let bytes: Vec<u8> = hex_str
-                                                                .split_whitespace()
-                                                                .filter_map(|s| u8::from_str_radix(s, 16).ok())
-                                                                .collect();
+                                                            let is_ascii = *edit_ascii.read();
+                                                            let payload_str = edit_payload.read().clone();
+                                                            let bytes: Vec<u8> = if is_ascii {
+                                                                // ASCII mode - direct string to bytes
+                                                                payload_str.into_bytes()
+                                                            } else {
+                                                                // Hex mode - parse hex string
+                                                                payload_str
+                                                                    .split_whitespace()
+                                                                    .filter_map(|s| u8::from_str_radix(s, 16).ok())
+                                                                    .collect()
+                                                            };
                                                             p.payload = bytes;
                                                         }
                                                         match inject_packet(&p) {
@@ -496,28 +509,83 @@ pub fn PacketCaptureTab() -> Element {
                                             div { "Local: ", span { "{local_str}" } }
                                             div { "Remote: ", span { "{remote_str}" } }
                                         }
-                                        div {
-                                            class: "hex-section",
-                                            div { class: "hex-section-title", "Hex:" }
-                                            if editing {
+                                        if editing {
+                                            div {
+                                                class: "edit-mode-toggle",
+                                                label {
+                                                    class: "checkbox-label",
+                                                    input {
+                                                        r#type: "radio",
+                                                        name: "edit_mode_type",
+                                                        checked: !*edit_ascii.read(),
+                                                        onchange: move |_| {
+                                                            // Switch to hex mode - convert current payload
+                                                            if *edit_ascii.read() {
+                                                                let ascii_str = edit_payload.read().clone();
+                                                                let hex_str = ascii_str.bytes()
+                                                                    .map(|b| format!("{:02X}", b))
+                                                                    .collect::<Vec<_>>()
+                                                                    .join(" ");
+                                                                edit_payload.set(hex_str);
+                                                            }
+                                                            edit_ascii.set(false);
+                                                        },
+                                                    }
+                                                    span { "Hex" }
+                                                }
+                                                label {
+                                                    class: "checkbox-label",
+                                                    input {
+                                                        r#type: "radio",
+                                                        name: "edit_mode_type",
+                                                        checked: *edit_ascii.read(),
+                                                        onchange: move |_| {
+                                                            // Switch to ASCII mode - convert current payload
+                                                            if !*edit_ascii.read() {
+                                                                let hex_str = edit_payload.read().clone();
+                                                                let bytes: Vec<u8> = hex_str
+                                                                    .split_whitespace()
+                                                                    .filter_map(|s| u8::from_str_radix(s, 16).ok())
+                                                                    .collect();
+                                                                let ascii_str: String = bytes.iter()
+                                                                    .map(|&b| if b >= 32 && b < 127 { b as char } else { '.' })
+                                                                    .collect();
+                                                                edit_payload.set(ascii_str);
+                                                            }
+                                                            edit_ascii.set(true);
+                                                        },
+                                                    }
+                                                    span { "ASCII" }
+                                                }
+                                            }
+                                            div {
+                                                class: "hex-section",
+                                                div { 
+                                                    class: "hex-section-title", 
+                                                    if *edit_ascii.read() { "ASCII (editable):" } else { "Hex (editable):" }
+                                                }
                                                 textarea {
                                                     class: "hex-edit-textarea",
                                                     value: "{edit_payload}",
                                                     oninput: move |e| edit_payload.set(e.value().clone()),
                                                 }
-                                            } else {
+                                            }
+                                        } else {
+                                            div {
+                                                class: "hex-section",
+                                                div { class: "hex-section-title", "Hex:" }
                                                 pre {
                                                     class: "hex-display",
                                                     "{hex_display}"
                                                 }
                                             }
-                                        }
-                                        div {
-                                            class: "hex-section",
-                                            div { class: "hex-section-title", "ASCII:" }
-                                            pre {
-                                                class: "hex-display",
-                                                "{ascii_display}"
+                                            div {
+                                                class: "hex-section",
+                                                div { class: "hex-section-title", "ASCII:" }
+                                                pre {
+                                                    class: "hex-display",
+                                                    "{ascii_display}"
+                                                }
                                             }
                                         }
                                     }

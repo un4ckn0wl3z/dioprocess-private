@@ -327,3 +327,24 @@ pub struct MemoryContextMenuState {
     pub region_size: usize,
     pub state: u32,
 }
+
+// ============================================================================
+// Packet Capture Tab State - persist across tab switches
+// ============================================================================
+
+pub static PACKET_CAPTURE_PID: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PACKET_CAPTURE_PACKETS: GlobalSignal<Vec<callback::packet_capture::CapturedPacket>> = Signal::global(Vec::new);
+pub static PACKET_CAPTURE_STATE: GlobalSignal<callback::packet_capture::CaptureState> = Signal::global(|| callback::packet_capture::CaptureState {
+    is_capturing: false,
+    target_pid: 0,
+    packet_count: 0,
+    dropped_count: 0,
+});
+pub static PACKET_CAPTURE_SELECTED: GlobalSignal<Option<usize>> = Signal::global(|| None);
+pub static PACKET_CAPTURE_STATUS: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PACKET_CAPTURE_IS_ERROR: GlobalSignal<bool> = Signal::global(|| false);
+pub static PACKET_CAPTURE_AUTO_SCROLL: GlobalSignal<bool> = Signal::global(|| true);
+pub static PACKET_CAPTURE_EDIT_MODE: GlobalSignal<bool> = Signal::global(|| false);
+pub static PACKET_CAPTURE_EDIT_PAYLOAD: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PACKET_CAPTURE_EDIT_ASCII: GlobalSignal<bool> = Signal::global(|| false); // false = hex, true = ascii
+pub static PACKET_CAPTURE_FILTER_RULES: GlobalSignal<Vec<(callback::packet_capture::PacketFilterRule, usize)>> = Signal::global(Vec::new);

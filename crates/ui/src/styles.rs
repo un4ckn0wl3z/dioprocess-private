@@ -2748,6 +2748,26 @@ const BASE_STYLES: &str = r#"
         background: rgba(255, 255, 255, 0.08);
     }
 
+    .edit-mode-toggle {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 8px;
+        padding: 6px 0;
+    }
+
+    .edit-mode-toggle .checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+
+    .edit-mode-toggle input[type="radio"] {
+        accent-color: var(--accent-primary);
+    }
+
     .packet-empty-state {
         color: var(--text-muted);
         text-align: center;
