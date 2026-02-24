@@ -950,7 +950,21 @@ pub fn PacketCaptureTab() -> Element {
                                 class: "btn btn-primary",
                                 onclick: move |_| {
                                     if let Some(idx) = *selected_packet_idx.read() {
-                                        if let Some(packet) = packets.read().get(idx).cloned() {
+                                        if let Some(mut packet) = packets.read().get(idx).cloned() {
+                                            // If in edit mode, use the edited payload
+                                            if *edit_mode.read() {
+                                                let is_ascii = *edit_ascii.read();
+                                                let payload_str = edit_payload.read().clone();
+                                                let bytes: Vec<u8> = if is_ascii {
+                                                    payload_str.into_bytes()
+                                                } else {
+                                                    payload_str
+                                                        .split_whitespace()
+                                                        .filter_map(|s| u8::from_str_radix(s, 16).ok())
+                                                        .collect()
+                                                };
+                                                packet.payload = bytes;
+                                            }
                                             if let Some(storage) = get_packet_storage() {
                                                 let name = save_name.read().clone();
                                                 let desc = save_desc.read().clone();
