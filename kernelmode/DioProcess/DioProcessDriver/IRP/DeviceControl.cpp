@@ -4756,11 +4756,19 @@ NTSTATUS HandlePacketAddFilter(PIRP Irp, PIO_STACK_LOCATION irpSp)
 	if (inputLen < sizeof(PacketFilterRuleData))
 		return STATUS_BUFFER_TOO_SMALL;
 
-	auto rule = (PacketFilterRule*)Irp->AssociatedIrp.SystemBuffer;
-	if (!rule)
+	auto data = (PacketFilterRuleData*)Irp->AssociatedIrp.SystemBuffer;
+	if (!data)
 		return STATUS_INVALID_PARAMETER;
 
-	return WfpAddFilterRule(rule);
+	// Convert from wire format to internal format
+	PacketFilterRule rule;
+	rule.Enabled = data->Enabled != 0;
+	rule.Action = (PacketFilterAction)data->Action;
+	rule.Port = data->Port;
+	rule.IpAddress = data->IpAddress;
+	rule.Protocol = (PacketProtocol)data->Protocol;
+
+	return WfpAddFilterRule(&rule);
 }
 
 NTSTATUS HandlePacketRemoveFilter(PIRP Irp, PIO_STACK_LOCATION irpSp)

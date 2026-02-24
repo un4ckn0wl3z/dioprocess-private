@@ -1188,14 +1188,16 @@ struct PacketCaptureStateResponse
 	ULONG DroppedCount;
 };
 
+#pragma pack(push, 1)
 struct PacketFilterRuleData
 {
-	BOOLEAN Enabled;
-	PacketFilterAction Action;
+	UCHAR Enabled;
+	UCHAR Action;
 	USHORT Port;           // 0 = any port
 	ULONG IpAddress;       // 0 = any IP
-	PacketProtocol Protocol;
+	UCHAR Protocol;
 };
+#pragma pack(pop)
 
 struct PacketFilterRemoveRequest
 {
