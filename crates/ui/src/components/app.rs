@@ -9,6 +9,7 @@ use uefi_manager::{install_efi_driver, remove_efi_driver, is_efi_installed};
 use crate::config::{delete_pat, has_pat, load_pat, load_theme, save_pat, save_theme, Theme};
 use crate::state::{is_debug_mode, is_alldrv_mode};
 use crate::routes::Route;
+use super::{EptHookModal, RegChangeModal};
 use crate::styles::get_theme_css;
 
 /// JavaScript to enable horizontal scrolling with mouse wheel on tab bar
@@ -132,6 +133,7 @@ pub fn Layout() -> Element {
     let is_memory_translate_tab = matches!(route, Route::MemoryTranslateTab {});
     let is_memory_scanner_tab = matches!(route, Route::MemoryScannerTab {});
     let is_hv_scanner_tab = matches!(route, Route::HvScannerTab {});
+    let is_scripts_tab = matches!(route, Route::ScriptsTab {});
     let is_uefi_tab = matches!(route, Route::UefiTab {});
     let is_callback_tab = matches!(route, Route::CallbackTab {});
 
@@ -1100,6 +1102,12 @@ pub fn Layout() -> Element {
                         span { class: "experimental-badge", style: "background: #059669;", "Ring -1" }
                     }
                     Link {
+                        to: Route::ScriptsTab {},
+                        class: if is_scripts_tab { "tab-item tab-active" } else { "tab-item" },
+                        "Scripts"
+                        span { class: "experimental-badge", style: "background: #8b5cf6;", "DPH/DPR" }
+                    }
+                    Link {
                         to: Route::UefiTab {},
                         class: if is_uefi_tab { "tab-item tab-active" } else { "tab-item" },
                         "UEFI Bootkit"
@@ -1117,6 +1125,10 @@ pub fn Layout() -> Element {
                 div { class: "content-area",
                     Outlet::<Route> {}
                 }
+
+                // Shared modals (work from any tab)
+                EptHookModal {}
+                RegChangeModal {}
 
                 if *about_popup.read() {
 

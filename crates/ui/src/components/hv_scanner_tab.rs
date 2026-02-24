@@ -13,6 +13,9 @@ use crate::state::{
     HV_SCANNER_HAS_SCANNED, HV_SCANNER_IS_ERROR, HV_SCANNER_IS_SCANNING, HV_SCANNER_PAGE,
     HV_SCANNER_PID, HV_SCANNER_RESULTS, HV_SCANNER_SCAN_TYPE_IDX, HV_SCANNER_SELECTED,
     HV_SCANNER_STATUS, HV_SCANNER_VALUE, HV_SCANNER_VALUE2, HV_SCANNER_WRITE_VALUE,
+    EPT_HOOK_BYTES_INPUT, EPT_HOOK_IS_ERROR, EPT_HOOK_SHOW_MODAL, EPT_HOOK_STATUS,
+    EPT_HOOK_TARGET_ADDR, REG_CHANGE_IS_ERROR, REG_CHANGE_SHOW_MODAL, REG_CHANGE_STATUS,
+    REG_CHANGE_TARGET_ADDR,
 };
 
 const RESULTS_PER_PAGE: usize = 500;
@@ -35,6 +38,16 @@ pub fn HvScannerTab() -> Element {
     let mut context_menu = use_signal(|| None::<(i32, i32, usize)>);
     let mut editing_idx = HV_SCANNER_EDITING_IDX.signal();
     let mut edit_value_input = HV_SCANNER_EDIT_VALUE.signal();
+
+    // EPT Hook and Register Change state
+    let mut ept_hook_target = EPT_HOOK_TARGET_ADDR.signal();
+    let mut ept_hook_bytes = EPT_HOOK_BYTES_INPUT.signal();
+    let mut ept_hook_show_modal = EPT_HOOK_SHOW_MODAL.signal();
+    let mut ept_hook_status = EPT_HOOK_STATUS.signal();
+    let mut ept_hook_is_error = EPT_HOOK_IS_ERROR.signal();
+    let mut rc_show_modal = REG_CHANGE_SHOW_MODAL.signal();
+    let mut rc_status = REG_CHANGE_STATUS.signal();
+    let mut rc_is_error = REG_CHANGE_IS_ERROR.signal();
 
     let driver_loaded = is_driver_loaded();
     let hv_running = hv_is_running();
@@ -724,35 +737,119 @@ pub fn HvScannerTab() -> Element {
             }
 
             // Context menu
-            if let Some((x, y, _ctx_idx)) = ctx_menu {
-                div {
-                    class: "context-menu",
-                    style: "position: fixed; left: {x}px; top: {y}px; z-index: 1000; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); padding: 4px 0; min-width: 140px;",
-                    onclick: move |e| e.stop_propagation(),
-                    div {
-                        class: "context-menu-item",
-                        style: "padding: 6px 12px; cursor: pointer; font-size: 13px;",
-                        onmouseenter: |e| { let _ = e; },
-                        onclick: {
-                            let addr = ctx_addr.unwrap_or(0);
-                            move |_| {
-                                copy_to_clipboard(&format!("0x{:X}", addr));
-                                context_menu.set(None);
+            if let Some((x, y, ctx_idx)) = ctx_menu {
+                {
+                    let addr = ctx_addr.unwrap_or(0);
+                    let val = ctx_val.clone().unwrap_or_default();
+                    let addr_hex = format!("0x{:X}", addr);
+                    rsx! {
+                        div {
+                            class: "context-menu",
+                            style: "left: clamp(0px, {x}px, calc(100vw - 200px)); top: clamp(0px, {y}px, calc(100vh - 350px)); max-height: calc(100vh - 20px); overflow-y: auto;",
+                            onclick: move |e| e.stop_propagation(),
+
+                            // Edit Value
+                            button {
+                                class: "context-menu-item",
+                                onclick: {
+                                    let v = val.clone();
+                                    move |_| {
+                                        editing_idx.set(Some(ctx_idx));
+                                        edit_value_input.set(v.clone());
+                                        context_menu.set(None);
+                                    }
+                                },
+                                span { "Edit Value" }
                             }
-                        },
-                        "Copy Address"
-                    }
-                    div {
-                        class: "context-menu-item",
-                        style: "padding: 6px 12px; cursor: pointer; font-size: 13px;",
-                        onclick: {
-                            let val = ctx_val.clone().unwrap_or_default();
-                            move |_| {
-                                copy_to_clipboard(&val);
-                                context_menu.set(None);
+
+                            // Select for Write Bar
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    selected_idx.set(Some(ctx_idx));
+                                    context_menu.set(None);
+                                },
+                                span { "Select for Write Bar" }
                             }
-                        },
-                        "Copy Value"
+
+                            div { class: "context-menu-separator" }
+
+                            // Copy Address
+                            button {
+                                class: "context-menu-item",
+                                onclick: {
+                                    let a = addr_hex.clone();
+                                    move |_| {
+                                        copy_to_clipboard(&a);
+                                        context_menu.set(None);
+                                    }
+                                },
+                                span { "Copy Address" }
+                            }
+
+                            // Copy Value
+                            button {
+                                class: "context-menu-item",
+                                onclick: {
+                                    let v = val.clone();
+                                    move |_| {
+                                        copy_to_clipboard(&v);
+                                        context_menu.set(None);
+                                    }
+                                },
+                                span { "Copy Value" }
+                            }
+
+                            // Copy Row
+                            button {
+                                class: "context-menu-item",
+                                onclick: {
+                                    let row = format!("{}\t{}", addr_hex, val);
+                                    move |_| {
+                                        copy_to_clipboard(&row);
+                                        context_menu.set(None);
+                                    }
+                                },
+                                span { "Copy Row" }
+                            }
+
+                            div { class: "context-menu-separator" }
+
+                            // Install EPT Hook
+                            button {
+                                class: "context-menu-item",
+                                disabled: !driver_loaded || !hv_running,
+                                onclick: move |_| {
+                                    ept_hook_target.set(Some(addr));
+                                    ept_hook_bytes.set(String::new());
+                                    ept_hook_show_modal.set(true);
+                                    ept_hook_status.set(String::new());
+                                    ept_hook_is_error.set(false);
+                                    context_menu.set(None);
+                                },
+                                span { "Install EPT Hook" }
+                                if !hv_running {
+                                    span { style: "color: var(--text-secondary); font-size: 10px; margin-left: 4px;", "(HV off)" }
+                                }
+                            }
+
+                            // Change Register at This Address
+                            button {
+                                class: "context-menu-item",
+                                disabled: !driver_loaded || !hv_running,
+                                onclick: move |_| {
+                                    REG_CHANGE_TARGET_ADDR.write().replace(addr);
+                                    rc_show_modal.set(true);
+                                    rc_status.set(String::new());
+                                    rc_is_error.set(false);
+                                    context_menu.set(None);
+                                },
+                                span { "Change Register at This Address" }
+                                if !hv_running {
+                                    span { style: "color: var(--text-secondary); font-size: 10px; margin-left: 4px;", "(HV off)" }
+                                }
+                            }
+                        }
                     }
                 }
             }

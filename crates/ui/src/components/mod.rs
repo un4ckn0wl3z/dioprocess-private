@@ -26,6 +26,9 @@ mod threadless_inject_window;
 mod token_thief_window;
 mod uefi_tab;
 mod utilities_tab;
+mod scripts_tab;
+mod ept_hook_modal;
+mod reg_change_modal;
 
 pub use app::{App, Layout};
 pub use callback_tab::CallbackTab;
@@ -53,3 +56,6 @@ pub use threadless_inject_window::ThreadlessInjectWindow;
 pub use token_thief_window::TokenThiefWindow;
 pub use uefi_tab::UefiTab;
 pub use utilities_tab::UtilitiesTab;
+pub use scripts_tab::ScriptsTab;
+pub use ept_hook_modal::EptHookModal;
+pub use reg_change_modal::RegChangeModal;

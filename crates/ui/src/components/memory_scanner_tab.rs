@@ -1558,8 +1558,9 @@ pub fn MemoryScannerTab() -> Element {
                 }
             }
 
-            // ============== EPT Hook Install Modal ==============
-            if *ept_hook_show_modal.read() {
+            // EPT Hook modal is now rendered in app.rs (EptHookModal component)
+            // This duplicate code is disabled to prevent double rendering
+            if false && *ept_hook_show_modal.read() {
                 {
                     let target_addr = ept_hook_target.read().unwrap_or(0);
                     let hook_status = ept_hook_status.read().clone();
@@ -2229,8 +2230,9 @@ pub fn MemoryScannerTab() -> Element {
                 }
             }
 
-            // ============== Register Change Modal ==============
-            if *rc_show_modal.read() {
+            // Register Change modal is now rendered in app.rs (RegChangeModal component)
+            // This duplicate code is disabled to prevent double rendering
+            if false && *rc_show_modal.read() {
                 {
                     let target_addr = REG_CHANGE_TARGET_ADDR.read().unwrap_or(0);
                     let rc_status_msg = rc_status.read().clone();
