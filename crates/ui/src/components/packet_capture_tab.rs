@@ -509,6 +509,15 @@ pub fn PacketCaptureTab() -> Element {
                                                     class: "btn btn-secondary btn-small",
                                                     onclick: move |_| {
                                                         let current = *edit_mode.read();
+                                                        if !current {
+                                                            // Entering edit mode - initialize payload
+                                                            let hex_str = packet.payload.iter()
+                                                                .map(|b| format!("{:02X}", b))
+                                                                .collect::<Vec<_>>()
+                                                                .join(" ");
+                                                            edit_payload.set(hex_str);
+                                                            edit_ascii.set(false); // Start in hex mode
+                                                        }
                                                         edit_mode.set(!current);
                                                     },
                                                     "{edit_btn_text}"
