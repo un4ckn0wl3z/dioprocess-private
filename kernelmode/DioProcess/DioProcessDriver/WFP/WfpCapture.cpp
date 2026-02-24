@@ -123,7 +123,7 @@ static void ProcessPacket(
     }
 
     // Check if this is our target process
-    if (g_CaptureState.TargetPid != 0 && pid != g_CaptureState.TargetPid)
+    if (g_CaptureState.TargetPid != 0 && (UINT32)pid != g_CaptureState.TargetPid)
     {
         classifyOut->actionType = FWP_ACTION_PERMIT;
         return;
@@ -210,6 +210,16 @@ static void ProcessPacket(
 
     // Add to buffer
     AddPacketToBuffer(packet);
+
+    KdPrint((DRIVER_PREFIX "Captured packet: PID=%u Dir=%d Proto=%d %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u (%u bytes)\n",
+        packet->ProcessId,
+        (int)packet->Direction,
+        (int)packet->Protocol,
+        (localAddr >> 24) & 0xFF, (localAddr >> 16) & 0xFF, (localAddr >> 8) & 0xFF, localAddr & 0xFF,
+        localPort,
+        (remoteAddr >> 24) & 0xFF, (remoteAddr >> 16) & 0xFF, (remoteAddr >> 8) & 0xFF, remoteAddr & 0xFF,
+        remotePort,
+        packet->PayloadSize));
 
     // Free temporary packet
     ExFreePoolWithTag(packet, 'pkpW');
