@@ -11,6 +11,22 @@ use crate::state::{is_debug_mode, is_alldrv_mode};
 use crate::routes::Route;
 use crate::styles::get_theme_css;
 
+/// JavaScript to enable horizontal scrolling with mouse wheel on tab bar
+const TAB_BAR_SCROLL_JS: &str = r#"
+    (function() {
+        const tabBar = document.getElementById('tab-bar');
+        if (tabBar && !tabBar._wheelHandlerAdded) {
+            tabBar.addEventListener('wheel', function(e) {
+                if (e.deltaY !== 0) {
+                    e.preventDefault();
+                    this.scrollLeft += e.deltaY;
+                }
+            }, { passive: false });
+            tabBar._wheelHandlerAdded = true;
+        }
+    })();
+"#;
+
 /// Main application component
 #[component]
 pub fn App() -> Element {
@@ -38,6 +54,11 @@ pub fn Layout() -> Element {
     let mut efi_installing = use_signal(|| false);
     let mut efi_installed = use_signal(|| is_efi_installed().unwrap_or(false));
     let route: Route = use_route();
+
+    // Add horizontal scroll support for tab bar
+    use_effect(move || {
+        document::eval(TAB_BAR_SCROLL_JS);
+    });
 
     // Validate license on startup
     use_future(move || async move {
@@ -1026,7 +1047,9 @@ pub fn Layout() -> Element {
                 }
 
                 // Tab Navigation
-                div { class: "tab-bar",
+                div {
+                    class: "tab-bar",
+                    id: "tab-bar",
                     Link {
                         to: Route::ProcessTab {},
                         class: if is_process_tab { "tab-item tab-active" } else { "tab-item" },
