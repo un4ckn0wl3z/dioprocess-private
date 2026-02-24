@@ -6,10 +6,11 @@ use misc::free_remote_memory;
 
 use crate::state::{
     DPH_SCRIPTS, DPR_SCRIPTS, EPT_HOOKS_LIST, EPT_HOOK_DETOUR_ALLOCS, REG_CHANGE_LIST, EptHookInputMode,
+    EPT_HOOK_INPUT_MODE, EPT_HOOK_BYTES_INPUT, EPT_HOOK_ASM_INPUT, EPT_HOOK_DETOUR_ASM_INPUT, EPT_HOOK_DETOUR_STOLEN_BYTES,
 };
 use crate::components::memory_scanner_tab::{
     parse_dph_script, parse_dpr_script, persist_dph, persist_dpr, apply_dph_script, apply_dpr_script,
-    reverse_resolve_address, build_dpr_content,
+    reverse_resolve_address, build_dph_content, build_dpr_content,
 };
 
 #[component]
@@ -315,6 +316,51 @@ pub fn ScriptsTab() -> Element {
                                                         td { class: "cell", style: "width: 140px; display: flex; gap: 4px;",
                                                             button {
                                                                 class: "btn",
+                                                                style: "font-size: 10px; padding: 1px 6px;",
+                                                                onclick: {
+                                                                    move |_| {
+                                                                        // Try to find the DPH script that created this hook
+                                                                        let script_data = DPH_SCRIPTS.read().iter()
+                                                                            .find(|s| s.hook_index == Some(hook_idx))
+                                                                            .map(|s| (s.name.clone(), s.target_expr.clone(), s.mode, s.stolen_bytes, s.code.clone()));
+                                                                        
+                                                                        let (name, target_expr, mode, stolen, code) = if let Some((n, t, m, st, c)) = script_data {
+                                                                            (n, t, m, st, c)
+                                                                        } else {
+                                                                            // Fallback: use modal's global state (for hooks created via modal, not from script)
+                                                                            let target = reverse_resolve_address(hook_pid, hook_addr);
+                                                                            let mode = *EPT_HOOK_INPUT_MODE.read();
+                                                                            let code = match mode {
+                                                                                EptHookInputMode::Hex => EPT_HOOK_BYTES_INPUT.read().clone(),
+                                                                                EptHookInputMode::Assembly => EPT_HOOK_ASM_INPUT.read().clone(),
+                                                                                EptHookInputMode::Detour => EPT_HOOK_DETOUR_ASM_INPUT.read().clone(),
+                                                                            };
+                                                                            let stolen: u32 = EPT_HOOK_DETOUR_STOLEN_BYTES.read().trim().parse().unwrap_or(6);
+                                                                            (String::new(), target, mode, stolen, code)
+                                                                        };
+                                                                        
+                                                                        let mode_str = match mode {
+                                                                            EptHookInputMode::Hex => "hex",
+                                                                            EptHookInputMode::Assembly => "assembly",
+                                                                            EptHookInputMode::Detour => "detour",
+                                                                        };
+                                                                        let content = build_dph_content(&name, &target_expr, mode_str, stolen, &code);
+                                                                        spawn(async move {
+                                                                            if let Some(file) = rfd::AsyncFileDialog::new()
+                                                                                .add_filter("DioProcess Hook Script", &["dph"])
+                                                                                .set_file_name("hook.dph")
+                                                                                .save_file()
+                                                                                .await
+                                                                            {
+                                                                                let _ = std::fs::write(file.path(), content);
+                                                                            }
+                                                                        });
+                                                                    }
+                                                                },
+                                                                "Save .dph"
+                                                            }
+                                                            button {
+                                                                class: "btn",
                                                                 style: "font-size: 10px; padding: 1px 6px; color: #dc2626;",
                                                                 onclick: move |_| {
                                                                     if let Some((dpid, daddr)) = detour_allocs.read().get(&hook_idx).copied() {
@@ -433,8 +479,20 @@ pub fn ScriptsTab() -> Element {
                                                                         format!("0x{:X}", rc_val)
                                                                     };
                                                                     move |_| {
-                                                                        let target_expr = reverse_resolve_address(rc_pid, rc_addr);
-                                                                        let content = build_dpr_content("", &target_expr, &reg_name_str, &val_str, "");
+                                                                        // Try to find the DPR script that created this register change
+                                                                        let script_data = DPR_SCRIPTS.read().iter()
+                                                                            .find(|s| s.entry_index == Some(rc_idx))
+                                                                            .map(|s| (s.name.clone(), s.target_expr.clone(), s.register.clone(), s.value_expr.clone()));
+                                                                        
+                                                                        let (name, target_expr, reg, val) = if let Some((n, t, r, v)) = script_data {
+                                                                            (n, t, r, v)
+                                                                        } else {
+                                                                            // Fallback: use raw data from register change entry
+                                                                            let target = reverse_resolve_address(rc_pid, rc_addr);
+                                                                            (String::new(), target, reg_name_str.clone(), val_str.clone())
+                                                                        };
+                                                                        
+                                                                        let content = build_dpr_content(&name, &target_expr, &reg, &val, "");
                                                                         spawn(async move {
                                                                             if let Some(file) = rfd::AsyncFileDialog::new()
                                                                                 .add_filter("DioProcess Register Script", &["dpr"])
