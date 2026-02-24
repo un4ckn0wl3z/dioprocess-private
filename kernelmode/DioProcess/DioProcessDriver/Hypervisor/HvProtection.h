@@ -74,3 +74,13 @@ bool HvIsDriverHidingEnabled();
 // Inject shellcode into a remote process via hypervisor
 // Returns bytes written (0 on failure)
 ULONG64 HvInjectShellcode(ULONG TargetPid, PVOID TargetAddress, PVOID SourceBuffer, ULONG Size);
+
+// ============== Ring -1 Memory Read/Write (HV Scanner) ==============
+
+// Read virtual memory from a remote process via hypervisor
+// Returns bytes read (0 on failure)
+ULONG64 HvReadVirtualMemory(ULONG TargetPid, ULONG64 VirtualAddress, PVOID Buffer, ULONG Size);
+
+// Write virtual memory to a remote process via hypervisor
+// Returns bytes written (0 on failure)
+ULONG64 HvWriteVirtualMemory(ULONG TargetPid, ULONG64 VirtualAddress, PVOID Buffer, ULONG Size);

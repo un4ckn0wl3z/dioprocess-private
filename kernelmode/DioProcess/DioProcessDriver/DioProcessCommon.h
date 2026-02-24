@@ -261,6 +261,13 @@ struct EventData
 #define IOCTL_DIOPROCESS_HV_INJECT_DLL \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x841, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// ============== Hypervisor Memory Read/Write IOCTLs (Ring -1 Scanner) ==============
+
+#define IOCTL_DIOPROCESS_HV_READ_VM \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x842, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_WRITE_VM \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x843, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct CollectionStateResponse
 {
 	BOOLEAN IsCollecting;
@@ -639,6 +646,43 @@ struct HvInjectDllResponse
 {
 	ULONG64 ModuleBase;                           // Base address of loaded DLL (0 if failed)
 	ULONG64 PathAddress;                          // Where path was written
+	BOOLEAN Success;
+};
+
+// ============== Hypervisor Memory Read/Write Structures (Ring -1 Scanner) ==============
+
+// Maximum bytes per HV read/write call (64KB, same as physical memory scanner)
+#define HV_READ_VM_MAX_SIZE (64 * 1024)
+
+// Request for HV_READ_VM - read virtual memory via hypervisor
+struct HvReadVmRequest
+{
+	ULONG ProcessId;                              // Target process PID
+	ULONG64 VirtualAddress;                       // Virtual address to read from
+	ULONG Size;                                   // Number of bytes to read (max HV_READ_VM_MAX_SIZE)
+};
+
+// Response for HV_READ_VM
+struct HvReadVmResponse
+{
+	ULONG BytesRead;                              // Actual bytes read
+	BOOLEAN Success;
+	// Followed by BytesRead bytes of data in the output buffer
+};
+
+// Request for HV_WRITE_VM - write virtual memory via hypervisor
+struct HvWriteVmRequest
+{
+	ULONG ProcessId;                              // Target process PID
+	ULONG64 VirtualAddress;                       // Virtual address to write to
+	ULONG Size;                                   // Number of bytes to write
+	UCHAR Data[1];                                // Variable length data to write
+};
+
+// Response for HV_WRITE_VM
+struct HvWriteVmResponse
+{
+	ULONG BytesWritten;                           // Actual bytes written
 	BOOLEAN Success;
 };
 

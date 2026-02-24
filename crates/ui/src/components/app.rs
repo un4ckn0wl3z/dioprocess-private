@@ -110,6 +110,7 @@ pub fn Layout() -> Element {
     let is_hypervisor_tab = matches!(route, Route::HypervisorTab {});
     let is_memory_translate_tab = matches!(route, Route::MemoryTranslateTab {});
     let is_memory_scanner_tab = matches!(route, Route::MemoryScannerTab {});
+    let is_hv_scanner_tab = matches!(route, Route::HvScannerTab {});
     let is_uefi_tab = matches!(route, Route::UefiTab {});
     let is_callback_tab = matches!(route, Route::CallbackTab {});
 
@@ -1068,6 +1069,12 @@ pub fn Layout() -> Element {
                         class: if is_memory_scanner_tab { "tab-item tab-active" } else { "tab-item" },
                         "Memory Scanner"
                         span { class: "experimental-badge", style: "background: #dc2626;", "Scanner" }
+                    }
+                    Link {
+                        to: Route::HvScannerTab {},
+                        class: if is_hv_scanner_tab { "tab-item tab-active" } else { "tab-item" },
+                        "HV Scanner"
+                        span { class: "experimental-badge", style: "background: #059669;", "Ring -1" }
                     }
                     Link {
                         to: Route::UefiTab {},

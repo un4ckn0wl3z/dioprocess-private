@@ -738,3 +738,83 @@ ULONG64 HvInjectShellcode(ULONG TargetPid, PVOID TargetAddress, PVOID SourceBuff
 		return 0;
 	}
 }
+
+// ============== Ring -1 Memory Read/Write (HV Scanner) ==============
+
+ULONG64 HvReadVirtualMemory(ULONG TargetPid, ULONG64 VirtualAddress, PVOID Buffer, ULONG Size)
+{
+	if (!g_HvInitialized || !HvIsHypervisorRunning())
+		return 0;
+
+	__try
+	{
+		// First, get the target process CR3
+		hv::hypercall_input cr3_input;
+		cr3_input.code = hv::hypercall_query_process_cr3;
+		cr3_input.key = hv::hypercall_key;
+		cr3_input.args[0] = (ULONG64)TargetPid;       // RCX = target PID
+
+		ULONG64 targetCr3 = hv::vmx_vmcall(cr3_input);
+		if (targetCr3 == 0)
+		{
+			DbgPrint("[DioProcess] HvReadVirtualMemory: Failed to get CR3 for PID %u\n", TargetPid);
+			return 0;
+		}
+
+		// Now read the virtual memory using hypercall_read_virt_mem
+		hv::hypercall_input input;
+		input.code = hv::hypercall_read_virt_mem;
+		input.key = hv::hypercall_key;
+		input.args[0] = targetCr3;                    // RCX = target CR3
+		input.args[1] = (ULONG64)Buffer;              // RDX = destination buffer
+		input.args[2] = VirtualAddress;               // R8  = source VA in target
+		input.args[3] = (ULONG64)Size;                // R9  = size
+
+		ULONG64 bytesRead = hv::vmx_vmcall(input);
+		return bytesRead;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		DbgPrint("[DioProcess] Exception during HvReadVirtualMemory\n");
+		return 0;
+	}
+}
+
+ULONG64 HvWriteVirtualMemory(ULONG TargetPid, ULONG64 VirtualAddress, PVOID Buffer, ULONG Size)
+{
+	if (!g_HvInitialized || !HvIsHypervisorRunning())
+		return 0;
+
+	__try
+	{
+		// First, get the target process CR3
+		hv::hypercall_input cr3_input;
+		cr3_input.code = hv::hypercall_query_process_cr3;
+		cr3_input.key = hv::hypercall_key;
+		cr3_input.args[0] = (ULONG64)TargetPid;       // RCX = target PID
+
+		ULONG64 targetCr3 = hv::vmx_vmcall(cr3_input);
+		if (targetCr3 == 0)
+		{
+			DbgPrint("[DioProcess] HvWriteVirtualMemory: Failed to get CR3 for PID %u\n", TargetPid);
+			return 0;
+		}
+
+		// Now write the virtual memory using hypercall_write_virt_mem
+		hv::hypercall_input input;
+		input.code = hv::hypercall_write_virt_mem;
+		input.key = hv::hypercall_key;
+		input.args[0] = targetCr3;                    // RCX = target CR3
+		input.args[1] = VirtualAddress;               // RDX = destination VA in target
+		input.args[2] = (ULONG64)Buffer;              // R8  = source buffer
+		input.args[3] = (ULONG64)Size;                // R9  = size
+
+		ULONG64 bytesWritten = hv::vmx_vmcall(input);
+		return bytesWritten;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		DbgPrint("[DioProcess] Exception during HvWriteVirtualMemory\n");
+		return 0;
+	}
+}

@@ -249,6 +249,15 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleHvInjectDll(Irp, irpSp, &info);
 		break;
 
+	// Ring -1 Memory Read/Write IOCTLs (HV Scanner)
+	case IOCTL_DIOPROCESS_HV_READ_VM:
+		status = HandleHvReadVm(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_HV_WRITE_VM:
+		status = HandleHvWriteVm(Irp, irpSp, &info);
+		break;
+
 	// Early Injection IOCTLs
 	case IOCTL_DIOPROCESS_EARLY_INJECT_ARM:
 		status = HandleEarlyInjectArm(Irp, irpSp);
@@ -3411,6 +3420,120 @@ NTSTATUS HandleHvInjectDll(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
 	ObDereferenceObject(targetProcess);
 	*info = sizeof(HvInjectDllResponse);
 	return status;
+}
+
+// ============== Ring -1 Memory Read/Write Handlers (HV Scanner) ==============
+
+NTSTATUS HandleHvReadVm(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	// Validate hypervisor is running
+	if (!HvIsHypervisorRunning())
+	{
+		KdPrint((DRIVER_PREFIX "Hypervisor not running, cannot perform ring -1 read\n"));
+		return STATUS_HV_NOT_PRESENT;
+	}
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(HvReadVmRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	// Output buffer needs space for response header + data
+	if (outputLen < sizeof(HvReadVmResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HvReadVmRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->Size == 0)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Limit read size
+	ULONG readSize = min(request->Size, HV_READ_VM_MAX_SIZE);
+
+	// Check output buffer can hold response + data
+	ULONG requiredOutput = sizeof(HvReadVmResponse) + readSize;
+	if (outputLen < requiredOutput)
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	// Response is at the start of the buffer, data follows
+	auto response = (HvReadVmResponse*)Irp->AssociatedIrp.SystemBuffer;
+	PUCHAR dataBuffer = (PUCHAR)Irp->AssociatedIrp.SystemBuffer + sizeof(HvReadVmResponse);
+
+	// Perform the hypervisor read
+	ULONG64 bytesRead = HvReadVirtualMemory(
+		request->ProcessId,
+		request->VirtualAddress,
+		dataBuffer,
+		readSize
+	);
+
+	response->BytesRead = (ULONG)bytesRead;
+	response->Success = (bytesRead > 0) ? TRUE : FALSE;
+
+	*info = sizeof(HvReadVmResponse) + (ULONG)bytesRead;
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleHvWriteVm(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	// Validate hypervisor is running
+	if (!HvIsHypervisorRunning())
+	{
+		KdPrint((DRIVER_PREFIX "Hypervisor not running, cannot perform ring -1 write\n"));
+		return STATUS_HV_NOT_PRESENT;
+	}
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(HvWriteVmRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	if (outputLen < sizeof(HvWriteVmResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HvWriteVmRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->Size == 0)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Validate input buffer contains the data
+	SIZE_T expectedSize = FIELD_OFFSET(HvWriteVmRequest, Data) + request->Size;
+	if (inputLen < expectedSize)
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	// Limit write size
+	ULONG writeSize = min(request->Size, HV_READ_VM_MAX_SIZE);
+
+	// Perform the hypervisor write
+	ULONG64 bytesWritten = HvWriteVirtualMemory(
+		request->ProcessId,
+		request->VirtualAddress,
+		(PVOID)request->Data,
+		writeSize
+	);
+
+	auto response = (HvWriteVmResponse*)Irp->AssociatedIrp.SystemBuffer;
+	response->BytesWritten = (ULONG)bytesWritten;
+	response->Success = (bytesWritten > 0) ? TRUE : FALSE;
+
+	*info = sizeof(HvWriteVmResponse);
+	return STATUS_SUCCESS;
 }
 
 // ============== Early Injection Handlers ==============

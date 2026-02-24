@@ -402,7 +402,7 @@ pub fn format_bytes_as_value(bytes: &[u8], data_type: ScanDataType) -> String {
 }
 
 /// Compare bytes as a typed value
-fn compare_bytes(bytes: &[u8], target: &[u8], data_type: ScanDataType, scan_type: ScanType) -> bool {
+pub fn compare_bytes(bytes: &[u8], target: &[u8], data_type: ScanDataType, scan_type: ScanType) -> bool {
     if data_type.is_aob() {
         // AOB comparison is handled by compare_aob() with mask — not here.
         // This function is called for non-AOB types only.
@@ -424,7 +424,7 @@ fn compare_bytes(bytes: &[u8], target: &[u8], data_type: ScanDataType, scan_type
 }
 
 /// Compare a byte slice against an AOB pattern with wildcard mask
-fn compare_aob(bytes: &[u8], pattern: &AobPattern) -> bool {
+pub fn compare_aob(bytes: &[u8], pattern: &AobPattern) -> bool {
     if bytes.len() < pattern.bytes.len() {
         return false;
     }
@@ -437,7 +437,7 @@ fn compare_aob(bytes: &[u8], pattern: &AobPattern) -> bool {
 }
 
 /// Compare bytes as previous vs current (for next scans)
-fn compare_prev_current(
+pub fn compare_prev_current(
     prev: &[u8],
     current: &[u8],
     target: &[u8],
@@ -461,7 +461,7 @@ fn compare_prev_current(
     }
 }
 
-fn cmp_typed(a: &[u8], b: &[u8], dt: ScanDataType) -> std::cmp::Ordering {
+pub fn cmp_typed(a: &[u8], b: &[u8], dt: ScanDataType) -> std::cmp::Ordering {
     macro_rules! cmp_as {
         ($ty:ty) => {{
             let s = std::mem::size_of::<$ty>();
@@ -553,9 +553,9 @@ pub struct ScanRegion {
 }
 
 /// Constants for memory state/protection
-const MEM_COMMIT: u32 = 0x1000;
-const PAGE_NOACCESS: u32 = 0x01;
-const PAGE_GUARD: u32 = 0x100;
+pub const MEM_COMMIT: u32 = 0x1000;
+pub const PAGE_NOACCESS: u32 = 0x01;
+pub const PAGE_GUARD: u32 = 0x100;
 
 // ============== Scanner Core ==============
 

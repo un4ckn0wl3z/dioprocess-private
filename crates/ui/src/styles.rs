@@ -1145,6 +1145,23 @@ const BASE_STYLES: &str = r#"
         background: var(--bg-secondary);
         border-bottom: 1px solid var(--border-secondary);
         flex-shrink: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border-color) transparent;
+    }
+    .tab-bar::-webkit-scrollbar {
+        height: 6px;
+    }
+    .tab-bar::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    .tab-bar::-webkit-scrollbar-thumb {
+        background: var(--border-color);
+        border-radius: 3px;
+    }
+    .tab-bar::-webkit-scrollbar-thumb:hover {
+        background: var(--text-secondary);
     }
     .tab-item {
         padding: 12px 24px;
@@ -1155,6 +1172,8 @@ const BASE_STYLES: &str = r#"
         border-bottom: 2px solid transparent;
         transition: all 0.15s;
         cursor: pointer;
+        white-space: nowrap;
+        flex-shrink: 0;
     }
     .tab-item:hover {
         color: var(--text-accent);

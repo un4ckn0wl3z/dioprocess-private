@@ -22,6 +22,7 @@ mod porthide;
 mod physical_memory;
 mod process_hide;
 pub mod scanner;
+pub mod hv_scanner;
 mod pspcidtable;
 pub mod storage;
 mod types;
@@ -65,6 +66,10 @@ pub use scanner::{
     enum_vm_regions, first_scan, next_scan, parse_aob_pattern, parse_scan_value,
     phys_read_virtual_memory, write_scan_value, format_bytes_as_value,
     AobPattern, ScanDataType, ScanRegion, ScanResult, ScanType,
+};
+pub use hv_scanner::{
+    hv_read_virtual_memory, hv_write_virtual_memory, hv_write_scan_value,
+    hv_first_scan, hv_next_scan,
 };
 pub use storage::{EventFilter, EventStorage};
 pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};

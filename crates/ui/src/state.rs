@@ -233,6 +233,26 @@ pub static REG_CHANGE_LIST: GlobalSignal<Vec<callback::RegChangeInfo>> = Signal:
 pub static REG_CHANGE_STATUS: GlobalSignal<String> = Signal::global(|| String::new());
 pub static REG_CHANGE_IS_ERROR: GlobalSignal<bool> = Signal::global(|| false);
 
+// ============================================================================
+// HV Scanner Tab State - persist across tab switches (Ring -1 Scanner)
+// ============================================================================
+
+pub static HV_SCANNER_PID: GlobalSignal<String> = Signal::global(|| String::new());
+pub static HV_SCANNER_VALUE: GlobalSignal<String> = Signal::global(|| String::new());
+pub static HV_SCANNER_VALUE2: GlobalSignal<String> = Signal::global(|| String::new());
+pub static HV_SCANNER_DATA_TYPE_IDX: GlobalSignal<usize> = Signal::global(|| 4); // Default to U32
+pub static HV_SCANNER_SCAN_TYPE_IDX: GlobalSignal<usize> = Signal::global(|| 0);
+pub static HV_SCANNER_RESULTS: GlobalSignal<Vec<callback::ScanResult>> = Signal::global(Vec::new);
+pub static HV_SCANNER_HAS_SCANNED: GlobalSignal<bool> = Signal::global(|| false);
+pub static HV_SCANNER_IS_SCANNING: GlobalSignal<bool> = Signal::global(|| false);
+pub static HV_SCANNER_STATUS: GlobalSignal<String> = Signal::global(|| String::new());
+pub static HV_SCANNER_IS_ERROR: GlobalSignal<bool> = Signal::global(|| false);
+pub static HV_SCANNER_PAGE: GlobalSignal<usize> = Signal::global(|| 0);
+pub static HV_SCANNER_SELECTED: GlobalSignal<Option<usize>> = Signal::global(|| None);
+pub static HV_SCANNER_WRITE_VALUE: GlobalSignal<String> = Signal::global(|| String::new());
+pub static HV_SCANNER_EDITING_IDX: GlobalSignal<Option<usize>> = Signal::global(|| None);
+pub static HV_SCANNER_EDIT_VALUE: GlobalSignal<String> = Signal::global(|| String::new());
+
 /// Process view mode - flat list or tree hierarchy
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ProcessViewMode {
