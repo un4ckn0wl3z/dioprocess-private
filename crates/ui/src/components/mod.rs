@@ -29,6 +29,7 @@ mod utilities_tab;
 mod scripts_tab;
 mod ept_hook_modal;
 mod reg_change_modal;
+mod packet_capture_tab;
 
 pub use app::{App, Layout};
 pub use callback_tab::CallbackTab;
@@ -59,3 +60,4 @@ pub use utilities_tab::UtilitiesTab;
 pub use scripts_tab::ScriptsTab;
 pub use ept_hook_modal::EptHookModal;
 pub use reg_change_modal::RegChangeModal;
+pub use packet_capture_tab::PacketCaptureTab;

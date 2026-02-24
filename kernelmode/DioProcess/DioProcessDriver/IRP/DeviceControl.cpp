@@ -12,6 +12,7 @@
 #include "../EptHook/RegisterChange.h"
 #include "../Memory/HideMemory.h"
 #include "../ProcessKill/ProcessKill.h"
+#include "../WFP/WfpCapture.h"
 
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
@@ -36,6 +37,17 @@ NTSTATUS HandleHideMemory(PIRP Irp, PIO_STACK_LOCATION irpSp);
 
 // Forward declaration for Kernel Manual Map handler
 NTSTATUS HandleKernelManualMap(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// Forward declarations for Packet Capture handlers
+NTSTATUS HandlePacketStartCapture(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandlePacketStopCapture(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandlePacketGetPackets(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandlePacketInject(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandlePacketAddFilter(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandlePacketRemoveFilter(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandlePacketClearFilters(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandlePacketClearBuffer(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandlePacketGetState(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 
 // ============== IOCTL Device Control Dispatcher ==============
 
@@ -390,6 +402,43 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_KILL_PEB_CORRUPT:
 		status = HandleKillPebCorrupt(Irp, irpSp);
+		break;
+
+	// Packet Capture IOCTLs (WFP)
+	case IOCTL_DIOPROCESS_PACKET_START_CAPTURE:
+		status = HandlePacketStartCapture(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PACKET_STOP_CAPTURE:
+		status = HandlePacketStopCapture(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PACKET_GET_PACKETS:
+		status = HandlePacketGetPackets(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_PACKET_INJECT:
+		status = HandlePacketInject(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PACKET_ADD_FILTER:
+		status = HandlePacketAddFilter(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PACKET_REMOVE_FILTER:
+		status = HandlePacketRemoveFilter(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PACKET_CLEAR_FILTERS:
+		status = HandlePacketClearFilters(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PACKET_CLEAR_BUFFER:
+		status = HandlePacketClearBuffer(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_PACKET_GET_STATE:
+		status = HandlePacketGetState(Irp, irpSp, &info);
 		break;
 
 	default:
@@ -4646,4 +4695,120 @@ NTSTATUS HandleHideMemory(PIRP Irp, PIO_STACK_LOCATION irpSp)
 	}
 
 	return HideMemorySetProtection(request->ProcessId, request->VirtualAddress, request->Protection);
+}
+
+// ============== Packet Capture Handlers (WFP) ==============
+
+NTSTATUS HandlePacketStartCapture(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(PacketCaptureStartRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (PacketCaptureStartRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	return WfpStartCapture(request->TargetPid);
+}
+
+NTSTATUS HandlePacketStopCapture(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+
+	return WfpStopCapture();
+}
+
+NTSTATUS HandlePacketGetPackets(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+	if (outputLen < sizeof(CapturedPacketData))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto buffer = Irp->AssociatedIrp.SystemBuffer;
+	if (!buffer)
+		return STATUS_INVALID_PARAMETER;
+
+	ULONG bytesWritten = 0;
+	NTSTATUS status = WfpGetCapturedPackets(buffer, outputLen, &bytesWritten);
+
+	*info = bytesWritten;
+	return status;
+}
+
+NTSTATUS HandlePacketInject(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(CapturedPacketData))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto packet = (CapturedPacket*)Irp->AssociatedIrp.SystemBuffer;
+	if (!packet)
+		return STATUS_INVALID_PARAMETER;
+
+	return WfpInjectPacket(packet);
+}
+
+NTSTATUS HandlePacketAddFilter(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(PacketFilterRuleData))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto rule = (PacketFilterRule*)Irp->AssociatedIrp.SystemBuffer;
+	if (!rule)
+		return STATUS_INVALID_PARAMETER;
+
+	return WfpAddFilterRule(rule);
+}
+
+NTSTATUS HandlePacketRemoveFilter(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(PacketFilterRemoveRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (PacketFilterRemoveRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	return WfpRemoveFilterRule(request->Index);
+}
+
+NTSTATUS HandlePacketClearFilters(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+
+	return WfpClearFilterRules();
+}
+
+NTSTATUS HandlePacketClearBuffer(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+
+	return WfpClearPacketBuffer();
+}
+
+NTSTATUS HandlePacketGetState(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+	if (outputLen < sizeof(PacketCaptureStateResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto response = (PacketCaptureStateResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+		return STATUS_INVALID_PARAMETER;
+
+	NTSTATUS status = WfpGetCaptureState(
+		&response->IsCapturing,
+		&response->TargetPid,
+		&response->PacketCount,
+		&response->DroppedCount
+	);
+
+	*info = sizeof(PacketCaptureStateResponse);
+	return status;
 }

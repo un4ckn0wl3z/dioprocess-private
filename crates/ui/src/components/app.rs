@@ -134,6 +134,7 @@ pub fn Layout() -> Element {
     let is_memory_scanner_tab = matches!(route, Route::MemoryScannerTab {});
     let is_hv_scanner_tab = matches!(route, Route::HvScannerTab {});
     let is_scripts_tab = matches!(route, Route::ScriptsTab {});
+    let is_packet_capture_tab = matches!(route, Route::PacketCaptureTab {});
     let is_uefi_tab = matches!(route, Route::UefiTab {});
     let is_callback_tab = matches!(route, Route::CallbackTab {});
 
@@ -1106,6 +1107,12 @@ pub fn Layout() -> Element {
                         class: if is_scripts_tab { "tab-item tab-active" } else { "tab-item" },
                         "Scripts"
                         span { class: "experimental-badge", style: "background: #8b5cf6;", "DPH/DPR" }
+                    }
+                    Link {
+                        to: Route::PacketCaptureTab {},
+                        class: if is_packet_capture_tab { "tab-item tab-active" } else { "tab-item" },
+                        "Packet Capture"
+                        span { class: "experimental-badge", style: "background: #0891b2;", "WFP" }
                     }
                     Link {
                         to: Route::UefiTab {},

@@ -96,7 +96,7 @@
     </ClCompile>
     <Link>
       <AdditionalOptions>/integritycheck %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalDependencies>$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(DDK_LIB_PATH)aux_klib.lib;$(DDK_LIB_PATH)ntstrsafe.lib;$(DDK_LIB_PATH)fltMgr.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(DDK_LIB_PATH)aux_klib.lib;$(DDK_LIB_PATH)ntstrsafe.lib;$(DDK_LIB_PATH)fltMgr.lib;$(DDK_LIB_PATH)fwpkclnt.lib;$(DDK_LIB_PATH)ndis.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <MASM>
       <ObjectFileName>$(IntDir)%(FileName)_ASM.obj</ObjectFileName>
@@ -118,7 +118,7 @@
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(DDK_LIB_PATH)aux_klib.lib;$(DDK_LIB_PATH)ntstrsafe.lib;$(DDK_LIB_PATH)fltMgr.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(DDK_LIB_PATH)aux_klib.lib;$(DDK_LIB_PATH)ntstrsafe.lib;$(DDK_LIB_PATH)fltMgr.lib;$(DDK_LIB_PATH)fwpkclnt.lib;$(DDK_LIB_PATH)ndis.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <MASM>
       <ObjectFileName>$(IntDir)%(FileName)_ASM.obj</ObjectFileName>
@@ -249,6 +249,9 @@
     <ClCompile Include="IRP\CreateClose.cpp" />
     <ClCompile Include="IRP\Read.cpp" />
     <ClCompile Include="IRP\DeviceControl.cpp" />
+
+    <!-- WFP Packet Capture -->
+    <ClCompile Include="WFP\WfpCapture.cpp" />
 
     <!-- Hypervisor Source Files (no precompiled header) -->
     <ClCompile Include="Hypervisor\ept.cpp">

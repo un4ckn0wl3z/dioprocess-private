@@ -4,7 +4,7 @@ use dioxus::prelude::*;
 
 use crate::components::{
     CallbackTab, HvScannerTab, HypervisorTab, KernelUtilitiesTab, Layout, MemoryScannerTab,
-    MemoryTranslateTab, NetworkTab, ProcessTab, ScriptsTab, ServiceTab, UefiTab, UtilitiesTab,
+    MemoryTranslateTab, NetworkTab, PacketCaptureTab, ProcessTab, ScriptsTab, ServiceTab, UefiTab, UtilitiesTab,
 };
 
 /// Application routes
@@ -35,4 +35,6 @@ pub enum Route {
     CallbackTab {},
     #[route("/scripts")]
     ScriptsTab {},
+    #[route("/packet-capture")]
+    PacketCaptureTab {},
 }

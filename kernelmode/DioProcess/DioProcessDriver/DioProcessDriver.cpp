@@ -7,6 +7,7 @@
 #include "DKOM/ProcessHide.h"
 #include "NSI/PortHide.h"
 #include "EptHook/UsermodeEptHook.h"
+#include "WFP/WfpCapture.h"
 
 #pragma comment(lib, "aux_klib.lib")
 #pragma comment(lib, "fltMgr.lib")
@@ -97,6 +98,9 @@ void DioProcessUnload(PDRIVER_OBJECT DriverObject)
 
 	// Clean up file hiding minifilter
 	FileHide_Cleanup();
+
+	// Clean up WFP packet capture
+	WfpCaptureCleanup();
 
 	// Unregister callbacks in reverse order if they were registered
 	if (g_CallbacksRegistered)
@@ -211,6 +215,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 
 	// Initialize DKOM process hiding (non-fatal)
 	ProcessHide_Init();
+
+	// Initialize WFP packet capture (non-fatal if it fails)
+	status = WfpCaptureInit(devObj);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "WFP Packet Capture init failed (0x%X) - feature disabled\n", status));
+		// Continue anyway, packet capture just won't work
+	}
 
 	// FileHide and PortHide are NOT initialized here.
 	// They require the NSI dispatch hook / minifilter to be active, which causes a

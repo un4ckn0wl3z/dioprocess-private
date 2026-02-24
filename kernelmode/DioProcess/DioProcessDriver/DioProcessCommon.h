@@ -1114,3 +1114,90 @@ struct EnumVmRegionsResponse
 	ULONG _pad;
 	VmRegionEntry Entries[1]; // variable-length; allocate for MAX_VM_REGION_ENTRIES
 };
+
+// ============== Packet Capture IOCTLs (WFP) ==============
+
+#define IOCTL_DIOPROCESS_PACKET_START_CAPTURE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x900, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PACKET_STOP_CAPTURE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x901, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PACKET_GET_PACKETS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x902, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PACKET_INJECT \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x903, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PACKET_ADD_FILTER \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x904, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PACKET_REMOVE_FILTER \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x905, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PACKET_CLEAR_FILTERS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x906, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PACKET_CLEAR_BUFFER \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x907, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_PACKET_GET_STATE \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x908, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// ============== Packet Capture Structures ==============
+
+#define MAX_PACKET_PAYLOAD_SIZE 1500
+
+enum class PacketDirection : UCHAR
+{
+	Outbound = 0,
+	Inbound = 1
+};
+
+enum class PacketProtocol : UCHAR
+{
+	TCP = 6,
+	UDP = 17
+};
+
+enum class PacketFilterAction : UCHAR
+{
+	Allow = 0,
+	Block = 1
+};
+
+#pragma pack(push, 1)
+struct CapturedPacketData
+{
+	ULONG64 Id;
+	ULONG64 Timestamp;
+	ULONG ProcessId;
+	PacketDirection Direction;
+	PacketProtocol Protocol;
+	ULONG LocalAddr;
+	USHORT LocalPort;
+	ULONG RemoteAddr;
+	USHORT RemotePort;
+	USHORT PayloadSize;
+	UCHAR Payload[MAX_PACKET_PAYLOAD_SIZE];
+};
+#pragma pack(pop)
+
+struct PacketCaptureStartRequest
+{
+	ULONG TargetPid;
+};
+
+struct PacketCaptureStateResponse
+{
+	BOOLEAN IsCapturing;
+	ULONG TargetPid;
+	ULONG PacketCount;
+	ULONG DroppedCount;
+};
+
+struct PacketFilterRuleData
+{
+	BOOLEAN Enabled;
+	PacketFilterAction Action;
+	USHORT Port;           // 0 = any port
+	ULONG IpAddress;       // 0 = any IP
+	PacketProtocol Protocol;
+};
+
+struct PacketFilterRemoveRequest
+{
+	ULONG Index;
+};
