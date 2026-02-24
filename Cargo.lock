@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "callback"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "keystone-engine",
  "once_cell",
@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "dioprocess"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "dioxus",
  "embed-resource",
@@ -2995,7 +2995,7 @@ dependencies = [
 
 [[package]]
 name = "misc"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "callback",
  "ntapi",
@@ -3082,7 +3082,7 @@ dependencies = [
 
 [[package]]
 name = "network"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "process",
  "windows 0.58.0",
@@ -3783,7 +3783,7 @@ dependencies = [
 
 [[package]]
 name = "process"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "ntapi",
  "sysinfo",
@@ -4394,7 +4394,7 @@ dependencies = [
 
 [[package]]
 name = "service"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "windows 0.58.0",
 ]
@@ -5161,14 +5161,14 @@ dependencies = [
 
 [[package]]
 name = "uefi-manager"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "windows 0.58.0",
 ]
 
 [[package]]
 name = "ui"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "arboard",
  "callback",
