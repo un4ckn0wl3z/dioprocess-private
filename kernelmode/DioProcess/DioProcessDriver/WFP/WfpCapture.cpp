@@ -224,42 +224,28 @@ void NTAPI WfpClassifyOutbound(
     _In_ const FWPS_INCOMING_VALUES0* inFixedValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0* inMetaValues,
     _Inout_opt_ void* layerData,
-    _In_opt_ const void* classifyContext,
     _In_ const FWPS_FILTER0* filter,
     _In_ UINT64 flowContext,
     _Inout_ FWPS_CLASSIFY_OUT0* classifyOut)
 {
-    UNREFERENCED_PARAMETER(inFixedValues);
-    UNREFERENCED_PARAMETER(inMetaValues);
-    UNREFERENCED_PARAMETER(layerData);
-    UNREFERENCED_PARAMETER(classifyContext);
     UNREFERENCED_PARAMETER(filter);
     UNREFERENCED_PARAMETER(flowContext);
 
-    // TEMPORARY: Just permit everything to test if callout registration works
-    classifyOut->actionType = FWP_ACTION_PERMIT;
-    // ProcessPacket(PacketDirection::Outbound, inFixedValues, inMetaValues, layerData, classifyOut);
+    ProcessPacket(PacketDirection::Outbound, inFixedValues, inMetaValues, layerData, classifyOut);
 }
 
 void NTAPI WfpClassifyInbound(
     _In_ const FWPS_INCOMING_VALUES0* inFixedValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0* inMetaValues,
     _Inout_opt_ void* layerData,
-    _In_opt_ const void* classifyContext,
     _In_ const FWPS_FILTER0* filter,
     _In_ UINT64 flowContext,
     _Inout_ FWPS_CLASSIFY_OUT0* classifyOut)
 {
-    UNREFERENCED_PARAMETER(inFixedValues);
-    UNREFERENCED_PARAMETER(inMetaValues);
-    UNREFERENCED_PARAMETER(layerData);
-    UNREFERENCED_PARAMETER(classifyContext);
     UNREFERENCED_PARAMETER(filter);
     UNREFERENCED_PARAMETER(flowContext);
 
-    // TEMPORARY: Just permit everything to test if callout registration works
-    classifyOut->actionType = FWP_ACTION_PERMIT;
-    // ProcessPacket(PacketDirection::Inbound, inFixedValues, inMetaValues, layerData, classifyOut);
+    ProcessPacket(PacketDirection::Inbound, inFixedValues, inMetaValues, layerData, classifyOut);
 }
 
 NTSTATUS NTAPI WfpNotifyFn(
@@ -344,9 +330,9 @@ NTSTATUS WfpCaptureInit(PDEVICE_OBJECT DeviceObject)
     // Register outbound callout
     FWPS_CALLOUT0 sCalloutOutbound = { 0 };
     sCalloutOutbound.calloutKey = GUID_WFP_CALLOUT_OUTBOUND;
-    sCalloutOutbound.classifyFn = reinterpret_cast<FWPS_CALLOUT_CLASSIFY_FN0>(WfpClassifyOutbound);
-    sCalloutOutbound.notifyFn = reinterpret_cast<FWPS_CALLOUT_NOTIFY_FN0>(WfpNotifyFn);
-    sCalloutOutbound.flowDeleteFn = reinterpret_cast<FWPS_CALLOUT_FLOW_DELETE_NOTIFY_FN0>(WfpFlowDeleteFn);
+    sCalloutOutbound.classifyFn = WfpClassifyOutbound;
+    sCalloutOutbound.notifyFn = WfpNotifyFn;
+    sCalloutOutbound.flowDeleteFn = WfpFlowDeleteFn;
 
     status = FwpsCalloutRegister0(DeviceObject, &sCalloutOutbound, &g_WfpCalloutIdOutbound);
     if (!NT_SUCCESS(status))
@@ -373,9 +359,9 @@ NTSTATUS WfpCaptureInit(PDEVICE_OBJECT DeviceObject)
     // Register inbound callout
     FWPS_CALLOUT0 sCalloutInbound = { 0 };
     sCalloutInbound.calloutKey = GUID_WFP_CALLOUT_INBOUND;
-    sCalloutInbound.classifyFn = reinterpret_cast<FWPS_CALLOUT_CLASSIFY_FN0>(WfpClassifyInbound);
-    sCalloutInbound.notifyFn = reinterpret_cast<FWPS_CALLOUT_NOTIFY_FN0>(WfpNotifyFn);
-    sCalloutInbound.flowDeleteFn = reinterpret_cast<FWPS_CALLOUT_FLOW_DELETE_NOTIFY_FN0>(WfpFlowDeleteFn);
+    sCalloutInbound.classifyFn = WfpClassifyInbound;
+    sCalloutInbound.notifyFn = WfpNotifyFn;
+    sCalloutInbound.flowDeleteFn = WfpFlowDeleteFn;
 
     status = FwpsCalloutRegister0(DeviceObject, &sCalloutInbound, &g_WfpCalloutIdInbound);
     if (!NT_SUCCESS(status))
