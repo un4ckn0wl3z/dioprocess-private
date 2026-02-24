@@ -361,3 +361,5 @@ pub static PACKET_MANAGER_SAVE_DESC: GlobalSignal<String> = Signal::global(|| St
 pub static PACKET_MANAGER_SAVE_TAGS: GlobalSignal<String> = Signal::global(|| String::new());
 /// 0 = Capture view, 1 = Manager view
 pub static PACKET_CAPTURE_VIEW_MODE: GlobalSignal<usize> = Signal::global(|| 0);
+/// Sort order: false = oldest first (ascending), true = newest first (descending)
+pub static PACKET_CAPTURE_SORT_DESC: GlobalSignal<bool> = Signal::global(|| false);

@@ -2929,4 +2929,18 @@ const BASE_STYLES: &str = r#"
         margin-top: 20px;
     }
 
+    .th-sortable {
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .th-sortable:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .sort-indicator {
+        font-size: 10px;
+        opacity: 0.7;
+    }
+
 "#;

@@ -13,6 +13,7 @@ use crate::state::{
     PACKET_CAPTURE_SELECTED, PACKET_CAPTURE_STATUS, PACKET_CAPTURE_IS_ERROR,
     PACKET_CAPTURE_AUTO_SCROLL, PACKET_CAPTURE_EDIT_MODE, PACKET_CAPTURE_EDIT_PAYLOAD,
     PACKET_CAPTURE_EDIT_ASCII, PACKET_CAPTURE_FILTER_RULES, PACKET_CAPTURE_VIEW_MODE,
+    PACKET_CAPTURE_SORT_DESC,
     PACKET_MANAGER_PACKETS, PACKET_MANAGER_SELECTED, PACKET_MANAGER_SEARCH,
     PACKET_MANAGER_STATUS, PACKET_MANAGER_IS_ERROR, PACKET_MANAGER_SHOW_SAVE_MODAL,
     PACKET_MANAGER_SAVE_NAME, PACKET_MANAGER_SAVE_DESC, PACKET_MANAGER_SAVE_TAGS,
@@ -61,6 +62,7 @@ pub fn PacketCaptureTab() -> Element {
     let mut edit_mode = PACKET_CAPTURE_EDIT_MODE.signal();
     let mut edit_payload = PACKET_CAPTURE_EDIT_PAYLOAD.signal();
     let mut edit_ascii = PACKET_CAPTURE_EDIT_ASCII.signal();
+    let mut sort_desc = PACKET_CAPTURE_SORT_DESC.signal();
     
     // Local state for filter input (doesn't need persistence)
     let mut new_filter_port = use_signal(|| String::new());
@@ -76,7 +78,8 @@ pub fn PacketCaptureTab() -> Element {
             if capture_state.read().is_capturing {
                 // Get new packets
                 if let Ok(new_packets) = get_captured_packets() {
-                    if !new_packets.is_empty() {
+                    let had_new = !new_packets.is_empty();
+                    if had_new {
                         let mut current = packets.write();
                         current.extend(new_packets);
                         // Limit to 10000 packets
@@ -84,6 +87,20 @@ pub fn PacketCaptureTab() -> Element {
                             let excess = current.len() - 10000;
                             current.drain(0..excess);
                         }
+                    }
+                    // Auto-scroll if enabled and we got new packets
+                    if had_new && *auto_scroll.read() && !*sort_desc.read() {
+                        // Scroll to bottom (newest at bottom when ascending)
+                        let _ = dioxus::document::eval(r#"
+                            let container = document.getElementById('packet-table-container');
+                            if (container) { container.scrollTop = container.scrollHeight; }
+                        "#);
+                    } else if had_new && *auto_scroll.read() && *sort_desc.read() {
+                        // Scroll to top (newest at top when descending)
+                        let _ = dioxus::document::eval(r#"
+                            let container = document.getElementById('packet-table-container');
+                            if (container) { container.scrollTop = 0; }
+                        "#);
                     }
                 }
                 // Update state
@@ -413,12 +430,24 @@ pub fn PacketCaptureTab() -> Element {
                 // Left: packet table
                 div {
                     class: "packet-table-container",
+                    id: "packet-table-container",
                     table {
                         class: "packet-table",
                         thead {
                             class: "table-header",
                             tr {
-                                th { class: "th", "#" }
+                                th { 
+                                    class: "th th-sortable",
+                                    onclick: move |_| {
+                                        let current = *sort_desc.read();
+                                        sort_desc.set(!current);
+                                    },
+                                    "#"
+                                    span { 
+                                        class: "sort-indicator",
+                                        if *sort_desc.read() { " ▼" } else { " ▲" }
+                                    }
+                                }
                                 th { class: "th", "Time" }
                                 th { class: "th", "Dir" }
                                 th { class: "th", "Proto" }
@@ -428,42 +457,54 @@ pub fn PacketCaptureTab() -> Element {
                             }
                         }
                         tbody {
-                            for (idx, packet) in packets.read().iter().enumerate() {
-                                {
-                                    let pkt_id = packet.id;
-                                    let ts = format_timestamp(packet.timestamp);
-                                    let dir = packet.direction;
-                                    let dir_str = direction_str(dir);
-                                    let dir_class = direction_class(dir);
-                                    let proto = format!("{}", packet.protocol);
-                                    let src = format!("{}:{}", packet.local_addr, packet.local_port);
-                                    let dst = format!("{}:{}", packet.remote_addr, packet.remote_port);
-                                    let plen = packet.payload.len();
-                                    let payload_hex = packet.payload.iter()
-                                        .map(|b| format!("{:02X}", b))
-                                        .collect::<Vec<_>>()
-                                        .join(" ");
-                                    let is_selected = *selected_packet_idx.read() == Some(idx);
-                                    let row_class = if is_selected { "process-row selected" } else { "process-row" };
-                                    rsx! {
-                                        tr {
-                                            key: "{pkt_id}",
-                                            class: "{row_class}",
-                                            onclick: move |_| {
-                                                selected_packet_idx.set(Some(idx));
-                                                edit_payload.set(payload_hex.clone());
-                                                edit_mode.set(false);
-                                            },
-                                            td { class: "cell cell-id", "{pkt_id}" }
-                                            td { class: "cell cell-time", "{ts}" }
-                                            td {
-                                                class: "cell cell-dir",
-                                                span { class: "{dir_class}", "{dir_str}" }
+                            {
+                                let packets_list = packets.read();
+                                let is_desc = *sort_desc.read();
+                                let indices: Vec<usize> = if is_desc {
+                                    (0..packets_list.len()).rev().collect()
+                                } else {
+                                    (0..packets_list.len()).collect()
+                                };
+                                rsx! {
+                                    for idx in indices {
+                                        {
+                                            let packet = &packets_list[idx];
+                                            let pkt_id = packet.id;
+                                            let ts = format_timestamp(packet.timestamp);
+                                            let dir = packet.direction;
+                                            let dir_str = direction_str(dir);
+                                            let dir_class = direction_class(dir);
+                                            let proto = format!("{}", packet.protocol);
+                                            let src = format!("{}:{}", packet.local_addr, packet.local_port);
+                                            let dst = format!("{}:{}", packet.remote_addr, packet.remote_port);
+                                            let plen = packet.payload.len();
+                                            let payload_hex = packet.payload.iter()
+                                                .map(|b| format!("{:02X}", b))
+                                                .collect::<Vec<_>>()
+                                                .join(" ");
+                                            let is_selected = *selected_packet_idx.read() == Some(idx);
+                                            let row_class = if is_selected { "process-row selected" } else { "process-row" };
+                                            rsx! {
+                                                tr {
+                                                    key: "{pkt_id}",
+                                                    class: "{row_class}",
+                                                    onclick: move |_| {
+                                                        selected_packet_idx.set(Some(idx));
+                                                        edit_payload.set(payload_hex.clone());
+                                                        edit_mode.set(false);
+                                                    },
+                                                    td { class: "cell cell-id", "{pkt_id}" }
+                                                    td { class: "cell cell-time", "{ts}" }
+                                                    td {
+                                                        class: "cell cell-dir",
+                                                        span { class: "{dir_class}", "{dir_str}" }
+                                                    }
+                                                    td { class: "cell cell-proto", "{proto}" }
+                                                    td { class: "cell cell-addr", "{src}" }
+                                                    td { class: "cell cell-addr", "{dst}" }
+                                                    td { class: "cell cell-len", "{plen}" }
+                                                }
                                             }
-                                            td { class: "cell cell-proto", "{proto}" }
-                                            td { class: "cell cell-addr", "{src}" }
-                                            td { class: "cell cell-addr", "{dst}" }
-                                            td { class: "cell cell-len", "{plen}" }
                                         }
                                     }
                                 }
