@@ -24,7 +24,7 @@ const IOCTL_DIOPROCESS_PACKET_GET_STATE: u32 = 0x00222420;     // CTL_CODE(0x22,
 const MAX_PACKET_PAYLOAD: usize = 1500;
 
 /// Packet direction
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
 pub enum PacketDirection {
     Outbound = 0,
@@ -41,7 +41,7 @@ impl From<u8> for PacketDirection {
 }
 
 /// Packet protocol
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
 pub enum PacketProtocol {
     Tcp = 6,

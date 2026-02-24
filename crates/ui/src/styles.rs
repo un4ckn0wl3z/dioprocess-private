@@ -2830,4 +2830,103 @@ const BASE_STYLES: &str = r#"
         color: var(--text-muted);
     }
 
+    .header-title-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+
+    .view-mode-toggle {
+        display: flex;
+        gap: 4px;
+    }
+
+    .search-input {
+        flex: 1;
+        max-width: 300px;
+        padding: 8px 12px;
+        border: 1px solid var(--border-primary);
+        border-radius: 6px;
+        background: var(--bg-input);
+        color: var(--text-primary);
+        font-size: 13px;
+        outline: none;
+        transition: all 0.15s;
+    }
+
+    .search-input:focus {
+        background: rgba(255, 255, 255, 0.12);
+        border-color: var(--border-accent);
+    }
+
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .modal-content {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: 12px;
+        padding: 24px;
+        min-width: 400px;
+        max-width: 500px;
+    }
+
+    .modal-content h2 {
+        margin: 0 0 16px 0;
+        color: var(--text-primary);
+        font-size: 18px;
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--text-secondary);
+        font-size: 13px;
+    }
+
+    .form-input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--border-primary);
+        border-radius: 6px;
+        background: var(--bg-input);
+        color: var(--text-primary);
+        font-size: 13px;
+        outline: none;
+        box-sizing: border-box;
+    }
+
+    .form-input:focus {
+        border-color: var(--border-accent);
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    textarea.form-input {
+        min-height: 80px;
+        resize: vertical;
+        font-family: inherit;
+    }
+
+    .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 20px;
+    }
+
 "#;

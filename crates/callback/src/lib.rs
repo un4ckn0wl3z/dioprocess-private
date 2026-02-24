@@ -27,6 +27,7 @@ mod pspcidtable;
 pub mod storage;
 mod types;
 pub mod packet_capture;
+pub mod packet_storage;
 
 pub use driver::{
     clear_debug_flags, enable_all_privileges, enumerate_image_callbacks, enumerate_kernel_drivers,

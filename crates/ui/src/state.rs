@@ -348,3 +348,16 @@ pub static PACKET_CAPTURE_EDIT_MODE: GlobalSignal<bool> = Signal::global(|| fals
 pub static PACKET_CAPTURE_EDIT_PAYLOAD: GlobalSignal<String> = Signal::global(|| String::new());
 pub static PACKET_CAPTURE_EDIT_ASCII: GlobalSignal<bool> = Signal::global(|| false); // false = hex, true = ascii
 pub static PACKET_CAPTURE_FILTER_RULES: GlobalSignal<Vec<(callback::packet_capture::PacketFilterRule, usize)>> = Signal::global(Vec::new);
+
+// Packet Manager state
+pub static PACKET_MANAGER_PACKETS: GlobalSignal<Vec<callback::packet_storage::SavedPacket>> = Signal::global(Vec::new);
+pub static PACKET_MANAGER_SELECTED: GlobalSignal<Option<i64>> = Signal::global(|| None);
+pub static PACKET_MANAGER_SEARCH: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PACKET_MANAGER_STATUS: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PACKET_MANAGER_IS_ERROR: GlobalSignal<bool> = Signal::global(|| false);
+pub static PACKET_MANAGER_SHOW_SAVE_MODAL: GlobalSignal<bool> = Signal::global(|| false);
+pub static PACKET_MANAGER_SAVE_NAME: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PACKET_MANAGER_SAVE_DESC: GlobalSignal<String> = Signal::global(|| String::new());
+pub static PACKET_MANAGER_SAVE_TAGS: GlobalSignal<String> = Signal::global(|| String::new());
+/// 0 = Capture view, 1 = Manager view
+pub static PACKET_CAPTURE_VIEW_MODE: GlobalSignal<usize> = Signal::global(|| 0);
