@@ -2545,7 +2545,7 @@ fn resolve_target(pid: u32, target_expr: &str) -> Result<u64, String> {
 }
 
 /// Reverse-resolve an address to "module+offset" format if possible
-fn reverse_resolve_address(pid: u32, addr: u64) -> String {
+pub fn reverse_resolve_address(pid: u32, addr: u64) -> String {
     let modules = get_process_modules(pid);
     for m in &modules {
         let base = m.base_address as u64;
@@ -2563,7 +2563,7 @@ fn reverse_resolve_address(pid: u32, addr: u64) -> String {
 }
 
 /// Build .dph file content
-fn build_dph_content(name: &str, target: &str, mode: &str, stolen_bytes: u32, code: &str) -> String {
+pub fn build_dph_content(name: &str, target: &str, mode: &str, stolen_bytes: u32, code: &str) -> String {
     let mut out = String::new();
     out.push_str("# DioProcess Hook Script\n");
     out.push_str("[hook]\n");
@@ -2982,7 +2982,7 @@ pub fn parse_dpr_script(content: &str, file_path: &str) -> Result<DprScript, Str
 }
 
 /// Build .dpr file content
-fn build_dpr_content(name: &str, target: &str, register: &str, value: &str, description: &str) -> String {
+pub fn build_dpr_content(name: &str, target: &str, register: &str, value: &str, description: &str) -> String {
     let mut out = String::new();
     out.push_str("# DioProcess Register Script\n");
     out.push_str("[register]\n");
