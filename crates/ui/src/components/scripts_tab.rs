@@ -152,9 +152,9 @@ pub fn ScriptsTab() -> Element {
                             "Load .dph"
                         }
                         button {
-                            class: "btn",
+                            class: "btn btn-primary",
                             style: "font-size: 12px; padding: 4px 12px;",
-                            disabled: pid_for_scripts == 0 || scripts.iter().all(|s| s.hook_index.is_some()) || !driver_loaded || !hv_running,
+                            disabled: scripts.is_empty() || pid_for_scripts == 0 || !driver_loaded || !hv_running,
                             onclick: {
                                 move |_| {
                                     let pid_str = pid_input.read().clone();
@@ -251,6 +251,24 @@ pub fn ScriptsTab() -> Element {
                                                 td { style: "{status_class} font-size: 11px;", "{script.status}" }
                                                 td {
                                                     div { style: "display: flex; gap: 4px;",
+                                                        if script.hook_index.is_none() {
+                                                            button {
+                                                                class: "btn btn-small btn-primary",
+                                                                disabled: pid_for_scripts == 0 || !driver_loaded || !hv_running,
+                                                                onclick: move |_| {
+                                                                    let pid_str = pid_input.read().clone();
+                                                                    let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+                                                                    if pid == 0 {
+                                                                        status_message.set("Set PID first".to_string());
+                                                                        is_error.set(true);
+                                                                        return;
+                                                                    }
+                                                                    apply_dph_script(idx, pid, &mut dph_scripts, &mut detour_allocs, &mut ept_hooks_list, &mut status_message, &mut is_error);
+                                                                    persist_dph(&dph_scripts.read());
+                                                                },
+                                                                "Apply"
+                                                            }
+                                                        }
                                                         button {
                                                             class: "btn btn-small btn-danger",
                                                             onclick: move |_| {
@@ -324,9 +342,9 @@ pub fn ScriptsTab() -> Element {
                             "Load .dpr"
                         }
                         button {
-                            class: "btn",
+                            class: "btn btn-primary",
                             style: "font-size: 12px; padding: 4px 12px;",
-                            disabled: pid_for_scripts == 0 || scripts.iter().all(|s| s.entry_index.is_some()) || !driver_loaded || !hv_running,
+                            disabled: scripts.is_empty() || pid_for_scripts == 0 || !driver_loaded || !hv_running,
                             onclick: {
                                 move |_| {
                                     let pid_str = pid_input.read().clone();
@@ -418,6 +436,24 @@ pub fn ScriptsTab() -> Element {
                                                 td { style: "{status_class} font-size: 11px;", "{script.status}" }
                                                 td {
                                                     div { style: "display: flex; gap: 4px;",
+                                                        if script.entry_index.is_none() {
+                                                            button {
+                                                                class: "btn btn-small btn-primary",
+                                                                disabled: pid_for_scripts == 0 || !driver_loaded || !hv_running,
+                                                                onclick: move |_| {
+                                                                    let pid_str = pid_input.read().clone();
+                                                                    let pid = pid_str.trim().parse::<u32>().unwrap_or(0);
+                                                                    if pid == 0 {
+                                                                        status_message.set("Set PID first".to_string());
+                                                                        is_error.set(true);
+                                                                        return;
+                                                                    }
+                                                                    apply_dpr_script(idx, pid, &mut dpr_scripts, &mut rc_list, &mut status_message, &mut is_error);
+                                                                    persist_dpr(&dpr_scripts.read());
+                                                                },
+                                                                "Apply"
+                                                            }
+                                                        }
                                                         button {
                                                             class: "btn btn-small btn-danger",
                                                             onclick: move |_| {
@@ -448,18 +484,25 @@ pub fn ScriptsTab() -> Element {
                     div { style: "display: flex; gap: 8px; margin-bottom: 12px;",
                         button {
                             class: "btn",
-                            onclick: move |_| refresh_hooks(),
+                            onclick: move |_| {
+                                refresh_hooks();
+                                if let Ok(list) = list_reg_changes() {
+                                    REG_CHANGE_LIST.write().clone_from(&list);
+                                }
+                            },
                             "Refresh"
                         }
                     }
 
+                    // EPT Hooks (DPH) section
+                    h3 { style: "color: var(--text-primary); font-size: 14px; margin-bottom: 8px;", "EPT Hooks (DPH)" }
                     if ept_hooks_list.read().is_empty() {
                         div {
-                            style: "color: var(--text-secondary); text-align: center; padding: 40px;",
+                            style: "color: var(--text-secondary); text-align: center; padding: 20px; margin-bottom: 16px;",
                             "No active EPT hooks."
                         }
                     } else {
-                        table { class: "process-table",
+                        table { class: "process-table", style: "margin-bottom: 16px;",
                             thead {
                                 tr {
                                     th { style: "width: 60px;", "Index" }
@@ -511,6 +554,81 @@ pub fn ScriptsTab() -> Element {
                                                             }
                                                             if let Ok(hooks) = list_ept_hooks() {
                                                                 ept_hooks_list.set(hooks);
+                                                            }
+                                                        },
+                                                        "Remove"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Register Changes (DPR) section
+                    h3 { style: "color: var(--text-primary); font-size: 14px; margin-bottom: 8px;", "Register Changes (DPR)" }
+                    if rc_list.read().is_empty() {
+                        div {
+                            style: "color: var(--text-secondary); text-align: center; padding: 20px;",
+                            "No active register changes."
+                        }
+                    } else {
+                        table { class: "process-table",
+                            thead {
+                                tr {
+                                    th { style: "width: 60px;", "Index" }
+                                    th { style: "width: 80px;", "PID" }
+                                    th { style: "width: 160px;", "Address" }
+                                    th { style: "width: 80px;", "Register" }
+                                    th { style: "width: 120px;", "Value" }
+                                    th { style: "width: 100px;", "Actions" }
+                                }
+                            }
+                            tbody {
+                                for rc in rc_list.read().iter() {
+                                    {
+                                        let entry_idx = rc.entry_index;
+                                        let rc_pid = rc.process_id;
+                                        let rc_addr = rc.target_address;
+                                        let reg_idx = rc.reg_index;
+                                        let new_val = rc.new_value;
+                                        let reg_name = match reg_idx {
+                                            0 => "RAX", 1 => "RCX", 2 => "RDX", 3 => "RBX",
+                                            4 => "RSP", 5 => "RBP", 6 => "RSI", 7 => "RDI",
+                                            8 => "R8", 9 => "R9", 10 => "R10", 11 => "R11",
+                                            12 => "R12", 13 => "R13", 14 => "R14", 15 => "R15",
+                                            16 => "RIP", 17 => "RFLAGS", 18 => "ZF", 19 => "CF",
+                                            20 => "SF", 21 => "OF", _ => "?"
+                                        };
+                                        rsx! {
+                                            tr {
+                                                td { "#{entry_idx}" }
+                                                td { "{rc_pid}" }
+                                                td { style: "font-family: 'Consolas', monospace; color: var(--accent-primary);",
+                                                    "0x{rc_addr:X}"
+                                                }
+                                                td { "{reg_name}" }
+                                                td { style: "font-family: 'Consolas', monospace;",
+                                                    "0x{new_val:X}"
+                                                }
+                                                td {
+                                                    button {
+                                                        class: "btn btn-small btn-danger",
+                                                        onclick: move |_| {
+                                                            match remove_reg_change(entry_idx) {
+                                                                Ok(_) => {
+                                                                    status_message.set(format!("Removed reg change #{}", entry_idx));
+                                                                    is_error.set(false);
+                                                                }
+                                                                Err(e) => {
+                                                                    status_message.set(format!("Failed to remove: {}", e));
+                                                                    is_error.set(true);
+                                                                }
+                                                            }
+                                                            if let Ok(list) = list_reg_changes() {
+                                                                REG_CHANGE_LIST.write().clone_from(&list);
                                                             }
                                                         },
                                                         "Remove"
