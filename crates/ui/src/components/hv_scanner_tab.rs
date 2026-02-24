@@ -15,7 +15,7 @@ use crate::state::{
     HV_SCANNER_STATUS, HV_SCANNER_VALUE, HV_SCANNER_VALUE2, HV_SCANNER_WRITE_VALUE,
     EPT_HOOK_BYTES_INPUT, EPT_HOOK_IS_ERROR, EPT_HOOK_SHOW_MODAL, EPT_HOOK_STATUS,
     EPT_HOOK_TARGET_ADDR, REG_CHANGE_IS_ERROR, REG_CHANGE_SHOW_MODAL, REG_CHANGE_STATUS,
-    REG_CHANGE_TARGET_ADDR,
+    REG_CHANGE_TARGET_ADDR, SCANNER_PID,
 };
 
 const RESULTS_PER_PAGE: usize = 500;
@@ -820,6 +820,8 @@ pub fn HvScannerTab() -> Element {
                                 class: "context-menu-item",
                                 disabled: !driver_loaded || !hv_running,
                                 onclick: move |_| {
+                                    // Sync HV Scanner PID to SCANNER_PID for architecture detection in modal
+                                    SCANNER_PID.write().clone_from(&pid_input.read());
                                     ept_hook_target.set(Some(addr));
                                     ept_hook_bytes.set(String::new());
                                     ept_hook_show_modal.set(true);
@@ -838,6 +840,8 @@ pub fn HvScannerTab() -> Element {
                                 class: "context-menu-item",
                                 disabled: !driver_loaded || !hv_running,
                                 onclick: move |_| {
+                                    // Sync HV Scanner PID to SCANNER_PID for the modal
+                                    SCANNER_PID.write().clone_from(&pid_input.read());
                                     REG_CHANGE_TARGET_ADDR.write().replace(addr);
                                     rc_show_modal.set(true);
                                     rc_status.set(String::new());
