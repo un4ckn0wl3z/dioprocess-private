@@ -87,8 +87,11 @@ pub fn ScriptsTab() -> Element {
                     onclick: move |_| {
                         active_sub_tab.set(2);
                         refresh_hooks();
+                        if let Ok(list) = list_reg_changes() {
+                            REG_CHANGE_LIST.write().clone_from(&list);
+                        }
                     },
-                    "Active Hooks ({ept_hooks_list.read().len()})"
+                    "Active Hooks ({ept_hooks_list.read().len() + rc_list.read().len()})"
                 }
             }
 
