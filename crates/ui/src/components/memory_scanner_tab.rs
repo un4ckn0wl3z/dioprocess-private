@@ -2429,7 +2429,7 @@ fn parse_hex_bytes(input: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Parse a .dph script file into a DphScript struct
-fn parse_dph_script(content: &str, file_path: &str) -> Result<DphScript, String> {
+pub fn parse_dph_script(content: &str, file_path: &str) -> Result<DphScript, String> {
     let mut name = String::new();
     let mut target = String::new();
     let mut mode_str = String::new();
@@ -2583,18 +2583,18 @@ fn build_dph_content(name: &str, target: &str, mode: &str, stolen_bytes: u32, co
     out
 }
 
-fn persist_dph(scripts: &[DphScript]) {
+pub fn persist_dph(scripts: &[DphScript]) {
     let s = scripts.to_vec();
     spawn(async move { let _ = tokio::task::spawn_blocking(move || crate::config::save_dph_scripts(&s)).await; });
 }
 
-fn persist_dpr(scripts: &[DprScript]) {
+pub fn persist_dpr(scripts: &[DprScript]) {
     let s = scripts.to_vec();
     spawn(async move { let _ = tokio::task::spawn_blocking(move || crate::config::save_dpr_scripts(&s)).await; });
 }
 
 /// Apply a DPH script by index to a target process
-fn apply_dph_script(
+pub fn apply_dph_script(
     script_idx: usize,
     pid: u32,
     dph_scripts: &mut Signal<Vec<DphScript>>,
@@ -2888,7 +2888,7 @@ pub fn apply_dph_file_to_process(pid: u32, file_path: &str) -> Result<String, St
 // ============== .dpr (DioProcess Register) Script System ==============
 
 /// Parse a .dpr script file into a DprScript struct
-fn parse_dpr_script(content: &str, file_path: &str) -> Result<DprScript, String> {
+pub fn parse_dpr_script(content: &str, file_path: &str) -> Result<DprScript, String> {
     let mut name = String::new();
     let mut target = String::new();
     let mut register = String::new();
@@ -2999,7 +2999,7 @@ fn build_dpr_content(name: &str, target: &str, register: &str, value: &str, desc
 }
 
 /// Apply a DPR script by index to a target process
-fn apply_dpr_script(
+pub fn apply_dpr_script(
     script_idx: usize,
     pid: u32,
     dpr_scripts: &mut Signal<Vec<DprScript>>,
