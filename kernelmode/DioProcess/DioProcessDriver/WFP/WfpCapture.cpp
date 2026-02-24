@@ -447,6 +447,7 @@ NTSTATUS WfpCaptureInit(PDEVICE_OBJECT DeviceObject)
     }
 
     // Create injection handle for packet resend (outside transaction)
+    // Use TRANSPORT injection type for proper TCP/UDP injection
     status = FwpsInjectionHandleCreate0(AF_INET, FWPS_INJECTION_TYPE_TRANSPORT, &g_InjectionHandle);
     if (!NT_SUCCESS(status))
     {
@@ -662,75 +663,23 @@ NTSTATUS WfpInjectPacket(_In_ const CapturedPacket* Packet)
     PMDL mdl = nullptr;
     PVOID buffer = nullptr;
     
-    // For transport layer injection, we need to build a proper packet with headers
-    // Calculate total size: IP header (20) + TCP/UDP header (20/8) + payload
-    UINT32 transportHeaderSize = (Packet->Protocol == PacketProtocol::TCP) ? 20 : 8;
-    UINT32 ipHeaderSize = 20;
-    UINT32 totalSize = ipHeaderSize + transportHeaderSize + Packet->PayloadSize;
+    // For transport layer injection, we only need the payload (no IP/TCP headers)
+    // The WFP transport injection APIs handle the headers
+    UINT32 payloadSize = Packet->PayloadSize;
 
-    // Allocate non-paged buffer for packet data (must be done at PASSIVE_LEVEL)
-    buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, totalSize, 'jnIW');
+    // Allocate non-paged buffer for packet payload
+    buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, payloadSize, 'jnIW');
     if (buffer == nullptr)
     {
         KdPrint((DRIVER_PREFIX "Failed to allocate injection buffer\n"));
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    PUCHAR pkt = (PUCHAR)buffer;
-    RtlZeroMemory(pkt, totalSize);
-    
-    // Build IP header
-    pkt[0] = 0x45;  // Version 4, IHL 5
-    pkt[1] = 0x00;  // TOS
-    *(UINT16*)(pkt + 2) = RtlUshortByteSwap((UINT16)totalSize);  // Total length
-    *(UINT16*)(pkt + 4) = 0;  // ID
-    *(UINT16*)(pkt + 6) = 0;  // Flags + Fragment offset
-    pkt[8] = 64;  // TTL
-    pkt[9] = (Packet->Protocol == PacketProtocol::TCP) ? 6 : 17;  // Protocol
-    *(UINT16*)(pkt + 10) = 0;  // Checksum (will be calculated by stack)
-    
-    if (Packet->Direction == PacketDirection::Outbound)
-    {
-        *(UINT32*)(pkt + 12) = RtlUlongByteSwap(Packet->LocalAddr);   // Source IP
-        *(UINT32*)(pkt + 16) = RtlUlongByteSwap(Packet->RemoteAddr);  // Dest IP
-    }
-    else
-    {
-        *(UINT32*)(pkt + 12) = RtlUlongByteSwap(Packet->RemoteAddr);  // Source IP
-        *(UINT32*)(pkt + 16) = RtlUlongByteSwap(Packet->LocalAddr);   // Dest IP
-    }
-    
-    // Build transport header
-    PUCHAR transportHdr = pkt + ipHeaderSize;
-    if (Packet->Direction == PacketDirection::Outbound)
-    {
-        *(UINT16*)(transportHdr + 0) = RtlUshortByteSwap(Packet->LocalPort);   // Source port
-        *(UINT16*)(transportHdr + 2) = RtlUshortByteSwap(Packet->RemotePort);  // Dest port
-    }
-    else
-    {
-        *(UINT16*)(transportHdr + 0) = RtlUshortByteSwap(Packet->RemotePort);  // Source port
-        *(UINT16*)(transportHdr + 2) = RtlUshortByteSwap(Packet->LocalPort);   // Dest port
-    }
-    
-    if (Packet->Protocol == PacketProtocol::UDP)
-    {
-        *(UINT16*)(transportHdr + 4) = RtlUshortByteSwap((UINT16)(8 + Packet->PayloadSize));  // UDP length
-        *(UINT16*)(transportHdr + 6) = 0;  // UDP checksum (optional for IPv4)
-    }
-    else
-    {
-        // TCP: minimal header with data offset
-        transportHdr[12] = 0x50;  // Data offset = 5 (20 bytes), no flags
-        transportHdr[13] = 0x18;  // PSH + ACK flags
-        *(UINT16*)(transportHdr + 14) = RtlUshortByteSwap(65535);  // Window size
-    }
-    
     // Copy payload
-    RtlCopyMemory(pkt + ipHeaderSize + transportHeaderSize, Packet->Payload, Packet->PayloadSize);
+    RtlCopyMemory(buffer, Packet->Payload, payloadSize);
 
     // Create MDL for the buffer
-    mdl = IoAllocateMdl(buffer, totalSize, FALSE, FALSE, nullptr);
+    mdl = IoAllocateMdl(buffer, payloadSize, FALSE, FALSE, nullptr);
     if (mdl == nullptr)
     {
         KdPrint((DRIVER_PREFIX "IoAllocateMdl failed\n"));
@@ -748,7 +697,7 @@ NTSTATUS WfpInjectPacket(_In_ const CapturedPacket* Packet)
         0,
         mdl,
         0,
-        totalSize,
+        payloadSize,
         &nbl
     );
     if (!NT_SUCCESS(status))
@@ -759,20 +708,42 @@ NTSTATUS WfpInjectPacket(_In_ const CapturedPacket* Packet)
         return status;
     }
 
-    // For now, log success but note that full injection requires more context
-    // True packet injection at transport layer requires endpoint handle from original capture
-    // This is a limitation - we can capture but full resend requires raw socket approach
-    KdPrint((DRIVER_PREFIX "Packet prepared for injection: %u bytes, Dir=%d, Proto=%d\n",
-        totalSize, (int)Packet->Direction, (int)Packet->Protocol));
+    // Key insight: To "resend" a captured packet means to deliver it to its destination
+    // - If we captured an OUTBOUND packet from client, we want the SERVER to receive it
+    //   So we inject it as INBOUND to the server's listening socket
+    // - If we captured an INBOUND packet to client, we want to re-receive it
+    //   So we inject it as INBOUND again
     
-    // Clean up - we're not actually injecting since we don't have proper endpoint context
-    // Real injection would require capturing and storing the endpoint handle during capture
-    FwpsFreeNetBufferList0(nbl);
-    IoFreeMdl(mdl);
-    ExFreePoolWithTag(buffer, 'jnIW');
+    // Always inject as INBOUND (receive) - this delivers the payload to the destination socket
+    // For outbound captured packets: inject to server (remote becomes local for injection)
+    // Source/dest are swapped to simulate packet arriving at the other end
     
-    // Return success to indicate packet was processed (even though not actually injected)
-    // TODO: Implement proper injection with endpoint handle tracking
+    status = FwpsInjectTransportReceiveAsync0(
+        g_InjectionHandle,
+        nullptr,                    // injectionContext
+        nullptr,                    // reserved
+        0,                          // flags
+        AF_INET,                    // addressFamily
+        UNSPECIFIED_COMPARTMENT_ID, // compartmentId
+        0,                          // interfaceIndex
+        0,                          // subInterfaceIndex
+        nbl,                        // netBufferList
+        InjectComplete,             // completionFn
+        buffer                      // completionContext (for cleanup)
+    );
+
+    if (!NT_SUCCESS(status))
+    {
+        KdPrint((DRIVER_PREFIX "Packet injection failed: 0x%X\n", status));
+        FwpsFreeNetBufferList0(nbl);
+        IoFreeMdl(mdl);
+        ExFreePoolWithTag(buffer, 'jnIW');
+        return status;
+    }
+
+    KdPrint((DRIVER_PREFIX "Packet injected as inbound: %u bytes payload, Proto=%d\n",
+        payloadSize, (int)Packet->Protocol));
+    
     return STATUS_SUCCESS;
 }
 

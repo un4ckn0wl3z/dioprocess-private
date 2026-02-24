@@ -250,15 +250,18 @@ pub fn get_captured_packets() -> Result<Vec<CapturedPacket>, CallbackError> {
         let payload_size = raw.payload_size as usize;
         let payload = raw.payload[..payload_size.min(MAX_PACKET_PAYLOAD)].to_vec();
 
+        // WFP stores IP addresses in host byte order with MSB first
+        // e.g., 127.0.0.1 = 0x7F000001
+        // Ipv4Addr::from(u32) expects the same format (big-endian interpretation)
         packets.push(CapturedPacket {
             id: raw.id,
             timestamp: raw.timestamp,
             pid: raw.process_id,
             direction: PacketDirection::from(raw.direction),
             protocol: PacketProtocol::from(raw.protocol),
-            local_addr: Ipv4Addr::from(raw.local_addr.to_be()),
+            local_addr: Ipv4Addr::from(raw.local_addr.to_be_bytes()),
             local_port: raw.local_port,
-            remote_addr: Ipv4Addr::from(raw.remote_addr.to_be()),
+            remote_addr: Ipv4Addr::from(raw.remote_addr.to_be_bytes()),
             remote_port: raw.remote_port,
             payload,
         });
@@ -267,51 +270,65 @@ pub fn get_captured_packets() -> Result<Vec<CapturedPacket>, CallbackError> {
     Ok(packets)
 }
 
-/// Inject (resend) a packet
+/// Inject (resend) a packet using usermode sockets
+/// For UDP: sends the payload to the destination
+/// For TCP: attempts to send but may fail due to connection state
 pub fn inject_packet(packet: &CapturedPacket) -> Result<(), CallbackError> {
-    let handle = open_device()?;
-
-    // Build raw packet
-    let mut raw = RawCapturedPacket {
-        id: packet.id,
-        timestamp: packet.timestamp,
-        process_id: packet.pid,
-        direction: packet.direction as u8,
-        protocol: packet.protocol as u8,
-        local_addr: u32::from_be_bytes(packet.local_addr.octets()),
-        local_port: packet.local_port,
-        remote_addr: u32::from_be_bytes(packet.remote_addr.octets()),
-        remote_port: packet.remote_port,
-        payload_size: packet.payload.len() as u16,
-        payload: [0; MAX_PACKET_PAYLOAD],
+    use std::net::{SocketAddr, UdpSocket, TcpStream};
+    use std::io::Write;
+    use std::time::Duration;
+    
+    if packet.payload.is_empty() {
+        return Err(CallbackError::InvalidParameter);
+    }
+    
+    // Determine destination based on packet direction
+    // If outbound packet: send to remote (original destination)
+    // If inbound packet: send to local (simulate re-receiving)
+    let (dest_addr, dest_port) = if packet.direction == PacketDirection::Outbound {
+        (packet.remote_addr, packet.remote_port)
+    } else {
+        (packet.local_addr, packet.local_port)
     };
-
-    let copy_len = packet.payload.len().min(MAX_PACKET_PAYLOAD);
-    raw.payload[..copy_len].copy_from_slice(&packet.payload[..copy_len]);
-
-    let mut bytes_returned: u32 = 0;
-
-    unsafe {
-        let result = DeviceIoControl(
-            handle,
-            IOCTL_DIOPROCESS_PACKET_INJECT,
-            Some(&raw as *const _ as *const _),
-            std::mem::size_of::<RawCapturedPacket>() as u32,
-            None,
-            0,
-            Some(&mut bytes_returned),
-            None,
-        );
-
-        let _ = CloseHandle(handle);
-
-        if result.is_err() {
-            let err = GetLastError();
-            return Err(CallbackError::IoctlFailed(err.0));
+    
+    let dest = SocketAddr::new(dest_addr.into(), dest_port);
+    
+    // Log for debugging
+    #[cfg(debug_assertions)]
+    eprintln!("[inject_packet] Sending {} bytes to {} via {:?}", 
+        packet.payload.len(), dest, packet.protocol);
+    
+    match packet.protocol {
+        PacketProtocol::Udp => {
+            // UDP injection - simple and stateless
+            let socket = UdpSocket::bind("0.0.0.0:0")
+                .map_err(|e| {
+                    eprintln!("[inject_packet] UDP bind failed: {}", e);
+                    CallbackError::IoctlFailed(1)
+                })?;
+            socket.send_to(&packet.payload, dest)
+                .map_err(|e| {
+                    eprintln!("[inject_packet] UDP send_to failed: {}", e);
+                    CallbackError::IoctlFailed(2)
+                })?;
+            Ok(())
+        }
+        PacketProtocol::Tcp => {
+            // TCP injection - requires existing connection or new connection
+            // This will attempt to connect and send, but may fail if no listener
+            let mut stream = TcpStream::connect_timeout(&dest, Duration::from_secs(2))
+                .map_err(|e| {
+                    eprintln!("[inject_packet] TCP connect failed: {}", e);
+                    CallbackError::IoctlFailed(3)
+                })?;
+            stream.write_all(&packet.payload)
+                .map_err(|e| {
+                    eprintln!("[inject_packet] TCP write failed: {}", e);
+                    CallbackError::IoctlFailed(4)
+                })?;
+            Ok(())
         }
     }
-
-    Ok(())
 }
 
 /// Add a packet filter rule

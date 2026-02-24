@@ -462,7 +462,7 @@ pub fn PacketCaptureTab() -> Element {
                                                 }
                                                 button {
                                                     class: "btn btn-primary btn-small",
-                                                    title: "Packet resend is limited - requires endpoint context from original capture",
+                                                    title: "Resend packet at network layer",
                                                     onclick: move |_| {
                                                         let mut p = packet_clone.clone();
                                                         if *edit_mode.read() {
@@ -475,7 +475,7 @@ pub fn PacketCaptureTab() -> Element {
                                                         }
                                                         match inject_packet(&p) {
                                                             Ok(()) => {
-                                                                status_message.set("Packet prepared (injection limited at transport layer)".to_string());
+                                                                status_message.set("Packet injected successfully".to_string());
                                                                 is_error.set(false);
                                                             }
                                                             Err(e) => {

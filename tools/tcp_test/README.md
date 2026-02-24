@@ -1,6 +1,8 @@
-# TCP Test Tools
+# Network Test Tools
 
-Simple TCP client and server for testing the DioProcess Packet Capture feature.
+TCP and UDP client/server tools for testing the DioProcess Packet Capture feature.
+
+**UDP is recommended for testing packet resend** - it's stateless so resent packets work correctly.
 
 ## Building
 
@@ -59,10 +61,18 @@ Default: localhost:12345
 
 ## Testing Packet Resend
 
-1. Capture some packets
-2. Select a packet in the list
-3. Click **Edit** to modify the payload (hex)
-4. Click **Resend** to inject the modified packet
+**Use UDP for testing resend** - TCP is stateful and resent packets may be rejected.
+
+### UDP Resend Test (Recommended)
+1. Start `udp_server.exe`
+2. Start `udp_client.exe` and send a message
+3. In DioProcess Packet Capture, enter the server PID and click Start
+4. Send more messages from the client
+5. Select a captured UDP packet
+6. Click **Resend** - the server will receive it as a new message!
+
+### TCP Resend Limitations
+TCP packets have sequence numbers. Resent packets will have seq=0 which the TCP stack may reject as out-of-sequence.
 
 ## Example Session
 
