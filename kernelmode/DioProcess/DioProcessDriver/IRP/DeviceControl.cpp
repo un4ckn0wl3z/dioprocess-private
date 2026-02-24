@@ -258,6 +258,10 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleHvWriteVm(Irp, irpSp, &info);
 		break;
 
+	case IOCTL_DIOPROCESS_HV_ALLOC_WRITE_NEAR:
+		status = HandleHvAllocWriteNear(Irp, irpSp, &info);
+		break;
+
 	// Early Injection IOCTLs
 	case IOCTL_DIOPROCESS_EARLY_INJECT_ARM:
 		status = HandleEarlyInjectArm(Irp, irpSp);
@@ -3533,6 +3537,152 @@ NTSTATUS HandleHvWriteVm(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
 	response->Success = (bytesWritten > 0) ? TRUE : FALSE;
 
 	*info = sizeof(HvWriteVmResponse);
+	return STATUS_SUCCESS;
+}
+
+// Allocate memory near an address and write via kernel/HV - no usermode API
+NTSTATUS HandleHvAllocWriteNear(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	// Validate hypervisor is running
+	if (!HvIsHypervisorRunning())
+	{
+		KdPrint((DRIVER_PREFIX "Hypervisor not running, cannot perform ring -1 alloc+write\n"));
+		return STATUS_HV_NOT_PRESENT;
+	}
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+	if (inputLen < sizeof(HvAllocWriteNearRequest))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	if (outputLen < sizeof(HvAllocWriteNearResponse))
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (HvAllocWriteNearRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->Size == 0)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Validate input buffer contains the data
+	SIZE_T expectedSize = FIELD_OFFSET(HvAllocWriteNearRequest, Data) + request->Size;
+	if (inputLen < expectedSize)
+	{
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	KdPrint((DRIVER_PREFIX "HvAllocWriteNear: PID=%u, NearAddr=0x%llX, Size=%u\n",
+		request->ProcessId, request->NearAddress, request->Size));
+
+	// Get target process
+	PEPROCESS targetProcess = NULL;
+	NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)request->ProcessId, &targetProcess);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "Failed to lookup process: 0x%X\n", status));
+		return status;
+	}
+
+	// Attach to target process to allocate memory
+	KAPC_STATE apcState;
+	KeStackAttachProcess(targetProcess, &apcState);
+
+	// Try to allocate near the target address (within ±2GB for rel32 JMP)
+	PVOID allocatedAddress = NULL;
+	SIZE_T regionSize = request->Size;
+	ULONG64 nearAddr = request->NearAddress;
+
+	// Search for free region near the target address
+	// Start from nearAddr - 0x70000000 and search upward
+	ULONG64 searchStart = (nearAddr > 0x70000000) ? (nearAddr - 0x70000000) : 0x10000;
+	ULONG64 searchEnd = nearAddr + 0x70000000;
+
+	for (ULONG64 addr = searchStart; addr < searchEnd; addr += 0x10000)
+	{
+		allocatedAddress = (PVOID)addr;
+		regionSize = request->Size;
+
+		status = ZwAllocateVirtualMemory(
+			ZwCurrentProcess(),
+			&allocatedAddress,
+			0,
+			&regionSize,
+			MEM_COMMIT | MEM_RESERVE,
+			PAGE_EXECUTE_READWRITE
+		);
+
+		if (NT_SUCCESS(status))
+		{
+			// Check if within ±2GB
+			INT64 offset = (INT64)allocatedAddress - (INT64)nearAddr;
+			if (offset >= -0x7FFFFFFF && offset <= 0x7FFFFFFF)
+			{
+				KdPrint((DRIVER_PREFIX "Allocated at 0x%p (offset %lld from target)\n", allocatedAddress, offset));
+				break;
+			}
+			else
+			{
+				// Too far, free and continue searching
+				SIZE_T freeSize = 0;
+				ZwFreeVirtualMemory(ZwCurrentProcess(), &allocatedAddress, &freeSize, MEM_RELEASE);
+				allocatedAddress = NULL;
+			}
+		}
+		else
+		{
+			allocatedAddress = NULL;
+		}
+	}
+
+	if (!allocatedAddress)
+	{
+		KeUnstackDetachProcess(&apcState);
+		ObDereferenceObject(targetProcess);
+		KdPrint((DRIVER_PREFIX "Failed to allocate memory near 0x%llX\n", nearAddr));
+		return STATUS_NO_MEMORY;
+	}
+
+	// Touch the memory to page it in - hypervisor needs physical backing
+	__try
+	{
+		RtlZeroMemory(allocatedAddress, request->Size);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		KdPrint((DRIVER_PREFIX "Failed to touch memory: exception\n"));
+		SIZE_T freeSize = 0;
+		ZwFreeVirtualMemory(ZwCurrentProcess(), &allocatedAddress, &freeSize, MEM_RELEASE);
+		KeUnstackDetachProcess(&apcState);
+		ObDereferenceObject(targetProcess);
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	KeUnstackDetachProcess(&apcState);
+
+	// Now use hypervisor to write the data (ring -1 write)
+	ULONG64 bytesWritten = HvWriteVirtualMemory(
+		request->ProcessId,
+		(ULONG64)allocatedAddress,
+		(PVOID)request->Data,
+		request->Size
+	);
+
+	ObDereferenceObject(targetProcess);
+
+	auto response = (HvAllocWriteNearResponse*)Irp->AssociatedIrp.SystemBuffer;
+	response->AllocatedAddress = (ULONG64)allocatedAddress;
+	response->BytesWritten = (ULONG)bytesWritten;
+	response->Success = (bytesWritten == request->Size) ? TRUE : FALSE;
+
+	KdPrint((DRIVER_PREFIX "HvAllocWriteNear: Allocated=0x%llX, Written=%llu, Success=%d\n",
+		response->AllocatedAddress, bytesWritten, response->Success));
+
+	*info = sizeof(HvAllocWriteNearResponse);
 	return STATUS_SUCCESS;
 }
 

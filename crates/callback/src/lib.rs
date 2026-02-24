@@ -69,7 +69,7 @@ pub use scanner::{
 };
 pub use hv_scanner::{
     hv_read_virtual_memory, hv_write_virtual_memory, hv_write_scan_value,
-    hv_first_scan, hv_next_scan,
+    hv_first_scan, hv_next_scan, hv_alloc_write_near, HvAllocWriteNearResult,
 };
 pub use storage::{EventFilter, EventStorage};
 pub use types::{CallbackEvent, CollectionState, EventCategory, EventType, RegistryOperation};

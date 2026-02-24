@@ -267,6 +267,24 @@ struct EventData
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x842, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_DIOPROCESS_HV_WRITE_VM \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x843, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_HV_ALLOC_WRITE_NEAR \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x844, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// Request for allocating memory near an address and writing via kernel/HV (no usermode API)
+struct HvAllocWriteNearRequest
+{
+	ULONG ProcessId;
+	ULONG64 NearAddress;    // Allocate within ±2GB of this address
+	ULONG Size;
+	UCHAR Data[1];          // Variable-length data follows
+};
+
+struct HvAllocWriteNearResponse
+{
+	ULONG64 AllocatedAddress;
+	ULONG BytesWritten;
+	BOOLEAN Success;
+};
 
 struct CollectionStateResponse
 {

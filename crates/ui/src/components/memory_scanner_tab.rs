@@ -1,9 +1,9 @@
 //! Memory Scanner tab — Cheat Engine-like memory scanner via physical memory (CR3 walk)
 
 use callback::{
-    assemble, enum_vm_regions, first_scan, format_bytes_hex, hv_is_running, hv_write_virtual_memory,
-    install_ept_hook, is_driver_loaded, list_ept_hooks, next_scan, parse_aob_pattern, parse_scan_value,
-    remove_ept_hook, write_scan_value, ScanDataType, ScanResult, ScanType,
+    assemble, enum_vm_regions, first_scan, format_bytes_hex, hv_alloc_write_near, hv_is_running,
+    hv_write_virtual_memory, install_ept_hook, is_driver_loaded, list_ept_hooks, next_scan,
+    parse_aob_pattern, parse_scan_value, remove_ept_hook, write_scan_value, ScanDataType, ScanResult, ScanType,
 };
 use dioxus::prelude::*;
 use misc::{allocate_near_address, free_remote_memory, write_process_memory_bytes};
@@ -2025,64 +2025,113 @@ pub fn MemoryScannerTab() -> Element {
                                                         return;
                                                     }
 
-                                                    // Step 1: Allocate RWX memory near the hook point (within ±2GB for JMP rel32)
-                                                    let alloc_addr = match allocate_near_address(pid, addr, 0x1000) {
-                                                        Ok(a) => a,
-                                                        Err(e) => {
-                                                            ept_hook_status.set(format!("Alloc failed: {}", e));
+                                                    // Use HV alloc+write (no usermode API) if HV is running
+                                                    let (alloc_addr, write_method, detour_size): (u64, &str, usize) = if hv_is_running() {
+                                                        // Step 1: Estimate allocation address for assembly (kernel will allocate near this)
+                                                        // We use a two-pass approach: first assemble at estimated addr, then allocate+write
+                                                        let estimated_addr = addr.saturating_sub(0x1000) & !0xFFF;
+
+                                                        // Step 2: Assemble detour code at estimated address
+                                                        let detour_bytes = match assemble(&asm_code, proc_arch, estimated_addr) {
+                                                            Ok(b) => b,
+                                                            Err(e) => {
+                                                                ept_hook_status.set(format!("Assembly error: {}", e));
+                                                                ept_hook_is_error.set(true);
+                                                                return;
+                                                            }
+                                                        };
+
+                                                        if detour_bytes.is_empty() || detour_bytes.len() > 3800 {
+                                                            ept_hook_status.set("Detour code must be 1-3800 bytes".to_string());
                                                             ept_hook_is_error.set(true);
                                                             return;
                                                         }
-                                                    };
 
-                                                    // Step 2: Assemble detour code at allocated address
-                                                    let detour_bytes = match assemble(&asm_code, proc_arch, alloc_addr) {
-                                                        Ok(b) => b,
-                                                        Err(e) => {
-                                                            let _ = free_remote_memory(pid, alloc_addr);
-                                                            ept_hook_status.set(format!("Assembly error: {}", e));
-                                                            ept_hook_is_error.set(true);
-                                                            return;
-                                                        }
-                                                    };
+                                                        // Step 3: Build full payload with return JMP
+                                                        let return_addr = addr + stolen as u64;
+                                                        let mut full_code = detour_bytes.clone();
+                                                        full_code.extend_from_slice(&[0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]);
+                                                        full_code.extend_from_slice(&return_addr.to_le_bytes());
 
-                                                    if detour_bytes.is_empty() || detour_bytes.len() > 3800 {
-                                                        let _ = free_remote_memory(pid, alloc_addr);
-                                                        ept_hook_status.set("Detour code must be 1-3800 bytes".to_string());
-                                                        ept_hook_is_error.set(true);
-                                                        return;
-                                                    }
-
-                                                    // Step 3: Build full payload = detour code + return JMP back to hook_point + stolen_bytes
-                                                    // Return JMP uses FF 25 00 00 00 00 [8-byte abs addr] (14 bytes, no register clobber)
-                                                    let return_addr = addr + stolen as u64;
-                                                    let mut full_code = detour_bytes.clone();
-                                                    full_code.extend_from_slice(&[0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]);
-                                                    full_code.extend_from_slice(&return_addr.to_le_bytes());
-
-                                                    // Step 4: Write detour code to allocated memory (try HV for stealth, fallback to usermode)
-                                                    let (write_result, write_method): (Result<(), String>, &str) = if hv_is_running() {
-                                                        // Touch memory first to page it in (HV can only write to paged-in memory)
-                                                        let _ = write_process_memory_bytes(pid, alloc_addr, &[0u8]);
-                                                        // Now use HV write for the actual shellcode (stealthy)
-                                                        match hv_write_virtual_memory(pid, alloc_addr, &full_code) {
-                                                            Ok(_) => (Ok(()), "HV (Ring -1)"),
-                                                            Err(_) => {
-                                                                // HV write failed, fallback to usermode
-                                                                (write_process_memory_bytes(pid, alloc_addr, &full_code)
-                                                                    .map_err(|e| format!("{}", e)), "Usermode (fallback)")
+                                                        // Step 4: Use kernel/HV to allocate near and write (NO usermode API)
+                                                        match hv_alloc_write_near(pid, addr, &full_code) {
+                                                            Ok(result) if result.success => {
+                                                                // Re-assemble at actual allocated address if different
+                                                                let actual_addr = result.allocated_address;
+                                                                if actual_addr != estimated_addr {
+                                                                    // Re-assemble at correct address
+                                                                    let detour_bytes = match assemble(&asm_code, proc_arch, actual_addr) {
+                                                                        Ok(b) => b,
+                                                                        Err(e) => {
+                                                                            ept_hook_status.set(format!("Re-assembly error: {}", e));
+                                                                            ept_hook_is_error.set(true);
+                                                                            return;
+                                                                        }
+                                                                    };
+                                                                    let mut full_code = detour_bytes;
+                                                                    full_code.extend_from_slice(&[0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]);
+                                                                    full_code.extend_from_slice(&return_addr.to_le_bytes());
+                                                                    // Write corrected code via HV
+                                                                    if let Err(e) = hv_write_virtual_memory(pid, actual_addr, &full_code) {
+                                                                        ept_hook_status.set(format!("HV re-write failed: {}", e));
+                                                                        ept_hook_is_error.set(true);
+                                                                        return;
+                                                                    }
+                                                                }
+                                                                (actual_addr, "Kernel+HV (Ring 0/-1)", detour_bytes.len())
+                                                            }
+                                                            Ok(_) => {
+                                                                ept_hook_status.set("HV alloc+write failed".to_string());
+                                                                ept_hook_is_error.set(true);
+                                                                return;
+                                                            }
+                                                            Err(e) => {
+                                                                ept_hook_status.set(format!("HV alloc+write error: {}", e));
+                                                                ept_hook_is_error.set(true);
+                                                                return;
                                                             }
                                                         }
                                                     } else {
-                                                        (write_process_memory_bytes(pid, alloc_addr, &full_code)
-                                                            .map_err(|e| format!("{}", e)), "Usermode")
+                                                        // Fallback to usermode allocation + write when HV not running
+                                                        let alloc_addr = match allocate_near_address(pid, addr, 0x1000) {
+                                                            Ok(a) => a,
+                                                            Err(e) => {
+                                                                ept_hook_status.set(format!("Alloc failed: {}", e));
+                                                                ept_hook_is_error.set(true);
+                                                                return;
+                                                            }
+                                                        };
+
+                                                        let detour_bytes = match assemble(&asm_code, proc_arch, alloc_addr) {
+                                                            Ok(b) => b,
+                                                            Err(e) => {
+                                                                let _ = free_remote_memory(pid, alloc_addr);
+                                                                ept_hook_status.set(format!("Assembly error: {}", e));
+                                                                ept_hook_is_error.set(true);
+                                                                return;
+                                                            }
+                                                        };
+
+                                                        if detour_bytes.is_empty() || detour_bytes.len() > 3800 {
+                                                            let _ = free_remote_memory(pid, alloc_addr);
+                                                            ept_hook_status.set("Detour code must be 1-3800 bytes".to_string());
+                                                            ept_hook_is_error.set(true);
+                                                            return;
+                                                        }
+
+                                                        let return_addr = addr + stolen as u64;
+                                                        let mut full_code = detour_bytes.clone();
+                                                        full_code.extend_from_slice(&[0xFF, 0x25, 0x00, 0x00, 0x00, 0x00]);
+                                                        full_code.extend_from_slice(&return_addr.to_le_bytes());
+
+                                                        if let Err(e) = write_process_memory_bytes(pid, alloc_addr, &full_code) {
+                                                            let _ = free_remote_memory(pid, alloc_addr);
+                                                            ept_hook_status.set(format!("Write failed: {}", e));
+                                                            ept_hook_is_error.set(true);
+                                                            return;
+                                                        }
+                                                        (alloc_addr, "Usermode", detour_bytes.len())
                                                     };
-                                                    if let Err(e) = write_result {
-                                                        let _ = free_remote_memory(pid, alloc_addr);
-                                                        ept_hook_status.set(format!("Write failed: {}", e));
-                                                        ept_hook_is_error.set(true);
-                                                        return;
-                                                    }
 
                                                     // Step 5: Build JMP rel32 patch (E9 + offset) + NOP padding for stolen bytes
                                                     let jmp_target = alloc_addr as i64;
@@ -2103,7 +2152,7 @@ pub fn MemoryScannerTab() -> Element {
                                                             detour_allocs.write().insert(idx, (pid, alloc_addr));
                                                             ept_hook_status.set(format!(
                                                                 "Detour hook #{} installed via {}: JMP@0x{:X} -> 0x{:X} ({} bytes detour)",
-                                                                idx, write_method, addr, alloc_addr, detour_bytes.len()
+                                                                idx, write_method, addr, alloc_addr, detour_size
                                                             ));
                                                             ept_hook_is_error.set(false);
                                                             if let Ok(hooks) = list_ept_hooks() {

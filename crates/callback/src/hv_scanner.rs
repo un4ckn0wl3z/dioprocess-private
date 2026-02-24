@@ -15,6 +15,7 @@ use windows::Win32::System::IO::DeviceIoControl;
 
 const IOCTL_DIOPROCESS_HV_READ_VM: u32 = 0x00222108;  // CTL_CODE(0x22, 0x842, 0, 0)
 const IOCTL_DIOPROCESS_HV_WRITE_VM: u32 = 0x0022210C; // CTL_CODE(0x22, 0x843, 0, 0)
+const IOCTL_DIOPROCESS_HV_ALLOC_WRITE_NEAR: u32 = 0x00222110; // CTL_CODE(0x22, 0x844, 0, 0)
 
 /// Maximum bytes per bulk HV read IOCTL call (64KB)
 const HV_READ_VM_MAX_SIZE: usize = 64 * 1024;
@@ -52,6 +53,34 @@ struct HvWriteVmRequest {
 struct HvWriteVmResponse {
     bytes_written: u32,
     success: u8,
+}
+
+#[repr(C)]
+struct HvAllocWriteNearRequest {
+    process_id: u32,
+    near_address: u64,
+    size: u32,
+    // data follows
+}
+
+/// Offset of Data field in HvAllocWriteNearRequest
+/// Layout: ProcessId(4) + padding(4) + NearAddress(8) + Size(4) = 20
+const HV_ALLOC_WRITE_NEAR_DATA_OFFSET: usize = 20;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct HvAllocWriteNearResponse {
+    allocated_address: u64,
+    bytes_written: u32,
+    success: u8,
+}
+
+/// Result of HV alloc+write near operation
+#[derive(Debug, Clone)]
+pub struct HvAllocWriteNearResult {
+    pub allocated_address: u64,
+    pub bytes_written: u32,
+    pub success: bool,
 }
 
 // ============== Public API ==============
@@ -185,6 +214,63 @@ pub fn hv_write_scan_value(pid: u32, address: u64, bytes: &[u8]) -> Result<(), C
         return Err(CallbackError::IoctlFailed(0));
     }
     Ok(())
+}
+
+/// Allocate memory near an address and write data via kernel/HV - NO usermode API.
+/// This allocates within ±2GB of near_address (for rel32 JMP compatibility).
+/// Memory is allocated and paged in via kernel, then written via hypervisor (ring -1).
+pub fn hv_alloc_write_near(pid: u32, near_address: u64, data: &[u8]) -> Result<HvAllocWriteNearResult, CallbackError> {
+    if data.is_empty() {
+        return Err(CallbackError::InvalidParameter);
+    }
+
+    let handle = open_device()?;
+
+    // Build request with variable-length data
+    let header_size = HV_ALLOC_WRITE_NEAR_DATA_OFFSET;
+    let request_size = header_size + data.len();
+    let mut request_buffer = vec![0u8; request_size];
+
+    // Write header fields manually to match C struct layout
+    request_buffer[0..4].copy_from_slice(&pid.to_le_bytes());
+    // padding at 4..8
+    request_buffer[8..16].copy_from_slice(&near_address.to_le_bytes());
+    request_buffer[16..20].copy_from_slice(&(data.len() as u32).to_le_bytes());
+    // Write data
+    request_buffer[header_size..].copy_from_slice(data);
+
+    let mut response = HvAllocWriteNearResponse {
+        allocated_address: 0,
+        bytes_written: 0,
+        success: 0,
+    };
+    let mut bytes_returned: u32 = 0;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_HV_ALLOC_WRITE_NEAR,
+            Some(request_buffer.as_ptr() as *const std::ffi::c_void),
+            request_size as u32,
+            Some(&mut response as *mut _ as *mut std::ffi::c_void),
+            std::mem::size_of::<HvAllocWriteNearResponse>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+
+    unsafe { let _ = CloseHandle(handle); }
+
+    if result.is_err() {
+        let err = unsafe { GetLastError() };
+        return Err(CallbackError::IoctlFailed(err.0));
+    }
+
+    Ok(HvAllocWriteNearResult {
+        allocated_address: response.allocated_address,
+        bytes_written: response.bytes_written,
+        success: response.success != 0,
+    })
 }
 
 /// First scan via hypervisor: enumerate regions, read memory via ring -1, find matches.

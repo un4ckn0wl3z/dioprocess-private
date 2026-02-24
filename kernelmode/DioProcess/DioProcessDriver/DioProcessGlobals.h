@@ -211,6 +211,7 @@ NTSTATUS HandleHvInjectDll(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 // Ring -1 Memory Read/Write Handlers (HV Scanner)
 NTSTATUS HandleHvReadVm(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleHvWriteVm(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleHvAllocWriteNear(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 
 // Early Injection Handlers
 NTSTATUS HandleEarlyInjectArm(PIRP Irp, PIO_STACK_LOCATION irpSp);
