@@ -16,10 +16,10 @@ fn direction_str(dir: PacketDirection) -> &'static str {
     }
 }
 
-fn direction_color(dir: PacketDirection) -> &'static str {
+fn direction_class(dir: PacketDirection) -> &'static str {
     match dir {
-        PacketDirection::Outbound => "#2563eb",
-        PacketDirection::Inbound => "#16a34a",
+        PacketDirection::Outbound => "dir-badge dir-badge-out",
+        PacketDirection::Inbound => "dir-badge dir-badge-in",
     }
 }
 
@@ -30,10 +30,10 @@ fn filter_action_str(action: FilterAction) -> &'static str {
     }
 }
 
-fn filter_action_bg(action: FilterAction) -> &'static str {
+fn filter_action_class(action: FilterAction) -> &'static str {
     match action {
-        FilterAction::Block => "#fee2e2",
-        FilterAction::Allow => "#dcfce7",
+        FilterAction::Block => "filter-tag-block",
+        FilterAction::Allow => "filter-tag-allow",
     }
 }
 
@@ -196,39 +196,39 @@ pub fn PacketCaptureTab() -> Element {
 
     rsx! {
         div {
-            class: "service-tab",
-            style: "padding: 16px;",
+            class: "packet-capture-tab",
 
             // Header
             div {
-                class: "service-header",
-                style: "display: flex; align-items: center; gap: 12px; margin-bottom: 16px;",
-                h2 { style: "margin: 0;", "Packet Capture" }
-                if hv_running {
-                    span {
-                        class: "badge",
-                        style: "background: #22c55e; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;",
-                        "HV ACTIVE"
+                class: "header-box",
+                h1 { class: "header-title", "📡 Packet Capture" }
+                div {
+                    class: "header-stats",
+                    if hv_running {
+                        span {
+                            class: "capture-status-badge capture-status-active",
+                            "HV ACTIVE"
+                        }
+                    }
+                    if !driver_loaded {
+                        span {
+                            class: "capture-status-badge capture-status-stopped",
+                            "DRIVER NOT LOADED"
+                        }
                     }
                 }
-                if !driver_loaded {
-                    span {
-                        class: "badge",
-                        style: "background: #dc2626; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;",
-                        "DRIVER NOT LOADED"
-                    }
+                if !status_message.read().is_empty() {
+                    div { class: "status-message", "{status_message}" }
                 }
             }
 
             // Controls
             div {
-                style: "display: flex; gap: 8px; align-items: center; margin-bottom: 12px;",
-                label { "PID:" }
+                class: "controls",
                 input {
                     r#type: "text",
-                    class: "input",
-                    style: "width: 100px;",
-                    placeholder: "Process ID",
+                    class: "pid-input",
+                    placeholder: "PID",
                     value: "{pid_input}",
                     oninput: move |e| pid_input.set(e.value().clone()),
                 }
@@ -236,61 +236,49 @@ pub fn PacketCaptureTab() -> Element {
                     class: "btn btn-primary",
                     disabled: capture_state.read().is_capturing,
                     onclick: start_capture,
-                    "Start"
+                    "▶ Start"
                 }
                 button {
-                    class: "btn",
+                    class: "btn btn-danger",
                     disabled: !capture_state.read().is_capturing,
                     onclick: stop_capture,
-                    "Stop"
+                    "⏹ Stop"
                 }
                 button {
-                    class: "btn",
+                    class: "btn btn-secondary",
                     onclick: clear_packets,
                     "Clear"
                 }
                 button {
-                    class: "btn",
+                    class: "btn btn-secondary",
                     onclick: export_pcap,
                     "Export PCAP"
                 }
-                div { style: "flex: 1;" }
                 label {
-                    style: "display: flex; align-items: center; gap: 4px;",
+                    class: "checkbox-label",
                     input {
                         r#type: "checkbox",
+                        class: "checkbox",
                         checked: *auto_scroll.read(),
                         onchange: move |e| auto_scroll.set(e.checked()),
                     }
-                    "Auto-scroll"
-                }
-            }
-
-            // Status
-            if !status_message.read().is_empty() {
-                {
-                    let err = *is_error.read();
-                    let bg = if err { "#fef2f2" } else { "#f0fdf4" };
-                    let cls = if err { "status-error" } else { "status-success" };
-                    rsx! {
-                        div {
-                            class: "{cls}",
-                            style: "padding: 8px; margin-bottom: 12px; border-radius: 4px; background: {bg};",
-                            "{status_message}"
-                        }
-                    }
+                    span { "Auto-scroll" }
                 }
             }
 
             // Capture stats
             {
                 let state = capture_state.read();
+                let status_class = if state.is_capturing { "capture-status-badge capture-status-active" } else { "capture-status-badge capture-status-stopped" };
                 let status_str = if state.is_capturing { "Capturing" } else { "Stopped" };
                 let pkt_count = packets.read().len();
                 rsx! {
                     div {
-                        style: "display: flex; gap: 16px; margin-bottom: 12px; font-size: 12px; color: #666;",
-                        span { "Status: {status_str}" }
+                        class: "capture-stats",
+                        span {
+                            class: "{status_class}",
+                            "{status_str}"
+                        }
                         span { "Target PID: {state.target_pid}" }
                         span { "Packets: {pkt_count}" }
                         span { "Dropped: {state.dropped_count}" }
@@ -300,21 +288,19 @@ pub fn PacketCaptureTab() -> Element {
 
             // Filter rules
             div {
-                style: "margin-bottom: 12px; padding: 8px; background: #f8f9fa; border-radius: 4px;",
+                class: "filter-panel",
                 div {
-                    style: "display: flex; gap: 8px; align-items: center; margin-bottom: 8px;",
-                    span { style: "font-weight: 500;", "Filters:" }
+                    class: "filter-panel-header",
+                    span { class: "filter-panel-title", "Filters" }
                     input {
                         r#type: "text",
-                        class: "input",
-                        style: "width: 80px;",
+                        class: "pid-input",
                         placeholder: "Port",
                         value: "{new_filter_port}",
                         oninput: move |e| new_filter_port.set(e.value().clone()),
                     }
                     select {
-                        class: "input",
-                        style: "width: 80px;",
+                        class: "filter-select",
                         value: "{new_filter_action}",
                         onchange: move |e| {
                             if let Ok(v) = e.value().parse::<usize>() {
@@ -325,14 +311,12 @@ pub fn PacketCaptureTab() -> Element {
                         option { value: "1", "Allow" }
                     }
                     button {
-                        class: "btn",
-                        style: "font-size: 11px; padding: 2px 8px;",
+                        class: "btn btn-primary btn-small",
                         onclick: add_filter,
                         "+ Add"
                     }
                     button {
-                        class: "btn",
-                        style: "font-size: 11px; padding: 2px 8px;",
+                        class: "btn btn-secondary btn-small",
                         onclick: move |_| {
                             let _ = clear_packet_filters();
                             filter_rules.write().clear();
@@ -342,20 +326,20 @@ pub fn PacketCaptureTab() -> Element {
                 }
                 // Active filters
                 div {
-                    style: "display: flex; gap: 8px; flex-wrap: wrap;",
+                    class: "filter-tags",
                     for (rule, idx) in filter_rules.read().iter() {
                         {
-                            let bg = filter_action_bg(rule.action);
+                            let tag_class = filter_action_class(rule.action);
                             let action_str = filter_action_str(rule.action);
                             let port = rule.port;
                             let idx_copy = *idx;
                             rsx! {
                                 span {
                                     key: "{idx_copy}",
-                                    style: "background: {bg}; padding: 2px 8px; border-radius: 4px; font-size: 11px; display: flex; align-items: center; gap: 4px;",
+                                    class: "{tag_class}",
                                     "{action_str} :{port}"
                                     button {
-                                        style: "background: none; border: none; cursor: pointer; color: #666; padding: 0 4px;",
+                                        class: "filter-tag-remove",
                                         onclick: move |_| {
                                             let _ = remove_packet_filter(idx_copy as u32);
                                             filter_rules.write().retain(|(_, i)| *i != idx_copy);
@@ -371,23 +355,23 @@ pub fn PacketCaptureTab() -> Element {
 
             // Packet list
             div {
-                style: "display: flex; gap: 12px; height: calc(100vh - 380px);",
+                class: "packet-content",
 
                 // Left: packet table
                 div {
-                    style: "flex: 1; overflow: auto; border: 1px solid #ddd; border-radius: 4px;",
+                    class: "packet-table-container",
                     table {
-                        class: "data-table",
-                        style: "width: 100%; font-size: 11px;",
+                        class: "packet-table",
                         thead {
+                            class: "table-header",
                             tr {
-                                th { style: "width: 50px;", "#" }
-                                th { style: "width: 90px;", "Time" }
-                                th { style: "width: 40px;", "Dir" }
-                                th { style: "width: 40px;", "Proto" }
-                                th { "Source" }
-                                th { "Destination" }
-                                th { style: "width: 50px;", "Len" }
+                                th { class: "th", "#" }
+                                th { class: "th", "Time" }
+                                th { class: "th", "Dir" }
+                                th { class: "th", "Proto" }
+                                th { class: "th", "Source" }
+                                th { class: "th", "Destination" }
+                                th { class: "th", "Len" }
                             }
                         }
                         tbody {
@@ -397,7 +381,7 @@ pub fn PacketCaptureTab() -> Element {
                                     let ts = format_timestamp(packet.timestamp);
                                     let dir = packet.direction;
                                     let dir_str = direction_str(dir);
-                                    let dir_color = direction_color(dir);
+                                    let dir_class = direction_class(dir);
                                     let proto = format!("{}", packet.protocol);
                                     let src = format!("{}:{}", packet.local_addr, packet.local_port);
                                     let dst = format!("{}:{}", packet.remote_addr, packet.remote_port);
@@ -407,27 +391,26 @@ pub fn PacketCaptureTab() -> Element {
                                         .collect::<Vec<_>>()
                                         .join(" ");
                                     let is_selected = *selected_packet_idx.read() == Some(idx);
-                                    let row_class = if is_selected { "selected" } else { "" };
+                                    let row_class = if is_selected { "process-row selected" } else { "process-row" };
                                     rsx! {
                                         tr {
                                             key: "{pkt_id}",
                                             class: "{row_class}",
-                                            style: "cursor: pointer;",
                                             onclick: move |_| {
                                                 selected_packet_idx.set(Some(idx));
                                                 edit_payload.set(payload_hex.clone());
                                                 edit_mode.set(false);
                                             },
-                                            td { "{pkt_id}" }
-                                            td { "{ts}" }
+                                            td { class: "cell cell-id", "{pkt_id}" }
+                                            td { class: "cell cell-time", "{ts}" }
                                             td {
-                                                style: "color: {dir_color};",
-                                                "{dir_str}"
+                                                class: "cell cell-dir",
+                                                span { class: "{dir_class}", "{dir_str}" }
                                             }
-                                            td { "{proto}" }
-                                            td { "{src}" }
-                                            td { "{dst}" }
-                                            td { "{plen}" }
+                                            td { class: "cell cell-proto", "{proto}" }
+                                            td { class: "cell cell-addr", "{src}" }
+                                            td { class: "cell cell-addr", "{dst}" }
+                                            td { class: "cell cell-len", "{plen}" }
                                         }
                                     }
                                 }
@@ -438,7 +421,7 @@ pub fn PacketCaptureTab() -> Element {
 
                 // Right: packet details
                 div {
-                    style: "width: 400px; border: 1px solid #ddd; border-radius: 4px; padding: 8px; overflow: auto;",
+                    class: "packet-details-panel",
                     {
                         let sel_idx = *selected_packet_idx.read();
                         let editing = *edit_mode.read();
@@ -465,13 +448,12 @@ pub fn PacketCaptureTab() -> Element {
                                 rsx! {
                                     div {
                                         div {
-                                            style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;",
-                                            span { style: "font-weight: 500;", "Packet #{pkt_id}" }
+                                            class: "packet-details-header",
+                                            span { class: "packet-details-title", "Packet #{pkt_id}" }
                                             div {
-                                                style: "display: flex; gap: 4px;",
+                                                class: "packet-details-actions",
                                                 button {
-                                                    class: "btn",
-                                                    style: "font-size: 10px; padding: 2px 8px;",
+                                                    class: "btn btn-secondary btn-small",
                                                     onclick: move |_| {
                                                         let current = *edit_mode.read();
                                                         edit_mode.set(!current);
@@ -479,8 +461,8 @@ pub fn PacketCaptureTab() -> Element {
                                                     "{edit_btn_text}"
                                                 }
                                                 button {
-                                                    class: "btn btn-primary",
-                                                    style: "font-size: 10px; padding: 2px 8px;",
+                                                    class: "btn btn-primary btn-small",
+                                                    title: "Packet resend is limited - requires endpoint context from original capture",
                                                     onclick: move |_| {
                                                         let mut p = packet_clone.clone();
                                                         if *edit_mode.read() {
@@ -493,7 +475,7 @@ pub fn PacketCaptureTab() -> Element {
                                                         }
                                                         match inject_packet(&p) {
                                                             Ok(()) => {
-                                                                status_message.set("Packet resent".to_string());
+                                                                status_message.set("Packet prepared (injection limited at transport layer)".to_string());
                                                                 is_error.set(false);
                                                             }
                                                             Err(e) => {
@@ -507,34 +489,34 @@ pub fn PacketCaptureTab() -> Element {
                                             }
                                         }
                                         div {
-                                            style: "font-size: 11px; margin-bottom: 8px; color: #666;",
-                                            div { "PID: {pkt_pid}" }
-                                            div { "Direction: {dir_str}" }
-                                            div { "Protocol: {proto_str}" }
-                                            div { "Local: {local_str}" }
-                                            div { "Remote: {remote_str}" }
+                                            class: "packet-details-info",
+                                            div { "PID: ", span { "{pkt_pid}" } }
+                                            div { "Direction: ", span { "{dir_str}" } }
+                                            div { "Protocol: ", span { "{proto_str}" } }
+                                            div { "Local: ", span { "{local_str}" } }
+                                            div { "Remote: ", span { "{remote_str}" } }
                                         }
                                         div {
-                                            style: "margin-bottom: 8px;",
-                                            div { style: "font-weight: 500; font-size: 11px; margin-bottom: 4px;", "Hex:" }
+                                            class: "hex-section",
+                                            div { class: "hex-section-title", "Hex:" }
                                             if editing {
                                                 textarea {
-                                                    class: "input",
-                                                    style: "width: 100%; height: 120px; font-family: monospace; font-size: 10px;",
+                                                    class: "hex-edit-textarea",
                                                     value: "{edit_payload}",
                                                     oninput: move |e| edit_payload.set(e.value().clone()),
                                                 }
                                             } else {
                                                 pre {
-                                                    style: "background: #f8f9fa; padding: 8px; border-radius: 4px; font-size: 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 120px;",
+                                                    class: "hex-display",
                                                     "{hex_display}"
                                                 }
                                             }
                                         }
                                         div {
-                                            div { style: "font-weight: 500; font-size: 11px; margin-bottom: 4px;", "ASCII:" }
+                                            class: "hex-section",
+                                            div { class: "hex-section-title", "ASCII:" }
                                             pre {
-                                                style: "background: #f8f9fa; padding: 8px; border-radius: 4px; font-size: 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 120px;",
+                                                class: "hex-display",
                                                 "{ascii_display}"
                                             }
                                         }
@@ -543,7 +525,7 @@ pub fn PacketCaptureTab() -> Element {
                             } else {
                                 rsx! {
                                     div {
-                                        style: "color: #666; text-align: center; padding: 20px;",
+                                        class: "packet-empty-state",
                                         "Select a packet to view details"
                                     }
                                 }
@@ -551,7 +533,7 @@ pub fn PacketCaptureTab() -> Element {
                         } else {
                             rsx! {
                                 div {
-                                    style: "color: #666; text-align: center; padding: 20px;",
+                                    class: "packet-empty-state",
                                     "Select a packet to view details"
                                 }
                             }
