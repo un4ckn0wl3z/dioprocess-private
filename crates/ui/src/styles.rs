@@ -1148,7 +1148,12 @@ const BASE_STYLES: &str = r#"
         overflow-x: auto;
         overflow-y: hidden;
         scrollbar-width: thin;
-        scrollbar-color: var(--border-color) transparent;
+        scrollbar-color: rgba(139, 92, 246, 0.5) transparent;
+    }
+    .tab-bar::before,
+    .tab-bar::after {
+        content: '';
+        margin: auto;
     }
     .tab-bar::-webkit-scrollbar {
         height: 6px;
@@ -1157,11 +1162,11 @@ const BASE_STYLES: &str = r#"
         background: transparent;
     }
     .tab-bar::-webkit-scrollbar-thumb {
-        background: var(--border-color);
+        background: linear-gradient(90deg, rgba(139, 92, 246, 0.6), rgba(168, 85, 247, 0.6));
         border-radius: 3px;
     }
     .tab-bar::-webkit-scrollbar-thumb:hover {
-        background: var(--text-secondary);
+        background: linear-gradient(90deg, rgba(139, 92, 246, 0.9), rgba(168, 85, 247, 0.9));
     }
     .tab-item {
         padding: 12px 24px;

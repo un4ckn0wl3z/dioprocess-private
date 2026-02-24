@@ -57,7 +57,7 @@ pub fn HvScannerTab() -> Element {
         scan_types[0]
     };
 
-    let mut do_first_scan = move || {
+    let do_first_scan = move || {
         let pid_str = pid_input.read().clone();
         let val_str = value_input.read().clone();
         let dt = all_data_types[*data_type_idx.read()];
@@ -139,7 +139,7 @@ pub fn HvScannerTab() -> Element {
         });
     };
 
-    let mut do_next_scan = move || {
+    let do_next_scan = move || {
         let pid_str = pid_input.read().clone();
         let val_str = value_input.read().clone();
         let dt = all_data_types[*data_type_idx.read()];
@@ -220,7 +220,7 @@ pub fn HvScannerTab() -> Element {
         });
     };
 
-    let mut do_reset = move || {
+    let do_reset = move || {
         scan_results.set(Vec::new());
         has_scanned.set(false);
         result_page.set(0);
@@ -231,7 +231,7 @@ pub fn HvScannerTab() -> Element {
         is_error.set(false);
     };
 
-    let mut do_write = move || {
+    let do_write = move || {
         let sel = *selected_idx.read();
         if sel.is_none() {
             status_message.set("No address selected".to_string());
@@ -724,7 +724,7 @@ pub fn HvScannerTab() -> Element {
             }
 
             // Context menu
-            if let Some((x, y, ctx_idx)) = ctx_menu {
+            if let Some((x, y, _ctx_idx)) = ctx_menu {
                 div {
                     class: "context-menu",
                     style: "position: fixed; left: {x}px; top: {y}px; z-index: 1000; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); padding: 4px 0; min-width: 140px;",
