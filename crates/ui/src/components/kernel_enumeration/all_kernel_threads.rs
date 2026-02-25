@@ -303,7 +303,12 @@ pub fn AllKernelThreadsTab(driver_loaded: bool) -> Element {
                                                             e.stop_propagation();
                                                             let t = tid;
                                                             spawn(async move {
-                                                                let _ = tokio::task::spawn_blocking(move || suspend_thread(t)).await;
+                                                                let result = tokio::task::spawn_blocking(move || suspend_thread(t)).await;
+                                                                match result {
+                                                                    Ok(Ok(())) => status_message.set(format!("Thread {} suspended", t)),
+                                                                    Ok(Err(e)) => status_message.set(format!("Suspend failed: {}", e)),
+                                                                    Err(e) => status_message.set(format!("Task error: {}", e)),
+                                                                }
                                                             });
                                                         },
                                                         "⏸"
@@ -315,7 +320,12 @@ pub fn AllKernelThreadsTab(driver_loaded: bool) -> Element {
                                                             e.stop_propagation();
                                                             let t = tid;
                                                             spawn(async move {
-                                                                let _ = tokio::task::spawn_blocking(move || resume_thread(t)).await;
+                                                                let result = tokio::task::spawn_blocking(move || resume_thread(t)).await;
+                                                                match result {
+                                                                    Ok(Ok(())) => status_message.set(format!("Thread {} resumed", t)),
+                                                                    Ok(Err(e)) => status_message.set(format!("Resume failed: {}", e)),
+                                                                    Err(e) => status_message.set(format!("Task error: {}", e)),
+                                                                }
                                                             });
                                                         },
                                                         "▶"
@@ -327,7 +337,12 @@ pub fn AllKernelThreadsTab(driver_loaded: bool) -> Element {
                                                             e.stop_propagation();
                                                             let t = tid;
                                                             spawn(async move {
-                                                                let _ = tokio::task::spawn_blocking(move || terminate_thread(t)).await;
+                                                                let result = tokio::task::spawn_blocking(move || terminate_thread(t)).await;
+                                                                match result {
+                                                                    Ok(Ok(())) => status_message.set(format!("Thread {} terminated", t)),
+                                                                    Ok(Err(e)) => status_message.set(format!("Terminate failed: {}", e)),
+                                                                    Err(e) => status_message.set(format!("Task error: {}", e)),
+                                                                }
                                                             });
                                                         },
                                                         "✕"
