@@ -445,6 +445,39 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandlePacketGetState(Irp, irpSp, &info);
 		break;
 
+	// Kernel Process/Thread Control IOCTLs
+	case IOCTL_DIOPROCESS_SUSPEND_PROCESS:
+		status = HandleSuspendProcess(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_RESUME_PROCESS:
+		status = HandleResumeProcess(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_SUSPEND_THREAD:
+		status = HandleSuspendThread(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_RESUME_THREAD:
+		status = HandleResumeThread(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_TERMINATE_THREAD:
+		status = HandleTerminateThread(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_ENUM_SYSTEM_THREADS:
+		status = HandleEnumSystemThreads(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_SET_ETHREAD_OFFSETS:
+		status = HandleSetEthreadOffsets(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_ENUM_ALL_KERNEL_THREADS:
+		status = HandleEnumAllKernelThreads(Irp, irpSp, &info);
+		break;
+
 	default:
 		status = STATUS_INVALID_DEVICE_REQUEST;
 		break;
@@ -4935,4 +4968,616 @@ NTSTATUS HandlePacketGetState(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR inf
 
 	*info = sizeof(PacketCaptureStateResponse);
 	return status;
+}
+
+// ============== Kernel Process/Thread Control Handlers ==============
+
+// System information structures for ZwQuerySystemInformation
+typedef struct _SYSTEM_THREAD_INFORMATION_LOCAL {
+	LARGE_INTEGER KernelTime;
+	LARGE_INTEGER UserTime;
+	LARGE_INTEGER CreateTime;
+	ULONG WaitTime;
+	PVOID StartAddress;
+	CLIENT_ID ClientId;
+	KPRIORITY Priority;
+	LONG BasePriority;
+	ULONG ContextSwitches;
+	ULONG ThreadState;
+	ULONG WaitReason;
+} SYSTEM_THREAD_INFORMATION_LOCAL, *PSYSTEM_THREAD_INFORMATION_LOCAL;
+
+typedef struct _SYSTEM_PROCESS_INFORMATION_LOCAL {
+	ULONG NextEntryOffset;
+	ULONG NumberOfThreads;
+	LARGE_INTEGER WorkingSetPrivateSize;
+	ULONG HardFaultCount;
+	ULONG NumberOfThreadsHighWatermark;
+	ULONGLONG CycleTime;
+	LARGE_INTEGER CreateTime;
+	LARGE_INTEGER UserTime;
+	LARGE_INTEGER KernelTime;
+	UNICODE_STRING ImageName;
+	KPRIORITY BasePriority;
+	HANDLE UniqueProcessId;
+	HANDLE InheritedFromUniqueProcessId;
+	ULONG HandleCount;
+	ULONG SessionId;
+	ULONG_PTR UniqueProcessKey;
+	SIZE_T PeakVirtualSize;
+	SIZE_T VirtualSize;
+	ULONG PageFaultCount;
+	SIZE_T PeakWorkingSetSize;
+	SIZE_T WorkingSetSize;
+	SIZE_T QuotaPeakPagedPoolUsage;
+	SIZE_T QuotaPagedPoolUsage;
+	SIZE_T QuotaPeakNonPagedPoolUsage;
+	SIZE_T QuotaNonPagedPoolUsage;
+	SIZE_T PagefileUsage;
+	SIZE_T PeakPagefileUsage;
+	SIZE_T PrivatePageCount;
+	LARGE_INTEGER ReadOperationCount;
+	LARGE_INTEGER WriteOperationCount;
+	LARGE_INTEGER OtherOperationCount;
+	LARGE_INTEGER ReadTransferCount;
+	LARGE_INTEGER WriteTransferCount;
+	LARGE_INTEGER OtherTransferCount;
+	SYSTEM_THREAD_INFORMATION_LOCAL Threads[1];
+} SYSTEM_PROCESS_INFORMATION_LOCAL, *PSYSTEM_PROCESS_INFORMATION_LOCAL;
+
+// Undocumented kernel APIs for process/thread control
+extern "C" {
+	NTKERNELAPI NTSTATUS PsSuspendProcess(PEPROCESS Process);
+	NTKERNELAPI NTSTATUS PsResumeProcess(PEPROCESS Process);
+	NTSYSCALLAPI NTSTATUS NTAPI ZwQuerySystemInformation(
+		ULONG SystemInformationClass,
+		PVOID SystemInformation,
+		ULONG SystemInformationLength,
+		PULONG ReturnLength
+	);
+	NTSYSCALLAPI NTSTATUS NTAPI ZwOpenThread(
+		PHANDLE ThreadHandle,
+		ACCESS_MASK DesiredAccess,
+		POBJECT_ATTRIBUTES ObjectAttributes,
+		CLIENT_ID* ClientId
+	);
+}
+
+// Function pointer types for dynamically resolved APIs
+typedef NTSTATUS(NTAPI* PFN_PsSuspendThread)(PETHREAD Thread, PULONG PreviousSuspendCount);
+typedef NTSTATUS(NTAPI* PFN_PsResumeThread)(PETHREAD Thread, PULONG PreviousSuspendCount);
+typedef NTSTATUS(NTAPI* PFN_ZwTerminateThread)(HANDLE ThreadHandle, NTSTATUS ExitStatus);
+
+// Global function pointers (resolved at runtime)
+static PFN_PsSuspendThread g_PsSuspendThread = nullptr;
+static PFN_PsResumeThread g_PsResumeThread = nullptr;
+static PFN_ZwTerminateThread g_ZwTerminateThread = nullptr;
+static BOOLEAN g_ThreadApisResolved = FALSE;
+
+// Resolve thread control APIs dynamically
+static BOOLEAN ResolveThreadApis()
+{
+	if (g_ThreadApisResolved)
+		return TRUE;
+
+	UNICODE_STRING funcName;
+
+	RtlInitUnicodeString(&funcName, L"PsSuspendThread");
+	g_PsSuspendThread = (PFN_PsSuspendThread)MmGetSystemRoutineAddress(&funcName);
+
+	RtlInitUnicodeString(&funcName, L"PsResumeThread");
+	g_PsResumeThread = (PFN_PsResumeThread)MmGetSystemRoutineAddress(&funcName);
+
+	RtlInitUnicodeString(&funcName, L"ZwTerminateThread");
+	g_ZwTerminateThread = (PFN_ZwTerminateThread)MmGetSystemRoutineAddress(&funcName);
+
+	g_ThreadApisResolved = TRUE;
+	return (g_PsSuspendThread != nullptr && g_PsResumeThread != nullptr && g_ZwTerminateThread != nullptr);
+}
+
+#define LOCAL_SystemProcessInformation 5
+
+NTSTATUS HandleSuspendProcess(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleSuspendProcess called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(ProcessControlRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (ProcessControlRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->ProcessId == 0 || request->ProcessId == 4)
+		return STATUS_INVALID_PARAMETER;
+
+	PEPROCESS process = nullptr;
+	NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)request->ProcessId, &process);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "PsLookupProcessByProcessId failed: 0x%X\n", status));
+		return status;
+	}
+
+	status = PsSuspendProcess(process);
+	ObDereferenceObject(process);
+
+	KdPrint((DRIVER_PREFIX "PsSuspendProcess for PID %d: 0x%X\n", request->ProcessId, status));
+	return status;
+}
+
+NTSTATUS HandleResumeProcess(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleResumeProcess called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(ProcessControlRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (ProcessControlRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->ProcessId == 0 || request->ProcessId == 4)
+		return STATUS_INVALID_PARAMETER;
+
+	PEPROCESS process = nullptr;
+	NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)request->ProcessId, &process);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "PsLookupProcessByProcessId failed: 0x%X\n", status));
+		return status;
+	}
+
+	status = PsResumeProcess(process);
+	ObDereferenceObject(process);
+
+	KdPrint((DRIVER_PREFIX "PsResumeProcess for PID %d: 0x%X\n", request->ProcessId, status));
+	return status;
+}
+
+NTSTATUS HandleSuspendThread(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleSuspendThread called\n"));
+
+	if (!ResolveThreadApis() || !g_PsSuspendThread)
+	{
+		KdPrint((DRIVER_PREFIX "PsSuspendThread not available\n"));
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(ThreadControlRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (ThreadControlRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->ThreadId == 0)
+		return STATUS_INVALID_PARAMETER;
+
+	PETHREAD thread = nullptr;
+	NTSTATUS status = PsLookupThreadByThreadId((HANDLE)(ULONG_PTR)request->ThreadId, &thread);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "PsLookupThreadByThreadId failed: 0x%X\n", status));
+		return status;
+	}
+
+	ULONG previousCount = 0;
+	status = g_PsSuspendThread(thread, &previousCount);
+	ObDereferenceObject(thread);
+
+	KdPrint((DRIVER_PREFIX "PsSuspendThread for TID %d: 0x%X (prev count: %d)\n", request->ThreadId, status, previousCount));
+	return status;
+}
+
+NTSTATUS HandleResumeThread(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleResumeThread called\n"));
+
+	if (!ResolveThreadApis() || !g_PsResumeThread)
+	{
+		KdPrint((DRIVER_PREFIX "PsResumeThread not available\n"));
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(ThreadControlRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (ThreadControlRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->ThreadId == 0)
+		return STATUS_INVALID_PARAMETER;
+
+	PETHREAD thread = nullptr;
+	NTSTATUS status = PsLookupThreadByThreadId((HANDLE)(ULONG_PTR)request->ThreadId, &thread);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "PsLookupThreadByThreadId failed: 0x%X\n", status));
+		return status;
+	}
+
+	ULONG previousCount = 0;
+	status = g_PsResumeThread(thread, &previousCount);
+	ObDereferenceObject(thread);
+
+	KdPrint((DRIVER_PREFIX "PsResumeThread for TID %d: 0x%X (prev count: %d)\n", request->ThreadId, status, previousCount));
+	return status;
+}
+
+NTSTATUS HandleTerminateThread(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleTerminateThread called\n"));
+
+	if (!ResolveThreadApis() || !g_ZwTerminateThread)
+	{
+		KdPrint((DRIVER_PREFIX "ZwTerminateThread not available\n"));
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(ThreadControlRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (ThreadControlRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request || request->ThreadId == 0)
+		return STATUS_INVALID_PARAMETER;
+
+	// Open thread handle for termination
+	HANDLE threadHandle = nullptr;
+	OBJECT_ATTRIBUTES objAttr;
+	CLIENT_ID clientId;
+	clientId.UniqueProcess = nullptr;
+	clientId.UniqueThread = (HANDLE)(ULONG_PTR)request->ThreadId;
+	InitializeObjectAttributes(&objAttr, nullptr, OBJ_KERNEL_HANDLE, nullptr, nullptr);
+
+	NTSTATUS status = ZwOpenThread(&threadHandle, THREAD_TERMINATE, &objAttr, &clientId);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "ZwOpenThread failed: 0x%X\n", status));
+		return status;
+	}
+
+	status = g_ZwTerminateThread(threadHandle, STATUS_SUCCESS);
+	ZwClose(threadHandle);
+
+	KdPrint((DRIVER_PREFIX "ZwTerminateThread for TID %d: 0x%X\n", request->ThreadId, status));
+	return status;
+}
+
+NTSTATUS HandleSetEthreadOffsets(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleSetEthreadOffsets called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(SetEthreadOffsetsRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (SetEthreadOffsetsRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	// Validate offsets are reasonable
+	if (request->Win32StartAddressOffset > 0x1000 || request->StateOffset > 0x1000 || request->WaitReasonOffset > 0x1000)
+	{
+		KdPrint((DRIVER_PREFIX "Invalid ETHREAD offsets\n"));
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	g_EthreadOffsets.Win32StartAddressOffset = request->Win32StartAddressOffset;
+	g_EthreadOffsets.StateOffset = request->StateOffset;
+	g_EthreadOffsets.WaitReasonOffset = request->WaitReasonOffset;
+	g_EthreadOffsets.IsInitialized = TRUE;
+
+	KdPrint((DRIVER_PREFIX "ETHREAD offsets set: Win32StartAddress=0x%X, State=0x%X, WaitReason=0x%X\n",
+		request->Win32StartAddressOffset, request->StateOffset, request->WaitReasonOffset));
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleEnumSystemThreads(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "HandleEnumSystemThreads called\n"));
+
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+	ULONG requiredSize = sizeof(EnumSystemThreadsResponse) + (MAX_SYSTEM_THREADS - 1) * sizeof(SystemThreadInfo);
+	if (outputLen < requiredSize)
+	{
+		KdPrint((DRIVER_PREFIX "Buffer too small: %d < %d\n", outputLen, requiredSize));
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto response = (EnumSystemThreadsResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+		return STATUS_INVALID_PARAMETER;
+
+	RtlZeroMemory(response, requiredSize);
+	response->Count = 0;
+
+	// Get System process (PID 4)
+	PEPROCESS systemProcess = nullptr;
+	NTSTATUS status = PsLookupProcessByProcessId((HANDLE)4, &systemProcess);
+	if (!NT_SUCCESS(status))
+	{
+		KdPrint((DRIVER_PREFIX "Failed to get System process: 0x%X\n", status));
+		return status;
+	}
+
+	// Get offsets
+	ULONG win32StartOffset = g_EthreadOffsets.IsInitialized ? g_EthreadOffsets.Win32StartAddressOffset : 0x620;
+	ULONG stateOffset = g_EthreadOffsets.IsInitialized ? g_EthreadOffsets.StateOffset : 0x184;
+	ULONG waitReasonOffset = g_EthreadOffsets.IsInitialized ? g_EthreadOffsets.WaitReasonOffset : 0x185;
+
+	__try
+	{
+		// Use NtQuerySystemInformation to enumerate threads
+		ULONG bufferSize = 0x100000; // 1MB
+		PVOID buffer = ExAllocatePoolWithTag(NonPagedPool, bufferSize, 'thrD');
+		if (!buffer)
+		{
+			ObDereferenceObject(systemProcess);
+			return STATUS_INSUFFICIENT_RESOURCES;
+		}
+
+		status = ZwQuerySystemInformation(LOCAL_SystemProcessInformation, buffer, bufferSize, nullptr);
+		if (!NT_SUCCESS(status))
+		{
+			ExFreePoolWithTag(buffer, 'thrD');
+			ObDereferenceObject(systemProcess);
+			return status;
+		}
+
+		// Find System process in the list
+		PSYSTEM_PROCESS_INFORMATION_LOCAL procInfo = (PSYSTEM_PROCESS_INFORMATION_LOCAL)buffer;
+		while (procInfo)
+		{
+			if ((ULONG)(ULONG_PTR)procInfo->UniqueProcessId == 4)
+			{
+				// Found System process, enumerate its threads
+				PSYSTEM_THREAD_INFORMATION_LOCAL threadInfo = procInfo->Threads;
+				
+				for (ULONG i = 0; i < procInfo->NumberOfThreads && response->Count < MAX_SYSTEM_THREADS; i++)
+				{
+					ULONG tid = (ULONG)(ULONG_PTR)threadInfo[i].ClientId.UniqueThread;
+					
+					// Get ETHREAD to read Win32StartAddress
+					PETHREAD thread = nullptr;
+					if (NT_SUCCESS(PsLookupThreadByThreadId((HANDLE)(ULONG_PTR)tid, &thread)))
+					{
+						SystemThreadInfo* entry = &response->Threads[response->Count];
+						entry->ThreadId = tid;
+						entry->StartAddress = (ULONG64)threadInfo[i].StartAddress;
+						
+						// Read Win32StartAddress from ETHREAD
+						if (MmIsAddressValid((PVOID)((PUCHAR)thread + win32StartOffset)))
+						{
+							entry->Win32StartAddress = *(PULONG64)((PUCHAR)thread + win32StartOffset);
+						}
+						
+						// Read State and WaitReason
+						if (MmIsAddressValid((PVOID)((PUCHAR)thread + stateOffset)))
+						{
+							entry->State = *(PUCHAR)((PUCHAR)thread + stateOffset);
+						}
+						if (MmIsAddressValid((PVOID)((PUCHAR)thread + waitReasonOffset)))
+						{
+							entry->WaitReason = *(PUCHAR)((PUCHAR)thread + waitReasonOffset);
+						}
+						
+						// Resolve driver name for Win32StartAddress
+						ULONG64 addr = entry->Win32StartAddress ? entry->Win32StartAddress : entry->StartAddress;
+						if (addr)
+						{
+							// Initialize AuxKlib first
+							if (!NT_SUCCESS(AuxKlibInitialize()))
+							{
+								ObDereferenceObject(thread);
+								response->Count++;
+								continue;
+							}
+
+							// Find which driver owns this address
+							PAUX_MODULE_EXTENDED_INFO modules = nullptr;
+							ULONG moduleSize = 0;
+							if (NT_SUCCESS(AuxKlibQueryModuleInformation(&moduleSize, sizeof(AUX_MODULE_EXTENDED_INFO), nullptr)) && moduleSize > 0)
+							{
+								modules = (PAUX_MODULE_EXTENDED_INFO)ExAllocatePoolWithTag(NonPagedPool, moduleSize, 'modD');
+								if (modules && NT_SUCCESS(AuxKlibQueryModuleInformation(&moduleSize, sizeof(AUX_MODULE_EXTENDED_INFO), modules)))
+								{
+									ULONG moduleCount = moduleSize / sizeof(AUX_MODULE_EXTENDED_INFO);
+									for (ULONG m = 0; m < moduleCount; m++)
+									{
+										ULONG64 base = (ULONG64)modules[m].BasicInfo.ImageBase;
+										ULONG64 end = base + modules[m].ImageSize;
+										if (addr >= base && addr < end)
+										{
+											// Found the module
+											entry->DriverBase = base;
+											entry->DriverOffset = addr - base;
+											
+											// Copy module name
+											PCHAR fileName = (PCHAR)modules[m].FullPathName + modules[m].FileNameOffset;
+											size_t len = strlen(fileName);
+											if (len >= MAX_MODULE_NAME_LENGTH) len = MAX_MODULE_NAME_LENGTH - 1;
+											RtlCopyMemory(entry->DriverName, fileName, len);
+											entry->DriverName[len] = '\0';
+											break;
+										}
+									}
+								}
+								if (modules) ExFreePoolWithTag(modules, 'modD');
+							}
+						}
+						
+						ObDereferenceObject(thread);
+						response->Count++;
+					}
+				}
+				break;
+			}
+
+			if (procInfo->NextEntryOffset == 0)
+				break;
+			procInfo = (PSYSTEM_PROCESS_INFORMATION_LOCAL)((PUCHAR)procInfo + procInfo->NextEntryOffset);
+		}
+
+		ExFreePoolWithTag(buffer, 'thrD');
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		ObDereferenceObject(systemProcess);
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	ObDereferenceObject(systemProcess);
+	*info = sizeof(EnumSystemThreadsResponse) + (response->Count > 0 ? (response->Count - 1) * sizeof(SystemThreadInfo) : 0);
+	
+	KdPrint((DRIVER_PREFIX "Enumerated %d system threads\n", response->Count));
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleEnumAllKernelThreads(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	KdPrint((DRIVER_PREFIX "HandleEnumAllKernelThreads called\n"));
+
+	auto outputLen = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+	ULONG requiredSize = sizeof(EnumAllKernelThreadsResponse) + (MAX_KERNEL_THREADS - 1) * sizeof(KernelThreadInfo);
+	if (outputLen < requiredSize)
+	{
+		KdPrint((DRIVER_PREFIX "Buffer too small: %d < %d\n", outputLen, requiredSize));
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto response = (EnumAllKernelThreadsResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!response)
+		return STATUS_INVALID_PARAMETER;
+
+	RtlZeroMemory(response, requiredSize);
+	response->Count = 0;
+
+	// Get offsets
+	ULONG win32StartOffset = g_EthreadOffsets.IsInitialized ? g_EthreadOffsets.Win32StartAddressOffset : 0x620;
+	ULONG stateOffset = g_EthreadOffsets.IsInitialized ? g_EthreadOffsets.StateOffset : 0x184;
+	ULONG waitReasonOffset = g_EthreadOffsets.IsInitialized ? g_EthreadOffsets.WaitReasonOffset : 0x185;
+
+	// Initialize AuxKlib for module resolution
+	if (!NT_SUCCESS(AuxKlibInitialize()))
+	{
+		KdPrint((DRIVER_PREFIX "AuxKlibInitialize failed\n"));
+		return STATUS_UNSUCCESSFUL;
+	}
+
+	// Get module list once for all threads
+	PAUX_MODULE_EXTENDED_INFO modules = nullptr;
+	ULONG moduleSize = 0;
+	ULONG moduleCount = 0;
+	
+	if (NT_SUCCESS(AuxKlibQueryModuleInformation(&moduleSize, sizeof(AUX_MODULE_EXTENDED_INFO), nullptr)) && moduleSize > 0)
+	{
+		modules = (PAUX_MODULE_EXTENDED_INFO)ExAllocatePoolWithTag(NonPagedPool, moduleSize, 'modK');
+		if (modules && NT_SUCCESS(AuxKlibQueryModuleInformation(&moduleSize, sizeof(AUX_MODULE_EXTENDED_INFO), modules)))
+		{
+			moduleCount = moduleSize / sizeof(AUX_MODULE_EXTENDED_INFO);
+		}
+	}
+
+	__try
+	{
+		// Query system process information
+		ULONG bufferSize = 0x200000; // 2MB for all processes
+		PVOID buffer = ExAllocatePoolWithTag(NonPagedPool, bufferSize, 'thrK');
+		if (!buffer)
+		{
+			if (modules) ExFreePoolWithTag(modules, 'modK');
+			return STATUS_INSUFFICIENT_RESOURCES;
+		}
+
+		NTSTATUS status = ZwQuerySystemInformation(LOCAL_SystemProcessInformation, buffer, bufferSize, nullptr);
+		if (!NT_SUCCESS(status))
+		{
+			ExFreePoolWithTag(buffer, 'thrK');
+			if (modules) ExFreePoolWithTag(modules, 'modK');
+			return status;
+		}
+
+		// Iterate through all processes
+		PSYSTEM_PROCESS_INFORMATION_LOCAL procInfo = (PSYSTEM_PROCESS_INFORMATION_LOCAL)buffer;
+		while (procInfo && response->Count < MAX_KERNEL_THREADS)
+		{
+			ULONG pid = (ULONG)(ULONG_PTR)procInfo->UniqueProcessId;
+			PSYSTEM_THREAD_INFORMATION_LOCAL threadInfo = procInfo->Threads;
+
+			for (ULONG i = 0; i < procInfo->NumberOfThreads && response->Count < MAX_KERNEL_THREADS; i++)
+			{
+				ULONG64 startAddr = (ULONG64)threadInfo[i].StartAddress;
+				
+				// Check if this is a kernel-mode address (high bit set on x64)
+				if (startAddr >= 0xFFFF800000000000ULL)
+				{
+					ULONG tid = (ULONG)(ULONG_PTR)threadInfo[i].ClientId.UniqueThread;
+					
+					KernelThreadInfo* entry = &response->Threads[response->Count];
+					entry->ProcessId = pid;
+					entry->ThreadId = tid;
+					entry->StartAddress = startAddr;
+					entry->State = (UCHAR)threadInfo[i].ThreadState;
+					entry->WaitReason = (UCHAR)threadInfo[i].WaitReason;
+
+					// Try to get Win32StartAddress from ETHREAD
+					PETHREAD thread = nullptr;
+					if (NT_SUCCESS(PsLookupThreadByThreadId((HANDLE)(ULONG_PTR)tid, &thread)))
+					{
+						if (MmIsAddressValid((PVOID)((PUCHAR)thread + win32StartOffset)))
+						{
+							entry->Win32StartAddress = *(PULONG64)((PUCHAR)thread + win32StartOffset);
+						}
+						if (MmIsAddressValid((PVOID)((PUCHAR)thread + stateOffset)))
+						{
+							entry->State = *(PUCHAR)((PUCHAR)thread + stateOffset);
+						}
+						if (MmIsAddressValid((PVOID)((PUCHAR)thread + waitReasonOffset)))
+						{
+							entry->WaitReason = *(PUCHAR)((PUCHAR)thread + waitReasonOffset);
+						}
+						ObDereferenceObject(thread);
+					}
+
+					// Resolve module name
+					ULONG64 addr = entry->Win32StartAddress ? entry->Win32StartAddress : entry->StartAddress;
+					if (addr && modules)
+					{
+						for (ULONG m = 0; m < moduleCount; m++)
+						{
+							ULONG64 base = (ULONG64)modules[m].BasicInfo.ImageBase;
+							ULONG64 end = base + modules[m].ImageSize;
+							if (addr >= base && addr < end)
+							{
+								entry->ModuleBase = base;
+								entry->ModuleOffset = addr - base;
+								PCHAR fileName = (PCHAR)modules[m].FullPathName + modules[m].FileNameOffset;
+								size_t len = strlen(fileName);
+								if (len >= MAX_MODULE_NAME_LENGTH) len = MAX_MODULE_NAME_LENGTH - 1;
+								RtlCopyMemory(entry->ModuleName, fileName, len);
+								entry->ModuleName[len] = '\0';
+								break;
+							}
+						}
+					}
+
+					response->Count++;
+				}
+			}
+
+			if (procInfo->NextEntryOffset == 0)
+				break;
+			procInfo = (PSYSTEM_PROCESS_INFORMATION_LOCAL)((PUCHAR)procInfo + procInfo->NextEntryOffset);
+		}
+
+		ExFreePoolWithTag(buffer, 'thrK');
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		if (modules) ExFreePoolWithTag(modules, 'modK');
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	if (modules) ExFreePoolWithTag(modules, 'modK');
+	*info = sizeof(EnumAllKernelThreadsResponse) + (response->Count > 0 ? (response->Count - 1) * sizeof(KernelThreadInfo) : 0);
+	
+	KdPrint((DRIVER_PREFIX "Enumerated %d kernel threads from all processes\n", response->Count));
+	return STATUS_SUCCESS;
 }

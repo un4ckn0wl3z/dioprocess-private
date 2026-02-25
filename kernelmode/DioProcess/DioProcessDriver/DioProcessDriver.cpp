@@ -41,6 +41,14 @@ RegistryCallbackOffsets g_RegistryCallbackOffsets = {
 	FALSE  // IsInitialized
 };
 
+// Dynamic ETHREAD offsets (initialized with defaults, updated via IOCTL)
+EthreadOffsets g_EthreadOffsets = {
+	0x620,  // Win32StartAddressOffset - default for Windows 10 22H2
+	0x184,  // StateOffset
+	0x185,  // WaitReasonOffset
+	FALSE   // IsInitialized
+};
+
 // ============== Helper Function Implementations ==============
 
 void AddItem(FullEventData* item)

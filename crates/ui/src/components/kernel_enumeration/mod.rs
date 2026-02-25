@@ -1,20 +1,24 @@
 //! Kernel Enumeration Tab - Advanced kernel-mode enumeration features with sub-tabs
 
+mod all_kernel_threads;
 mod callback_enum;
 mod drivers;
 mod etwti;
 mod filehide;
 mod hypervisor;
+mod kernel_threads;
 mod minifilters;
 mod pspcidtable;
 mod respawn_monitor;
 
 use dioxus::prelude::*;
 
+use all_kernel_threads::AllKernelThreadsTab;
 use callback_enum::CallbackEnumTab;
 use drivers::DriversTab;
 use etwti::EtwtiTab;
 use filehide::FileHideTab;
+use kernel_threads::KernelThreadsTab;
 use minifilters::MinifiltersTab;
 use pspcidtable::PspCidTableTab;
 use respawn_monitor::RespawnMonitorTab;
@@ -27,6 +31,8 @@ pub use hypervisor::HypervisorTab;
 enum KernelUtilityTab {
     CallbackEnum,
     PspCidTable,
+    KernelThreads,
+    AllKernelThreads,
     Minifilters,
     Drivers,
     HideFiles,
@@ -85,6 +91,18 @@ pub fn KernelUtilitiesTab() -> Element {
                 }
 
                 button {
+                    class: if *active_tab.read() == KernelUtilityTab::KernelThreads { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| active_tab.set(KernelUtilityTab::KernelThreads),
+                    "System Threads"
+                }
+
+                button {
+                    class: if *active_tab.read() == KernelUtilityTab::AllKernelThreads { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| active_tab.set(KernelUtilityTab::AllKernelThreads),
+                    "All Kernel Threads"
+                }
+
+                button {
                     class: if *active_tab.read() == KernelUtilityTab::Minifilters { "btn btn-secondary active" } else { "btn btn-secondary" },
                     onclick: move |_| active_tab.set(KernelUtilityTab::Minifilters),
                     "Minifilters Enumeration"
@@ -119,6 +137,8 @@ pub fn KernelUtilitiesTab() -> Element {
             match *active_tab.read() {
                 KernelUtilityTab::CallbackEnum => rsx! { CallbackEnumTab { driver_loaded } },
                 KernelUtilityTab::PspCidTable => rsx! { PspCidTableTab { driver_loaded } },
+                KernelUtilityTab::KernelThreads => rsx! { KernelThreadsTab { driver_loaded } },
+                KernelUtilityTab::AllKernelThreads => rsx! { AllKernelThreadsTab { driver_loaded } },
                 KernelUtilityTab::Minifilters => rsx! { MinifiltersTab { driver_loaded } },
                 KernelUtilityTab::Drivers => rsx! { DriversTab { driver_loaded } },
                 KernelUtilityTab::HideFiles => rsx! { FileHideTab { driver_loaded } },

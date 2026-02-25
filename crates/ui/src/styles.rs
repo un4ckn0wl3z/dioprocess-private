@@ -2978,4 +2978,69 @@ const BASE_STYLES: &str = r#"
         opacity: 1;
     }
 
+    /* Callback Enum Content - flex container for scrollable tables */
+    .callback-enum-content {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        padding: 16px 20px;
+        overflow: hidden;
+    }
+
+    /* Action buttons for inline table actions */
+    .action-buttons {
+        display: flex;
+        gap: 4px;
+        justify-content: center;
+    }
+    .btn-action {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 1px solid var(--border-secondary);
+        border-radius: 4px;
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.15s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .btn-action:hover {
+        background: var(--bg-hover);
+        border-color: var(--border-accent);
+        color: var(--text-primary);
+    }
+    .btn-action.btn-danger:hover {
+        background: rgba(239, 68, 68, 0.2);
+        border-color: #ef4444;
+        color: #f87171;
+    }
+
+    /* Table footer */
+    .table-footer {
+        padding: 12px 16px;
+        font-size: 13px;
+        color: var(--text-muted);
+        background: var(--bg-tertiary);
+        border-top: 1px solid var(--border-secondary);
+        flex-shrink: 0;
+    }
+
+    /* Mono class for monospace text */
+    .mono {
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 13px;
+    }
+
+    /* No results message */
+    .no-results {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--text-muted);
+        font-size: 14px;
+    }
+
 "#;

@@ -32,19 +32,22 @@ pub mod packet_capture;
 pub mod packet_storage;
 
 pub use driver::{
-    clear_debug_flags, enable_all_privileges, enumerate_image_callbacks, enumerate_kernel_drivers,
-    enumerate_minifilters, enumerate_object_callbacks, enumerate_process_callbacks,
-    enumerate_registry_callbacks, enumerate_thread_callbacks, get_collection_state, is_driver_loaded,
+    clear_debug_flags, enable_all_privileges, enumerate_all_kernel_threads, enumerate_image_callbacks,
+    enumerate_kernel_drivers, enumerate_minifilters, enumerate_object_callbacks, enumerate_process_callbacks,
+    enumerate_registry_callbacks, enumerate_system_threads, enumerate_thread_callbacks, 
+    get_collection_state, is_driver_loaded,
     kernel_copy_memory, kill_process_peb_corrupt, kill_process_terminate, kill_process_unmap,
     protect_process, protect_process_with_level, read_events, register_callbacks, remove_image_callback,
     remove_object_callback, remove_process_callback, remove_registry_callback, remove_thread_callback,
     restore_image_callback, restore_object_callback, restore_process_callback,
-    restore_registry_callback, restore_thread_callback, set_registry_callback_offsets, start_collection, stop_collection,
+    restore_registry_callback, restore_thread_callback, resume_process, resume_thread,
+    set_ethread_offsets, set_registry_callback_offsets, start_collection, stop_collection,
+    suspend_process, suspend_thread, terminate_thread,
     hide_memory, unlink_minifilter, unprotect_process, unregister_callbacks, CallbackInfo, KernelDriverInfo,
-    MinifilterCallbacks, MinifilterInfo, ObjectCallbackInfo, ObjectCallbackOperations,
-    ObjectCallbackType, ProcessProtectionLevel, RegistryCallbackInfo,
+    KernelThreadInfo, MinifilterCallbacks, MinifilterInfo, ObjectCallbackInfo, ObjectCallbackOperations,
+    ObjectCallbackType, ProcessProtectionLevel, RegistryCallbackInfo, SystemThreadInfo,
 };
-pub use pdb_resolver::{resolve_registry_callback_offsets, ResolvedRegistryCallbackOffsets};
+pub use pdb_resolver::{resolve_ethread_offsets, resolve_kernel_symbol, resolve_registry_callback_offsets, ResolvedEthreadOffsets, ResolvedRegistryCallbackOffsets};
 pub use error::CallbackError;
 pub use hypervisor::{
     hv_clear_hidden_drivers, hv_hide_driver, hv_inject_dll, hv_inject_shellcode, hv_install_hooks,

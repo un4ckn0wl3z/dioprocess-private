@@ -64,6 +64,17 @@ struct RegistryCallbackOffsets
 
 extern RegistryCallbackOffsets g_RegistryCallbackOffsets;
 
+// Dynamic ETHREAD offsets (from PDB resolution)
+struct EthreadOffsets
+{
+	ULONG Win32StartAddressOffset;               // Offset of Win32StartAddress in ETHREAD
+	ULONG StateOffset;                           // Offset of State in ETHREAD
+	ULONG WaitReasonOffset;                      // Offset of WaitReason in ETHREAD
+	BOOLEAN IsInitialized;                       // TRUE if offsets have been set
+};
+
+extern EthreadOffsets g_EthreadOffsets;
+
 // ============== Forward Declarations - Callbacks ==============
 
 VOID OnProcessCallback(
@@ -199,6 +210,16 @@ NTSTATUS HandleRestoreRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
 
 NTSTATUS HandleKernelInjectShellcode(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleKernelInjectDll(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// Kernel Process/Thread Control Handlers
+NTSTATUS HandleSuspendProcess(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleResumeProcess(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleSuspendThread(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleResumeThread(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleTerminateThread(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleEnumSystemThreads(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleSetEthreadOffsets(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleEnumAllKernelThreads(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 
 // Hypervisor Control Handlers
 NTSTATUS HandleHvStart(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);

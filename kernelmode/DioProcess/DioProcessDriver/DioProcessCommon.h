@@ -1242,3 +1242,84 @@ struct PacketFilterRemoveRequest
 {
 	ULONG Index;
 };
+
+// ============== Kernel Process/Thread Control IOCTLs ==============
+
+#define IOCTL_DIOPROCESS_SUSPEND_PROCESS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F1, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_RESUME_PROCESS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F2, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_SUSPEND_THREAD \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F4, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_RESUME_THREAD \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F5, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_TERMINATE_THREAD \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F6, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_ENUM_SYSTEM_THREADS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F7, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_SET_ETHREAD_OFFSETS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F8, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_ENUM_ALL_KERNEL_THREADS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F9, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// ============== Kernel Process/Thread Control Structures ==============
+
+struct ProcessControlRequest
+{
+	ULONG ProcessId;
+};
+
+struct ThreadControlRequest
+{
+	ULONG ThreadId;
+};
+
+// Request structure for setting ETHREAD offsets (dynamic PDB resolution)
+struct SetEthreadOffsetsRequest
+{
+	ULONG Win32StartAddressOffset;    // Offset of Win32StartAddress in ETHREAD
+	ULONG StateOffset;                // Offset of State in ETHREAD
+	ULONG WaitReasonOffset;           // Offset of WaitReason in ETHREAD
+};
+
+#define MAX_SYSTEM_THREADS 512
+
+struct SystemThreadInfo
+{
+	ULONG ThreadId;
+	ULONG64 StartAddress;             // ETHREAD.StartAddress (wrapper function)
+	ULONG64 Win32StartAddress;        // ETHREAD.Win32StartAddress (real driver function)
+	CHAR DriverName[MAX_MODULE_NAME_LENGTH];  // Resolved driver name
+	ULONG64 DriverBase;               // Driver base address
+	ULONG64 DriverOffset;             // Offset within driver
+	UCHAR State;                      // Thread state
+	UCHAR WaitReason;                 // Wait reason if waiting
+};
+
+struct EnumSystemThreadsResponse
+{
+	ULONG Count;
+	SystemThreadInfo Threads[1];      // Variable length array
+};
+
+// Kernel thread info (includes process ID for all-process enumeration)
+struct KernelThreadInfo
+{
+	ULONG ProcessId;
+	ULONG ThreadId;
+	ULONG64 StartAddress;             // Thread start address
+	ULONG64 Win32StartAddress;        // Real start address from ETHREAD
+	CHAR ModuleName[MAX_MODULE_NAME_LENGTH];  // Resolved module/driver name
+	ULONG64 ModuleBase;               // Module base address
+	ULONG64 ModuleOffset;             // Offset within module
+	UCHAR State;                      // Thread state
+	UCHAR WaitReason;                 // Wait reason if waiting
+};
+
+#define MAX_KERNEL_THREADS 1024
+
+struct EnumAllKernelThreadsResponse
+{
+	ULONG Count;
+	KernelThreadInfo Threads[1];      // Variable length array
+};

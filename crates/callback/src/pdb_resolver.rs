@@ -44,6 +44,65 @@ pub struct ResolvedEtwtiOffsets {
 static OFFSET_CACHE: Lazy<RwLock<HashMap<String, ResolvedEtwtiOffsets>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// Resolved symbol info
+#[derive(Debug, Clone)]
+pub struct ResolvedSymbol {
+    pub name: String,
+    pub offset: u64,
+}
+
+/// Symbol table for address lookup
+#[derive(Debug, Clone)]
+pub struct SymbolTable {
+    /// Sorted list of (address, symbol_name) for binary search
+    symbols: Vec<(u64, String)>,
+    /// Module base address
+    pub base_address: u64,
+}
+
+impl SymbolTable {
+    /// Look up the symbol containing an address
+    pub fn lookup(&self, address: u64) -> Option<ResolvedSymbol> {
+        if self.symbols.is_empty() {
+            return None;
+        }
+        
+        // Binary search for the largest address <= target
+        let idx = match self.symbols.binary_search_by_key(&address, |&(addr, _)| addr) {
+            Ok(i) => i,  // Exact match
+            Err(i) => {
+                if i == 0 {
+                    return None;  // Address is before first symbol
+                }
+                i - 1  // Use previous symbol
+            }
+        };
+        
+        let (sym_addr, sym_name) = &self.symbols[idx];
+        Some(ResolvedSymbol {
+            name: sym_name.clone(),
+            offset: address - sym_addr,
+        })
+    }
+    
+    /// Format address as "module!symbol+offset" or "module+offset"
+    pub fn format_address(&self, address: u64, module_name: &str) -> String {
+        if let Some(sym) = self.lookup(address) {
+            if sym.offset == 0 {
+                format!("{}!{}", module_name, sym.name)
+            } else {
+                format!("{}!{}+0x{:x}", module_name, sym.name, sym.offset)
+            }
+        } else {
+            format!("{}+0x{:x}", module_name, address.saturating_sub(self.base_address))
+        }
+    }
+}
+
+/// Global cache for symbol tables
+static SYMBOL_TABLE_CACHE: Lazy<RwLock<HashMap<String, SymbolTable>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
 /// Debug info from PE file needed to download PDB
 #[derive(Debug, Clone)]
 pub struct PdbDebugInfo {
@@ -433,6 +492,115 @@ fn parse_pdb_for_registry_callback_offsets(pdb_data: &[u8]) -> Result<ResolvedRe
     })
 }
 
+/// Resolved ETHREAD offsets from PDB
+#[derive(Debug, Clone)]
+pub struct ResolvedEthreadOffsets {
+    /// Offset of Win32StartAddress field in ETHREAD
+    pub win32_start_address_offset: u32,
+    /// Offset of State field in ETHREAD
+    pub state_offset: u32,
+    /// Offset of WaitReason field in ETHREAD
+    pub wait_reason_offset: u32,
+    /// Whether offsets were resolved from PDB
+    pub from_pdb: bool,
+    /// PDB signature used for resolution
+    pub pdb_signature: String,
+}
+
+/// Global cache for ETHREAD offsets
+static ETHREAD_OFFSET_CACHE: Lazy<RwLock<Option<ResolvedEthreadOffsets>>> =
+    Lazy::new(|| RwLock::new(None));
+
+/// Parse PDB and extract ETHREAD offsets
+fn parse_pdb_for_ethread_offsets(pdb_data: &[u8]) -> Result<ResolvedEthreadOffsets, CallbackError> {
+    let cursor = Cursor::new(pdb_data);
+    let mut pdb = PDB::open(cursor)
+        .map_err(|_| CallbackError::InvalidData)?;
+    
+    let mut win32_start_address_offset: Option<u32> = None;
+    let mut state_offset: Option<u32> = None;
+    let mut wait_reason_offset: Option<u32> = None;
+    
+    // Get type information for structure field offsets
+    let type_info = pdb.type_information()
+        .map_err(|_| CallbackError::InvalidData)?;
+    
+    let mut type_finder = type_info.finder();
+    let mut types = type_info.iter();
+    
+    while let Some(typ) = types.next().map_err(|_| CallbackError::InvalidData)? {
+        let _ = type_finder.update(&types);
+        
+        if let Ok(pdb::TypeData::Class(class)) = typ.parse() {
+            let class_name = class.name.to_string();
+            
+            // Look for _ETHREAD structure
+            if class_name.to_string() == "_ETHREAD" {
+                if let Some(fields) = class.fields {
+                    if let Ok(field_type) = type_finder.find(fields) {
+                        if let Ok(pdb::TypeData::FieldList(field_list)) = field_type.parse() {
+                            for field in field_list.fields {
+                                if let pdb::TypeData::Member(member) = field {
+                                    let field_name = member.name.to_string().to_string();
+                                    match field_name.as_str() {
+                                        "Win32StartAddress" => win32_start_address_offset = Some(member.offset as u32),
+                                        "State" => state_offset = Some(member.offset as u32),
+                                        "WaitReason" => wait_reason_offset = Some(member.offset as u32),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                break; // Found the structure, no need to continue
+            }
+        }
+    }
+    
+    // Use defaults if not found (based on Windows 10 22H2 typical layout)
+    let win32_start_address_offset = win32_start_address_offset.unwrap_or(0x620);
+    let state_offset = state_offset.unwrap_or(0x184);
+    let wait_reason_offset = wait_reason_offset.unwrap_or(0x185);
+    
+    Ok(ResolvedEthreadOffsets {
+        win32_start_address_offset,
+        state_offset,
+        wait_reason_offset,
+        from_pdb: win32_start_address_offset != 0x620,
+        pdb_signature: String::new(),
+    })
+}
+
+/// Resolve ETHREAD offsets dynamically from PDB
+/// Returns cached offsets if available, otherwise downloads and parses PDB
+pub fn resolve_ethread_offsets() -> Result<ResolvedEthreadOffsets, CallbackError> {
+    // Check memory cache first
+    {
+        let cache = ETHREAD_OFFSET_CACHE.read();
+        if let Some(offsets) = cache.as_ref() {
+            return Ok(offsets.clone());
+        }
+    }
+    
+    // Get PDB info from ntoskrnl.exe
+    let pdb_info = get_ntoskrnl_pdb_info()?;
+    let cache_key = format!("{}{}", pdb_info.guid, pdb_info.age);
+    
+    // Download and parse PDB
+    let pdb_data = download_pdb(&pdb_info)?;
+    let mut offsets = parse_pdb_for_ethread_offsets(&pdb_data)?;
+    offsets.pdb_signature = cache_key;
+    
+    // Cache the result
+    {
+        let mut cache = ETHREAD_OFFSET_CACHE.write();
+        *cache = Some(offsets.clone());
+    }
+    
+    Ok(offsets)
+}
+
 /// Resolve registry callback offsets dynamically from PDB
 /// Returns cached offsets if available, otherwise downloads and parses PDB
 pub fn resolve_registry_callback_offsets() -> Result<ResolvedRegistryCallbackOffsets, CallbackError> {
@@ -460,4 +628,78 @@ pub fn resolve_registry_callback_offsets() -> Result<ResolvedRegistryCallbackOff
     }
     
     Ok(offsets)
+}
+
+/// Build a symbol table from PDB data for address lookup
+fn build_symbol_table(pdb_data: &[u8]) -> Result<SymbolTable, CallbackError> {
+    let cursor = Cursor::new(pdb_data);
+    let mut pdb = PDB::open(cursor).map_err(|_| CallbackError::InvalidData)?;
+    
+    let symbol_table = pdb.global_symbols().map_err(|_| CallbackError::InvalidData)?;
+    let address_map = pdb.address_map().map_err(|_| CallbackError::InvalidData)?;
+    
+    let mut symbols: Vec<(u64, String)> = Vec::new();
+    
+    let mut iter = symbol_table.iter();
+    while let Some(symbol) = iter.next().map_err(|_| CallbackError::InvalidData)? {
+        if let Ok(pdb::SymbolData::Public(data)) = symbol.parse() {
+            if let Some(rva) = data.offset.to_rva(&address_map) {
+                let name = data.name.to_string().to_string();
+                // Skip compiler-generated symbols
+                if !name.starts_with("__") && !name.starts_with("$") {
+                    symbols.push((rva.0 as u64, name));
+                }
+            }
+        }
+    }
+    
+    // Sort by address for binary search
+    symbols.sort_by_key(|&(addr, _)| addr);
+    
+    Ok(SymbolTable {
+        symbols,
+        base_address: 0,
+    })
+}
+
+/// Get or build the ntoskrnl symbol table
+pub fn get_ntoskrnl_symbols() -> Result<SymbolTable, CallbackError> {
+    // Check cache first
+    {
+        let cache = SYMBOL_TABLE_CACHE.read();
+        if let Some(table) = cache.get("ntoskrnl") {
+            return Ok(table.clone());
+        }
+    }
+    
+    // Download and parse PDB
+    let pdb_info = get_ntoskrnl_pdb_info()?;
+    let pdb_data = download_pdb(&pdb_info)?;
+    let table = build_symbol_table(&pdb_data)?;
+    
+    // Cache the result
+    {
+        let mut cache = SYMBOL_TABLE_CACHE.write();
+        cache.insert("ntoskrnl".to_string(), table.clone());
+    }
+    
+    Ok(table)
+}
+
+/// Resolve a kernel address to a symbol string like "ntoskrnl.exe!FunctionName+0x123"
+pub fn resolve_kernel_symbol(address: u64, module_name: &str, module_base: u64) -> String {
+    // Only resolve ntoskrnl symbols for now
+    let module_lower = module_name.to_lowercase();
+    if !module_lower.contains("ntoskrnl") && !module_lower.contains("ntkrnl") {
+        return format!("{}+0x{:x}", module_name, address.saturating_sub(module_base));
+    }
+    
+    // Calculate RVA
+    let rva = address.saturating_sub(module_base);
+    
+    // Try to get symbol table
+    match get_ntoskrnl_symbols() {
+        Ok(table) => table.format_address(rva, module_name),
+        Err(_) => format!("{}+0x{:x}", module_name, rva),
+    }
 }

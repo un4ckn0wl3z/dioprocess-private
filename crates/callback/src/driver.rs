@@ -2618,6 +2618,390 @@ pub fn set_registry_callback_offsets(
     Ok(())
 }
 
+// ============== Kernel Process/Thread Control ==============
+
+// IOCTL codes for process/thread control
+const IOCTL_DIOPROCESS_SUSPEND_PROCESS: u32 = 0x002223C4;  // 0x8F1
+const IOCTL_DIOPROCESS_RESUME_PROCESS: u32 = 0x002223C8;   // 0x8F2
+const IOCTL_DIOPROCESS_SUSPEND_THREAD: u32 = 0x002223D0;   // 0x8F4
+const IOCTL_DIOPROCESS_RESUME_THREAD: u32 = 0x002223D4;    // 0x8F5
+const IOCTL_DIOPROCESS_TERMINATE_THREAD: u32 = 0x002223D8; // 0x8F6
+const IOCTL_DIOPROCESS_ENUM_SYSTEM_THREADS: u32 = 0x002223DC; // 0x8F7
+const IOCTL_DIOPROCESS_SET_ETHREAD_OFFSETS: u32 = 0x002223E0; // 0x8F8
+
+#[repr(C)]
+struct ProcessControlRequest {
+    process_id: u32,
+}
+
+#[repr(C)]
+struct ThreadControlRequest {
+    thread_id: u32,
+}
+
+#[repr(C)]
+struct SetEthreadOffsetsRequest {
+    win32_start_address_offset: u32,
+    state_offset: u32,
+    wait_reason_offset: u32,
+}
+
+const MAX_MODULE_NAME_LENGTH: usize = 256;
+const MAX_SYSTEM_THREADS: usize = 512;
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub struct SystemThreadInfo {
+    pub thread_id: u32,
+    pub start_address: u64,
+    pub win32_start_address: u64,
+    pub driver_name: [u8; MAX_MODULE_NAME_LENGTH],
+    pub driver_base: u64,
+    pub driver_offset: u64,
+    pub state: u8,
+    pub wait_reason: u8,
+}
+
+impl SystemThreadInfo {
+    pub fn driver_name_str(&self) -> String {
+        let end = self.driver_name.iter().position(|&c| c == 0).unwrap_or(self.driver_name.len());
+        String::from_utf8_lossy(&self.driver_name[..end]).to_string()
+    }
+}
+
+#[repr(C)]
+struct EnumSystemThreadsResponse {
+    count: u32,
+    threads: [SystemThreadInfo; 1], // Variable length
+}
+
+/// Suspend a process by PID using kernel-level PsSuspendProcess
+pub fn suspend_process(pid: u32) -> Result<(), CallbackError> {
+    if pid == 0 || pid == 4 {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = ProcessControlRequest { process_id: pid };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_SUSPEND_PROCESS,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<ProcessControlRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Resume a process by PID using kernel-level PsResumeProcess
+pub fn resume_process(pid: u32) -> Result<(), CallbackError> {
+    if pid == 0 || pid == 4 {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = ProcessControlRequest { process_id: pid };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_RESUME_PROCESS,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<ProcessControlRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Suspend a thread by TID using kernel-level PsSuspendThread
+pub fn suspend_thread(tid: u32) -> Result<(), CallbackError> {
+    if tid == 0 {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = ThreadControlRequest { thread_id: tid };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_SUSPEND_THREAD,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<ThreadControlRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Resume a thread by TID using kernel-level PsResumeThread
+pub fn resume_thread(tid: u32) -> Result<(), CallbackError> {
+    if tid == 0 {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = ThreadControlRequest { thread_id: tid };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_RESUME_THREAD,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<ThreadControlRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Terminate a thread by TID using kernel-level ZwTerminateThread
+pub fn terminate_thread(tid: u32) -> Result<(), CallbackError> {
+    if tid == 0 {
+        return Err(CallbackError::InvalidData);
+    }
+
+    let handle = open_device()?;
+
+    unsafe {
+        let request = ThreadControlRequest { thread_id: tid };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_TERMINATE_THREAD,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<ThreadControlRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Set ETHREAD offsets in the kernel driver for dynamic resolution
+pub fn set_ethread_offsets(
+    win32_start_address_offset: u32,
+    state_offset: u32,
+    wait_reason_offset: u32,
+) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = SetEthreadOffsetsRequest {
+            win32_start_address_offset,
+            state_offset,
+            wait_reason_offset,
+        };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_SET_ETHREAD_OFFSETS,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<SetEthreadOffsetsRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Enumerate all threads in the System process (PID 4) with real start addresses
+pub fn enumerate_system_threads() -> Result<Vec<SystemThreadInfo>, CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let buffer_size = std::mem::size_of::<EnumSystemThreadsResponse>() 
+            + (MAX_SYSTEM_THREADS - 1) * std::mem::size_of::<SystemThreadInfo>();
+        let mut buffer: Vec<u8> = vec![0u8; buffer_size];
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_ENUM_SYSTEM_THREADS,
+            None,
+            0,
+            Some(buffer.as_mut_ptr() as *mut _),
+            buffer_size as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+
+        let response = &*(buffer.as_ptr() as *const EnumSystemThreadsResponse);
+        let count = response.count as usize;
+        
+        let mut threads = Vec::with_capacity(count);
+        let threads_ptr = &response.threads as *const SystemThreadInfo;
+        
+        for i in 0..count {
+            threads.push((*threads_ptr.add(i)).clone());
+        }
+
+        Ok(threads)
+    }
+}
+
+// ============== All Kernel Threads Enumeration ==============
+
+const IOCTL_DIOPROCESS_ENUM_ALL_KERNEL_THREADS: u32 = 0x002223E4; // 0x8F9
+
+/// Kernel thread info (includes process ID)
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub struct KernelThreadInfo {
+    pub process_id: u32,
+    pub thread_id: u32,
+    pub start_address: u64,
+    pub win32_start_address: u64,
+    pub module_name: [u8; 256],
+    pub module_base: u64,
+    pub module_offset: u64,
+    pub state: u8,
+    pub wait_reason: u8,
+}
+
+impl KernelThreadInfo {
+    /// Get module name as string
+    pub fn module_name_str(&self) -> &str {
+        let len = self.module_name.iter().position(|&c| c == 0).unwrap_or(self.module_name.len());
+        std::str::from_utf8(&self.module_name[..len]).unwrap_or("")
+    }
+}
+
+#[repr(C)]
+struct EnumAllKernelThreadsResponse {
+    count: u32,
+    threads: [KernelThreadInfo; 1],
+}
+
+/// Enumerate all kernel threads from all processes
+pub fn enumerate_all_kernel_threads() -> Result<Vec<KernelThreadInfo>, CallbackError> {
+    let handle = open_device()?;
+
+    const MAX_KERNEL_THREADS: usize = 1024;
+    let buffer_size = std::mem::size_of::<EnumAllKernelThreadsResponse>() 
+        + (MAX_KERNEL_THREADS - 1) * std::mem::size_of::<KernelThreadInfo>();
+    
+    let mut buffer = vec![0u8; buffer_size];
+    let mut bytes_returned: u32 = 0;
+
+    unsafe {
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_ENUM_ALL_KERNEL_THREADS,
+            None,
+            0,
+            Some(buffer.as_mut_ptr() as *mut _),
+            buffer_size as u32,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+
+        let response = &*(buffer.as_ptr() as *const EnumAllKernelThreadsResponse);
+        let count = response.count as usize;
+        
+        let mut threads = Vec::with_capacity(count);
+        let threads_ptr = &response.threads as *const KernelThreadInfo;
+        
+        for i in 0..count {
+            threads.push((*threads_ptr.add(i)).clone());
+        }
+
+        Ok(threads)
+    }
+}
+
 // ============== Kernel Memory Copy (KsDumper-style) ==============
 
 // IOCTL code for memory copy: CTL_CODE(0x22, 0x860, 0, 0)
