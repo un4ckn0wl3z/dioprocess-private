@@ -2,6 +2,7 @@
 
 mod amsi;
 mod error;
+mod etw;
 mod hook_scanner;
 mod injection;
 mod kernel_inject;
@@ -14,6 +15,7 @@ mod unhook;
 
 pub use amsi::*;
 pub use error::MiscError;
+pub use etw::*;
 pub use hook_scanner::*;
 pub use injection::*;
 pub use kernel_inject::*;
