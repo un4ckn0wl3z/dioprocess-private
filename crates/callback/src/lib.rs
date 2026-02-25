@@ -35,13 +35,13 @@ pub use driver::{
     enumerate_minifilters, enumerate_object_callbacks, enumerate_process_callbacks,
     enumerate_registry_callbacks, enumerate_thread_callbacks, get_collection_state, is_driver_loaded,
     kernel_copy_memory, kill_process_peb_corrupt, kill_process_terminate, kill_process_unmap,
-    protect_process, read_events, register_callbacks, remove_image_callback,
+    protect_process, protect_process_with_level, read_events, register_callbacks, remove_image_callback,
     remove_object_callback, remove_process_callback, remove_registry_callback, remove_thread_callback,
     restore_image_callback, restore_object_callback, restore_process_callback,
     restore_registry_callback, restore_thread_callback, start_collection, stop_collection,
     hide_memory, unlink_minifilter, unprotect_process, unregister_callbacks, CallbackInfo, KernelDriverInfo,
     MinifilterCallbacks, MinifilterInfo, ObjectCallbackInfo, ObjectCallbackOperations,
-    ObjectCallbackType, RegistryCallbackInfo,
+    ObjectCallbackType, ProcessProtectionLevel, RegistryCallbackInfo,
 };
 pub use error::CallbackError;
 pub use hypervisor::{

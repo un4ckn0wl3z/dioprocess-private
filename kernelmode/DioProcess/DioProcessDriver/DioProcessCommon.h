@@ -320,6 +320,32 @@ struct TargetProcessRequest
 	ULONG ProcessId;
 };
 
+// ============== Process Protection Level Structures ==============
+
+// Protection levels from PS_PROTECTED_* enum
+// Value format: (Signer << 4) | Type
+enum ProcessProtectionLevel : UCHAR
+{
+	ProtectionNone = 0x00,                      // No protection
+	PS_PROTECTED_AUTHENTICODE_LIGHT = 0x11,     // Authenticode (1) + Light (1)
+	PS_PROTECTED_ANTIMALWARE_LIGHT = 0x31,      // Antimalware (3) + Light (1)
+	PS_PROTECTED_LSA_LIGHT = 0x41,              // Lsa (4) + Light (1)
+	PS_PROTECTED_WINDOWS_LIGHT = 0x51,          // Windows (5) + Light (1)
+	PS_PROTECTED_WINTCB_LIGHT = 0x61,           // WinTcb (6) + Light (1) - DEFAULT
+	PS_PROTECTED_AUTHENTICODE = 0x12,           // Authenticode (1) + Protected (2)
+	PS_PROTECTED_WINDOWS = 0x52,                // Windows (5) + Protected (2)
+	PS_PROTECTED_WINTCB = 0x62,                 // WinTcb (6) + Protected (2)
+	PS_PROTECTED_SYSTEM = 0x72,                 // WinSystem (7) + Protected (2) - HIGHEST
+};
+
+// Request structure for protecting a process with specific level
+struct ProtectProcessWithLevelRequest
+{
+	ULONG ProcessId;
+	ProcessProtectionLevel Level;
+	UCHAR _padding[3];  // Alignment
+};
+
 // ============== Kernel Injection Structures ==============
 
 struct KernelInjectShellcodeRequest

@@ -624,6 +624,56 @@ NTSTATUS HandleGetCollectionState(PIRP Irp, PULONG_PTR info)
 
 // ============== Security Research Handlers ==============
 
+// Helper function to get signature levels for a protection level
+static void GetSignatureLevelsForProtection(ProcessProtectionLevel level, UCHAR* sigLevel, UCHAR* sectionSigLevel)
+{
+	// Default values
+	*sigLevel = 0;
+	*sectionSigLevel = 0;
+
+	switch (level)
+	{
+	case PS_PROTECTED_SYSTEM:
+		*sigLevel = 0x3F;          // SE_SIGNING_LEVEL_WINDOWS_TCB (highest)
+		*sectionSigLevel = 0x3F;
+		break;
+	case PS_PROTECTED_WINTCB:
+		*sigLevel = 0x3E;          // SE_SIGNING_LEVEL_WINDOWS_TCB
+		*sectionSigLevel = 0x3E;
+		break;
+	case PS_PROTECTED_WINDOWS:
+		*sigLevel = 0x3C;          // SE_SIGNING_LEVEL_WINDOWS
+		*sectionSigLevel = 0x3C;
+		break;
+	case PS_PROTECTED_AUTHENTICODE:
+		*sigLevel = 0x08;          // SE_SIGNING_LEVEL_AUTHENTICODE
+		*sectionSigLevel = 0x08;
+		break;
+	case PS_PROTECTED_WINTCB_LIGHT:
+		*sigLevel = 0x3E;          // SE_SIGNING_LEVEL_WINDOWS_TCB
+		*sectionSigLevel = 0x3C;   // SE_SIGNING_LEVEL_WINDOWS
+		break;
+	case PS_PROTECTED_WINDOWS_LIGHT:
+		*sigLevel = 0x3C;          // SE_SIGNING_LEVEL_WINDOWS
+		*sectionSigLevel = 0x3C;
+		break;
+	case PS_PROTECTED_LSA_LIGHT:
+		*sigLevel = 0x18;          // SE_SIGNING_LEVEL_MICROSOFT
+		*sectionSigLevel = 0x18;
+		break;
+	case PS_PROTECTED_ANTIMALWARE_LIGHT:
+		*sigLevel = 0x18;          // SE_SIGNING_LEVEL_ANTIMALWARE
+		*sectionSigLevel = 0x18;
+		break;
+	case PS_PROTECTED_AUTHENTICODE_LIGHT:
+		*sigLevel = 0x08;          // SE_SIGNING_LEVEL_AUTHENTICODE
+		*sectionSigLevel = 0x08;
+		break;
+	default:
+		break;
+	}
+}
+
 NTSTATUS HandleProtectProcess(PIRP Irp, PIO_STACK_LOCATION irpSp)
 {
 	WINDOWS_VERSION windowsVersion = GetWindowsVersion();
@@ -634,29 +684,49 @@ NTSTATUS HandleProtectProcess(PIRP Irp, PIO_STACK_LOCATION irpSp)
 	}
 
 	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
-	if (inputLen < sizeof(TargetProcessRequest))
+	
+	// Support both old (TargetProcessRequest) and new (ProtectProcessWithLevelRequest) formats
+	ProcessProtectionLevel level = PS_PROTECTED_WINTCB_LIGHT;  // Default level
+	ULONG processId = 0;
+
+	if (inputLen >= sizeof(ProtectProcessWithLevelRequest))
+	{
+		// New format with protection level
+		auto request = (ProtectProcessWithLevelRequest*)Irp->AssociatedIrp.SystemBuffer;
+		if (!request)
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+		processId = request->ProcessId;
+		level = request->Level;
+	}
+	else if (inputLen >= sizeof(TargetProcessRequest))
+	{
+		// Old format - use default level
+		auto request = (TargetProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
+		if (!request)
+		{
+			return STATUS_INVALID_PARAMETER;
+		}
+		processId = request->ProcessId;
+	}
+	else
 	{
 		return STATUS_BUFFER_TOO_SMALL;
 	}
 
-	auto request = (TargetProcessRequest*)Irp->AssociatedIrp.SystemBuffer;
-	if (!request)
-	{
-		return STATUS_INVALID_PARAMETER;
-	}
-
 	// Get EPROCESS
 	PEPROCESS eProcess = NULL;
-	NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)request->ProcessId, &eProcess);
+	NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)processId, &eProcess);
 	if (!NT_SUCCESS(status))
 	{
 		KdPrint((DRIVER_PREFIX "PsLookupProcessByProcessId failed for PID %d (0x%X)\n",
-			request->ProcessId, status));
+			processId, status));
 		return status;
 	}
 
-	KdPrint((DRIVER_PREFIX "Protecting process PID %d (EPROCESS=0x%p, Offset=0x%X)\n",
-		request->ProcessId, eProcess, PROCESS_PROTECTION_OFFSET[windowsVersion]));
+	KdPrint((DRIVER_PREFIX "Protecting process PID %d with level 0x%02X (EPROCESS=0x%p, Offset=0x%X)\n",
+		processId, level, eProcess, PROCESS_PROTECTION_OFFSET[windowsVersion]));
 
 	// Get protection structure pointer
 	PROCESS_PROTECTION_INFO* psProtection =
@@ -667,18 +737,27 @@ NTSTATUS HandleProtectProcess(PIRP Irp, PIO_STACK_LOCATION irpSp)
 		psProtection->SignatureLevel, psProtection->SectionSignatureLevel,
 		psProtection->Protection.Type, psProtection->Protection.Signer));
 
-	// Set protection values (PPL WinTcb-Light)
-	psProtection->SignatureLevel = 0x3E;          // SE_SIGNING_LEVEL_WINDOWS_TCB
-	psProtection->SectionSignatureLevel = 0x3C;   // SE_SIGNING_LEVEL_WINDOWS
-	psProtection->Protection.Type = 2;            // PsProtectedTypeProtectedLight
-	psProtection->Protection.Signer = 6;          // PsProtectedSignerWinTcb
+	// Extract Type and Signer from protection level
+	// Level format: (Signer << 4) | Type
+	UCHAR protType = level & 0x0F;
+	UCHAR protSigner = (level >> 4) & 0x0F;
+
+	// Get appropriate signature levels
+	UCHAR sigLevel, sectionSigLevel;
+	GetSignatureLevelsForProtection(level, &sigLevel, &sectionSigLevel);
+
+	// Set protection values
+	psProtection->SignatureLevel = sigLevel;
+	psProtection->SectionSignatureLevel = sectionSigLevel;
+	psProtection->Protection.Type = protType;
+	psProtection->Protection.Signer = protSigner;
 
 	KdPrint((DRIVER_PREFIX "New Protection: SigLvl=0x%02X, SectSigLvl=0x%02X, Type=%d, Signer=%d\n",
 		psProtection->SignatureLevel, psProtection->SectionSignatureLevel,
 		psProtection->Protection.Type, psProtection->Protection.Signer));
 
 	ObDereferenceObject(eProcess);
-	KdPrint((DRIVER_PREFIX "Process PID %d protected successfully\n", request->ProcessId));
+	KdPrint((DRIVER_PREFIX "Process PID %d protected successfully with level 0x%02X\n", processId, level));
 	return STATUS_SUCCESS;
 }
 

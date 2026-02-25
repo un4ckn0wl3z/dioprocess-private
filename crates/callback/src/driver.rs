@@ -1113,20 +1113,114 @@ fn extract_process_name_from_cmdline(cmdline: &str) -> String {
 
 // ============== Security Research Functions ==============
 
-/// Protect a process with PPL (Protected Process Light)
+/// Process protection levels matching PS_PROTECTED_* values
+/// Value format: (Signer << 4) | Type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ProcessProtectionLevel {
+    /// No protection
+    None = 0x00,
+    /// Authenticode (1) + Light (1)
+    AuthenticodLight = 0x11,
+    /// Antimalware (3) + Light (1)
+    AntimalwareLight = 0x31,
+    /// Lsa (4) + Light (1)
+    LsaLight = 0x41,
+    /// Windows (5) + Light (1)
+    WindowsLight = 0x51,
+    /// WinTcb (6) + Light (1) - DEFAULT
+    WinTcbLight = 0x61,
+    /// Authenticode (1) + Protected (2)
+    Authenticode = 0x12,
+    /// Windows (5) + Protected (2)
+    Windows = 0x52,
+    /// WinTcb (6) + Protected (2)
+    WinTcb = 0x62,
+    /// WinSystem (7) + Protected (2) - HIGHEST
+    System = 0x72,
+}
+
+impl ProcessProtectionLevel {
+    /// Get all protection levels in order from lowest to highest
+    pub fn all() -> &'static [ProcessProtectionLevel] {
+        &[
+            ProcessProtectionLevel::AuthenticodLight,
+            ProcessProtectionLevel::AntimalwareLight,
+            ProcessProtectionLevel::LsaLight,
+            ProcessProtectionLevel::WindowsLight,
+            ProcessProtectionLevel::WinTcbLight,
+            ProcessProtectionLevel::Authenticode,
+            ProcessProtectionLevel::Windows,
+            ProcessProtectionLevel::WinTcb,
+            ProcessProtectionLevel::System,
+        ]
+    }
+
+    /// Get display name for the protection level
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ProcessProtectionLevel::None => "None",
+            ProcessProtectionLevel::AuthenticodLight => "Authenticode Light (0x11)",
+            ProcessProtectionLevel::AntimalwareLight => "Antimalware Light (0x31)",
+            ProcessProtectionLevel::LsaLight => "LSA Light (0x41)",
+            ProcessProtectionLevel::WindowsLight => "Windows Light (0x51)",
+            ProcessProtectionLevel::WinTcbLight => "WinTcb Light (0x61)",
+            ProcessProtectionLevel::Authenticode => "Authenticode (0x12)",
+            ProcessProtectionLevel::Windows => "Windows (0x52)",
+            ProcessProtectionLevel::WinTcb => "WinTcb (0x62)",
+            ProcessProtectionLevel::System => "System (0x72) - HIGHEST",
+        }
+    }
+
+    /// Get short name for the protection level
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            ProcessProtectionLevel::None => "None",
+            ProcessProtectionLevel::AuthenticodLight => "Authenticode-Light",
+            ProcessProtectionLevel::AntimalwareLight => "Antimalware-Light",
+            ProcessProtectionLevel::LsaLight => "LSA-Light",
+            ProcessProtectionLevel::WindowsLight => "Windows-Light",
+            ProcessProtectionLevel::WinTcbLight => "WinTcb-Light",
+            ProcessProtectionLevel::Authenticode => "Authenticode",
+            ProcessProtectionLevel::Windows => "Windows",
+            ProcessProtectionLevel::WinTcb => "WinTcb",
+            ProcessProtectionLevel::System => "System",
+        }
+    }
+}
+
+/// Request structure for protecting a process with specific level
+#[repr(C)]
+struct ProtectProcessWithLevelRequest {
+    process_id: u32,
+    level: u8,
+    _padding: [u8; 3],
+}
+
+/// Protect a process with PPL (Protected Process Light) using default level (WinTcb-Light)
 /// Requires the DioProcess kernel driver to be loaded
 pub fn protect_process(pid: u32) -> Result<(), CallbackError> {
+    protect_process_with_level(pid, ProcessProtectionLevel::WinTcbLight)
+}
+
+/// Protect a process with a specific protection level
+/// Requires the DioProcess kernel driver to be loaded
+pub fn protect_process_with_level(pid: u32, level: ProcessProtectionLevel) -> Result<(), CallbackError> {
     let handle = open_device()?;
 
     unsafe {
-        let request = pid;
+        let request = ProtectProcessWithLevelRequest {
+            process_id: pid,
+            level: level as u8,
+            _padding: [0; 3],
+        };
         let mut bytes_returned: u32 = 0;
 
         let result = DeviceIoControl(
             handle,
             IOCTL_DIOPROCESS_PROTECT_PROCESS,
             Some(&request as *const _ as *const _),
-            std::mem::size_of::<u32>() as u32,
+            std::mem::size_of::<ProtectProcessWithLevelRequest>() as u32,
             None,
             0,
             Some(&mut bytes_returned),

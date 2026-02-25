@@ -5,7 +5,8 @@ use std::collections::{HashMap, HashSet};
 use callback::{
     clear_debug_flags, enable_all_privileges, hv_inject_dll, hv_inject_shellcode, hv_is_running,
     hv_protect_process, hv_unprotect_process, is_driver_loaded, kernel_copy_memory,
-    process_hide_add, process_hide_list, process_hide_remove, protect_process, unprotect_process,
+    process_hide_add, process_hide_list, process_hide_remove, protect_process_with_level,
+    unprotect_process, ProcessProtectionLevel,
 };
 use dioxus::prelude::*;
 use misc::{hook_amsi, inject_dll, inject_dll_apc_queue, inject_dll_earlybird, inject_dll_manual_map, inject_dll_remote_mapping, inject_dll_thread_hijack, inject_shellcode_classic, patch_etw, unhook_dll_remote_by_path, enumerate_process_modules};
@@ -1858,74 +1859,93 @@ pub fn ProcessTab() -> Element {
 
                                     div { class: "context-menu-separator" }
 
-                                    // Protect Process button
-                                    button {
-                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
-                                        disabled: !is_driver_loaded(),
-                                        onclick: move |_| {
-                                            let target_pid = ctx_menu.pid;
-                                            context_menu.set(ContextMenuState::default());
+                                    // Process Protection submenu (groups protect levels + remove protection)
+                                    div {
+                                        class: "context-menu-submenu",
+                                        div {
+                                            class: if is_driver_loaded() { "context-menu-submenu-trigger" } else { "context-menu-submenu-trigger disabled" },
+                                            span { "🛡️" }
+                                            span { "Process Protection" }
+                                            span { class: "arrow", "▶" }
+                                        }
+                                        div {
+                                            class: "context-menu-submenu-content",
+                                            // Protection level buttons
+                                            for level in ProcessProtectionLevel::all() {
+                                                {
+                                                    let level_copy = *level;
+                                                    rsx! {
+                                                        button {
+                                                            class: "context-menu-item",
+                                                            onclick: move |_| {
+                                                                let target_pid = ctx_menu.pid;
+                                                                context_menu.set(ContextMenuState::default());
 
-                                            if let Some(pid) = target_pid {
-                                                spawn(async move {
-                                                    match protect_process(pid) {
-                                                        Ok(()) => {
-                                                            status_message.set(format!(
-                                                                "✓ Process {} protected with PPL",
-                                                                pid
-                                                            ));
-                                                        }
-                                                        Err(e) => {
-                                                            status_message.set(format!(
-                                                                "✗ Process protection failed: {}",
-                                                                e
-                                                            ));
+                                                                if let Some(pid) = target_pid {
+                                                                    let level_name = level_copy.short_name();
+                                                                    spawn(async move {
+                                                                        match protect_process_with_level(pid, level_copy) {
+                                                                            Ok(()) => {
+                                                                                status_message.set(format!(
+                                                                                    "✓ Process {} protected with {}",
+                                                                                    pid, level_name
+                                                                                ));
+                                                                            }
+                                                                            Err(e) => {
+                                                                                status_message.set(format!(
+                                                                                    "✗ Process protection failed: {}",
+                                                                                    e
+                                                                                ));
+                                                                            }
+                                                                        }
+                                                                        spawn(async move {
+                                                                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                                            status_message.set(String::new());
+                                                                        });
+                                                                    });
+                                                                }
+                                                            },
+                                                            span { "{level_copy.display_name()}" }
                                                         }
                                                     }
-                                                    spawn(async move {
-                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                        status_message.set(String::new());
-                                                    });
-                                                });
+                                                }
                                             }
-                                        },
-                                        span { "🛡️" }
-                                        span { "Protect Process" }
-                                    }
 
-                                    // Unprotect Process button
-                                    button {
-                                        class: if is_driver_loaded() { "context-menu-item" } else { "context-menu-item disabled" },
-                                        disabled: !is_driver_loaded(),
-                                        onclick: move |_| {
-                                            let target_pid = ctx_menu.pid;
-                                            context_menu.set(ContextMenuState::default());
+                                            div { class: "context-menu-separator" }
 
-                                            if let Some(pid) = target_pid {
-                                                spawn(async move {
-                                                    match unprotect_process(pid) {
-                                                        Ok(()) => {
-                                                            status_message.set(format!(
-                                                                "✓ Process {} unprotected",
-                                                                pid
-                                                            ));
-                                                        }
-                                                        Err(e) => {
-                                                            status_message.set(format!(
-                                                                "✗ Process unprotection failed: {}",
-                                                                e
-                                                            ));
-                                                        }
+                                            // Remove Protection button (inside submenu)
+                                            button {
+                                                class: "context-menu-item",
+                                                onclick: move |_| {
+                                                    let target_pid = ctx_menu.pid;
+                                                    context_menu.set(ContextMenuState::default());
+
+                                                    if let Some(pid) = target_pid {
+                                                        spawn(async move {
+                                                            match unprotect_process(pid) {
+                                                                Ok(()) => {
+                                                                    status_message.set(format!(
+                                                                        "✓ Process {} protection removed",
+                                                                        pid
+                                                                    ));
+                                                                }
+                                                                Err(e) => {
+                                                                    status_message.set(format!(
+                                                                        "✗ Remove protection failed: {}",
+                                                                        e
+                                                                    ));
+                                                                }
+                                                            }
+                                                            spawn(async move {
+                                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                                status_message.set(String::new());
+                                                            });
+                                                        });
                                                     }
-                                                    spawn(async move {
-                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                        status_message.set(String::new());
-                                                    });
-                                                });
+                                                },
+                                                span { "🔓 Remove Protection" }
                                             }
-                                        },
-                                        span { "🔓" }
-                                        span { "Unprotect Process" }
+                                        }
                                     }
 
                                     // Enable All Privileges button
