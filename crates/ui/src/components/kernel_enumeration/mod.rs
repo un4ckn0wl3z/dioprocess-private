@@ -2,6 +2,7 @@
 
 mod callback_enum;
 mod drivers;
+mod etwti;
 mod filehide;
 mod hypervisor;
 mod minifilters;
@@ -12,6 +13,7 @@ use dioxus::prelude::*;
 
 use callback_enum::CallbackEnumTab;
 use drivers::DriversTab;
+use etwti::EtwtiTab;
 use filehide::FileHideTab;
 use minifilters::MinifiltersTab;
 use pspcidtable::PspCidTableTab;
@@ -29,6 +31,7 @@ enum KernelUtilityTab {
     Drivers,
     HideFiles,
     RespawnMonitor,
+    Etwti,
 }
 
 /// Sort order (shared across sub-tabs)
@@ -104,6 +107,12 @@ pub fn KernelUtilitiesTab() -> Element {
                     onclick: move |_| active_tab.set(KernelUtilityTab::RespawnMonitor),
                     "Respawn Monitor"
                 }
+
+                button {
+                    class: if *active_tab.read() == KernelUtilityTab::Etwti { "btn btn-secondary active" } else { "btn btn-secondary" },
+                    onclick: move |_| active_tab.set(KernelUtilityTab::Etwti),
+                    "ETWTI"
+                }
             }
 
             // Tab content
@@ -114,6 +123,7 @@ pub fn KernelUtilitiesTab() -> Element {
                 KernelUtilityTab::Drivers => rsx! { DriversTab { driver_loaded } },
                 KernelUtilityTab::HideFiles => rsx! { FileHideTab { driver_loaded } },
                 KernelUtilityTab::RespawnMonitor => rsx! { RespawnMonitorTab { driver_loaded } },
+                KernelUtilityTab::Etwti => rsx! { EtwtiTab { driver_loaded } },
             }
         }
     }

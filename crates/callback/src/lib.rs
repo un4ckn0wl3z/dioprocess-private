@@ -24,6 +24,7 @@ mod process_hide;
 pub mod scanner;
 pub mod hv_scanner;
 mod pspcidtable;
+mod kernel_etw;
 pub mod storage;
 mod types;
 pub mod packet_capture;
@@ -64,6 +65,10 @@ pub use physical_memory::{
     PageTableWalkResult,
 };
 pub use pspcidtable::{enumerate_pspcidtable, CidEntry, CidObjectType};
+pub use kernel_etw::{
+    disable_etwti, enable_etwti, get_current_build, get_etwti_status, is_etwti_supported,
+    EtwtiStatus,
+};
 pub use scanner::{
     enum_vm_regions, first_scan, next_scan, parse_aob_pattern, parse_scan_value,
     phys_read_virtual_memory, write_scan_value, format_bytes_as_value,
