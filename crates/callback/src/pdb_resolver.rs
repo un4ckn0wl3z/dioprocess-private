@@ -34,6 +34,7 @@ pub struct ResolvedEtwtiOffsets {
     /// Offset of ProviderEnableInfo field in _ETW_GUID_ENTRY structure
     pub etw_guid_entry_provider_enable_info: u64,
     /// Whether offsets were resolved from PDB (true) or hardcoded fallback (false)
+    #[allow(dead_code)]
     pub from_pdb: bool,
     /// PDB signature/GUID used for resolution
     pub pdb_signature: String,
@@ -340,6 +341,7 @@ pub fn resolve_etwti_offsets() -> Result<ResolvedEtwtiOffsets, CallbackError> {
 }
 
 /// Clear the offset cache (useful for testing or forcing re-resolution)
+#[allow(dead_code)]
 pub fn clear_offset_cache() {
     let mut cache = OFFSET_CACHE.write();
     cache.clear();

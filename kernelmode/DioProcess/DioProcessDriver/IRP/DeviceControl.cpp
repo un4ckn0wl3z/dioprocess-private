@@ -2008,21 +2008,19 @@ NTSTATUS HandleRemoveRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
 
 				if (callbackItem && MmIsAddressValid(callbackItem))
 				{
-					ULONG64 oldFunction = callbackItem->Function;
+					// Use InterlockedExchangePointer for atomic, safe modification
+					PVOID oldFunction = InterlockedExchangePointer((PVOID*)&callbackItem->Function, NULL);
 
 					// Save original values for restoration
 					g_RemovedRegistryCallbacks[request->Index].IsRemoved = TRUE;
-					g_RemovedRegistryCallbacks[request->Index].OriginalFunction = oldFunction;
+					g_RemovedRegistryCallbacks[request->Index].OriginalFunction = (ULONG64)oldFunction;
 					g_RemovedRegistryCallbacks[request->Index].CallbackItem = callbackItem;
 					// Save original list links for potential re-linking
 					g_RemovedRegistryCallbacks[request->Index].OriginalLinks.Flink = callbackItem->Item.Flink;
 					g_RemovedRegistryCallbacks[request->Index].OriginalLinks.Blink = callbackItem->Item.Blink;
 
-					// Zero out the callback function address to disable it (don't remove from list for easier restoration)
-					RtlZeroMemory(&callbackItem->Function, sizeof(callbackItem->Function));
-
 					KdPrint((DRIVER_PREFIX "Removed registry callback at index %d (was 0x%llX, saved for restore)\n",
-						request->Index, oldFunction));
+						request->Index, (ULONG64)oldFunction));
 					found = TRUE;
 				}
 				break;

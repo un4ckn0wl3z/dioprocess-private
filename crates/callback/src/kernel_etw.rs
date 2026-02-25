@@ -187,7 +187,6 @@ fn get_etwti_offsets(build: u32) -> Result<ResolvedOffsets, CallbackError> {
 
 /// Get ntoskrnl.exe base address using NtQuerySystemInformation
 fn get_ntoskrnl_base() -> Result<u64, CallbackError> {
-    use std::mem::size_of;
     
     #[repr(C)]
     struct RtlProcessModuleInformation {
