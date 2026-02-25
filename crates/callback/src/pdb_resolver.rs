@@ -111,11 +111,9 @@ pub struct PdbDebugInfo {
     pub age: u32,
 }
 
-/// Extract PDB debug info from ntoskrnl.exe
-pub fn get_ntoskrnl_pdb_info() -> Result<PdbDebugInfo, CallbackError> {
-    let ntoskrnl_path = r"C:\Windows\System32\ntoskrnl.exe";
-    
-    let mut file = File::open(ntoskrnl_path)
+/// Extract PDB debug info from any PE file
+pub fn get_pdb_info_from_path(pe_path: &str) -> Result<PdbDebugInfo, CallbackError> {
+    let mut file = File::open(pe_path)
         .map_err(|_| CallbackError::InvalidData)?;
     
     let mut buffer = Vec::new();
@@ -129,7 +127,6 @@ pub fn get_ntoskrnl_pdb_info() -> Result<PdbDebugInfo, CallbackError> {
     if let Some(debug_data) = pe.debug_data {
         if let Some(codeview) = debug_data.codeview_pdb70_debug_info {
             // The signature is a raw [u8; 16] GUID in little-endian format
-            // Format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX but we need it as a continuous hex string
             let sig = &codeview.signature;
             let guid = format!(
                 "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
@@ -160,6 +157,11 @@ pub fn get_ntoskrnl_pdb_info() -> Result<PdbDebugInfo, CallbackError> {
     }
     
     Err(CallbackError::InvalidData)
+}
+
+/// Extract PDB debug info from ntoskrnl.exe
+pub fn get_ntoskrnl_pdb_info() -> Result<PdbDebugInfo, CallbackError> {
+    get_pdb_info_from_path(r"C:\Windows\System32\ntoskrnl.exe")
 }
 
 /// Decompress a CAB file and extract the first file
@@ -664,41 +666,86 @@ fn build_symbol_table(pdb_data: &[u8]) -> Result<SymbolTable, CallbackError> {
 
 /// Get or build the ntoskrnl symbol table
 pub fn get_ntoskrnl_symbols() -> Result<SymbolTable, CallbackError> {
+    get_module_symbols("ntoskrnl", r"C:\Windows\System32\ntoskrnl.exe")
+}
+
+/// Get or build a symbol table for any kernel module
+pub fn get_module_symbols(module_key: &str, module_path: &str) -> Result<SymbolTable, CallbackError> {
     // Check cache first
     {
         let cache = SYMBOL_TABLE_CACHE.read();
-        if let Some(table) = cache.get("ntoskrnl") {
+        if let Some(table) = cache.get(module_key) {
             return Ok(table.clone());
         }
     }
     
     // Download and parse PDB
-    let pdb_info = get_ntoskrnl_pdb_info()?;
+    let pdb_info = get_pdb_info_from_path(module_path)?;
     let pdb_data = download_pdb(&pdb_info)?;
     let table = build_symbol_table(&pdb_data)?;
     
     // Cache the result
     {
         let mut cache = SYMBOL_TABLE_CACHE.write();
-        cache.insert("ntoskrnl".to_string(), table.clone());
+        cache.insert(module_key.to_string(), table.clone());
     }
     
     Ok(table)
 }
 
-/// Resolve a kernel address to a symbol string like "ntoskrnl.exe!FunctionName+0x123"
-pub fn resolve_kernel_symbol(address: u64, module_name: &str, module_base: u64) -> String {
-    // Only resolve ntoskrnl symbols for now
-    let module_lower = module_name.to_lowercase();
-    if !module_lower.contains("ntoskrnl") && !module_lower.contains("ntkrnl") {
-        return format!("{}+0x{:x}", module_name, address.saturating_sub(module_base));
+/// Map module name to system path
+fn get_module_path(module_name: &str) -> Option<String> {
+    let name_lower = module_name.to_lowercase();
+    let base_name = name_lower.trim_end_matches(".sys").trim_end_matches(".exe");
+    
+    // Common kernel modules
+    if base_name.contains("ntoskrnl") || base_name.contains("ntkrnl") {
+        return Some(r"C:\Windows\System32\ntoskrnl.exe".to_string());
     }
     
+    // Try System32\drivers first (most kernel modules)
+    let drivers_path = format!(r"C:\Windows\System32\drivers\{}.sys", base_name);
+    if std::path::Path::new(&drivers_path).exists() {
+        return Some(drivers_path);
+    }
+    
+    // Try System32 (for win32k, etc.)
+    let sys32_path = format!(r"C:\Windows\System32\{}.sys", base_name);
+    if std::path::Path::new(&sys32_path).exists() {
+        return Some(sys32_path);
+    }
+    
+    // Try with original extension
+    let sys32_orig = format!(r"C:\Windows\System32\{}", module_name);
+    if std::path::Path::new(&sys32_orig).exists() {
+        return Some(sys32_orig);
+    }
+    
+    let drivers_orig = format!(r"C:\Windows\System32\drivers\{}", module_name);
+    if std::path::Path::new(&drivers_orig).exists() {
+        return Some(drivers_orig);
+    }
+    
+    None
+}
+
+/// Resolve a kernel address to a symbol string like "ntoskrnl.exe!FunctionName+0x123"
+pub fn resolve_kernel_symbol(address: u64, module_name: &str, module_base: u64) -> String {
     // Calculate RVA
     let rva = address.saturating_sub(module_base);
     
+    // Get module path
+    let module_path = match get_module_path(module_name) {
+        Some(path) => path,
+        None => return format!("{}+0x{:x}", module_name, rva),
+    };
+    
+    // Use module name (without extension) as cache key
+    let module_lower = module_name.to_lowercase();
+    let cache_key = module_lower.trim_end_matches(".sys").trim_end_matches(".exe");
+    
     // Try to get symbol table
-    match get_ntoskrnl_symbols() {
+    match get_module_symbols(cache_key, &module_path) {
         Ok(table) => table.format_address(rva, module_name),
         Err(_) => format!("{}+0x{:x}", module_name, rva),
     }
