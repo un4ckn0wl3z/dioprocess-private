@@ -2628,6 +2628,7 @@ const IOCTL_DIOPROCESS_RESUME_THREAD: u32 = 0x002223D4;    // 0x8F5
 const IOCTL_DIOPROCESS_TERMINATE_THREAD: u32 = 0x002223D8; // 0x8F6
 const IOCTL_DIOPROCESS_ENUM_SYSTEM_THREADS: u32 = 0x002223DC; // 0x8F7
 const IOCTL_DIOPROCESS_SET_ETHREAD_OFFSETS: u32 = 0x002223E0; // 0x8F8
+const IOCTL_DIOPROCESS_SET_THREAD_API_ADDRESSES: u32 = 0x002223E8; // 0x8FA
 
 #[repr(C)]
 struct ProcessControlRequest {
@@ -2644,6 +2645,13 @@ struct SetEthreadOffsetsRequest {
     win32_start_address_offset: u32,
     state_offset: u32,
     wait_reason_offset: u32,
+}
+
+#[repr(C)]
+struct SetThreadApiAddressesRequest {
+    ps_suspend_thread_address: u64,
+    ps_resume_thread_address: u64,
+    zw_terminate_thread_address: u64,
 }
 
 const MAX_MODULE_NAME_LENGTH: usize = 256;
@@ -2866,6 +2874,44 @@ pub fn set_ethread_offsets(
             IOCTL_DIOPROCESS_SET_ETHREAD_OFFSETS,
             Some(&request as *const _ as *const _),
             std::mem::size_of::<SetEthreadOffsetsRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
+/// Set thread API addresses in the kernel driver (resolved via PDB)
+pub fn set_thread_api_addresses(
+    ps_suspend_thread: u64,
+    ps_resume_thread: u64,
+    zw_terminate_thread: u64,
+) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = SetThreadApiAddressesRequest {
+            ps_suspend_thread_address: ps_suspend_thread,
+            ps_resume_thread_address: ps_resume_thread,
+            zw_terminate_thread_address: zw_terminate_thread,
+        };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_SET_THREAD_API_ADDRESSES,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<SetThreadApiAddressesRequest>() as u32,
             None,
             0,
             Some(&mut bytes_returned),

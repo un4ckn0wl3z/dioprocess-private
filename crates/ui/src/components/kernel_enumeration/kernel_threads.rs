@@ -1,8 +1,9 @@
 //! Kernel Process/Thread Enumeration sub-tab
 
 use callback::{
-    enumerate_system_threads, resolve_ethread_offsets, resolve_kernel_symbol, resume_thread,
-    set_ethread_offsets, suspend_thread, terminate_thread, SystemThreadInfo,
+    enumerate_system_threads, resolve_ethread_offsets, resolve_kernel_symbol, 
+    resolve_thread_api_addresses, resume_thread, set_ethread_offsets, 
+    set_thread_api_addresses, suspend_thread, terminate_thread, SystemThreadInfo,
 };
 use dioxus::prelude::*;
 
@@ -71,6 +72,18 @@ pub fn KernelThreadsTab(driver_loaded: bool) -> Element {
                         offsets.win32_start_address_offset,
                         offsets.state_offset,
                         offsets.wait_reason_offset,
+                    );
+                }
+            }).await;
+
+            // Resolve thread API addresses from PDB
+            status_message.set("Resolving thread API addresses...".to_string());
+            let _ = tokio::task::spawn_blocking(|| {
+                if let Ok(addrs) = resolve_thread_api_addresses() {
+                    let _ = set_thread_api_addresses(
+                        addrs.ps_suspend_thread,
+                        addrs.ps_resume_thread,
+                        addrs.zw_terminate_thread,
                     );
                 }
             }).await;

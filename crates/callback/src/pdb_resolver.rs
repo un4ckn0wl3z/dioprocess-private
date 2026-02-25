@@ -703,3 +703,72 @@ pub fn resolve_kernel_symbol(address: u64, module_name: &str, module_base: u64) 
         Err(_) => format!("{}+0x{:x}", module_name, rva),
     }
 }
+
+/// Resolved thread API addresses from ntoskrnl.pdb
+#[derive(Debug, Clone, Default)]
+pub struct ResolvedThreadApiAddresses {
+    pub ps_suspend_thread: u64,
+    pub ps_resume_thread: u64,
+    pub zw_terminate_thread: u64,
+    pub ntoskrnl_base: u64,
+}
+
+/// Get ntoskrnl.exe base address
+fn get_ntoskrnl_base() -> Result<u64, CallbackError> {
+    use windows::Win32::System::ProcessStatus::{EnumDeviceDrivers, GetDeviceDriverBaseNameW};
+    
+    // Get list of drivers
+    let mut drivers: [*mut std::ffi::c_void; 1024] = [std::ptr::null_mut(); 1024];
+    let mut cb_needed: u32 = 0;
+    
+    unsafe {
+        if EnumDeviceDrivers(
+            drivers.as_mut_ptr(),
+            (drivers.len() * std::mem::size_of::<*mut std::ffi::c_void>()) as u32,
+            &mut cb_needed,
+        ).is_err() {
+            return Err(CallbackError::InvalidData);
+        }
+        
+        let count = cb_needed as usize / std::mem::size_of::<*mut std::ffi::c_void>();
+        
+        for i in 0..count {
+            let mut name = [0u16; 256];
+            let len = GetDeviceDriverBaseNameW(drivers[i], &mut name);
+            if len > 0 {
+                let name_str = String::from_utf16_lossy(&name[..len as usize]);
+                if name_str.to_lowercase().contains("ntoskrnl") || name_str.to_lowercase().contains("ntkrnl") {
+                    return Ok(drivers[i] as u64);
+                }
+            }
+        }
+    }
+    
+    Err(CallbackError::InvalidData)
+}
+
+/// Resolve thread API addresses from ntoskrnl.pdb
+pub fn resolve_thread_api_addresses() -> Result<ResolvedThreadApiAddresses, CallbackError> {
+    let ntoskrnl_base = get_ntoskrnl_base()?;
+    let symbols = get_ntoskrnl_symbols()?;
+    
+    let mut result = ResolvedThreadApiAddresses {
+        ntoskrnl_base,
+        ..Default::default()
+    };
+    
+    // Find PsSuspendThread
+    for (rva, name) in &symbols.symbols {
+        if name == "PsSuspendThread" {
+            result.ps_suspend_thread = ntoskrnl_base + rva;
+        } else if name == "PsResumeThread" {
+            result.ps_resume_thread = ntoskrnl_base + rva;
+        } else if name == "ZwTerminateThread" || name == "NtTerminateThread" {
+            if result.zw_terminate_thread == 0 {
+                result.zw_terminate_thread = ntoskrnl_base + rva;
+            }
+        }
+    }
+    
+    Ok(result)
+}

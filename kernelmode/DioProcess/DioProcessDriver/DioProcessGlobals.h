@@ -220,6 +220,7 @@ NTSTATUS HandleTerminateThread(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandleEnumSystemThreads(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleSetEthreadOffsets(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandleEnumAllKernelThreads(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleSetThreadApiAddresses(PIRP Irp, PIO_STACK_LOCATION irpSp);
 
 // Hypervisor Control Handlers
 NTSTATUS HandleHvStart(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);

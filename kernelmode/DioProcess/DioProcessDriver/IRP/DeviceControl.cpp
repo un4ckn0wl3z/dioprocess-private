@@ -478,6 +478,10 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleEnumAllKernelThreads(Irp, irpSp, &info);
 		break;
 
+	case IOCTL_DIOPROCESS_SET_THREAD_API_ADDRESSES:
+		status = HandleSetThreadApiAddresses(Irp, irpSp);
+		break;
+
 	default:
 		status = STATUS_INVALID_DEVICE_REQUEST;
 		break;
@@ -5053,8 +5057,36 @@ static PFN_PsSuspendThread g_PsSuspendThread = nullptr;
 static PFN_PsResumeThread g_PsResumeThread = nullptr;
 static PFN_ZwTerminateThread g_ZwTerminateThread = nullptr;
 static BOOLEAN g_ThreadApisResolved = FALSE;
+static PVOID g_ThreadApiAddresses[3] = { nullptr, nullptr, nullptr };
 
-// Resolve thread control APIs dynamically
+// Set thread API addresses from usermode (resolved via PDB)
+NTSTATUS HandleSetThreadApiAddresses(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleSetThreadApiAddresses called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(SetThreadApiAddressesRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (SetThreadApiAddressesRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	if (request->PsSuspendThreadAddress)
+		g_PsSuspendThread = (PFN_PsSuspendThread)(PVOID)request->PsSuspendThreadAddress;
+	if (request->PsResumeThreadAddress)
+		g_PsResumeThread = (PFN_PsResumeThread)(PVOID)request->PsResumeThreadAddress;
+	if (request->ZwTerminateThreadAddress)
+		g_ZwTerminateThread = (PFN_ZwTerminateThread)(PVOID)request->ZwTerminateThreadAddress;
+
+	KdPrint((DRIVER_PREFIX "Thread APIs set: Suspend=%p, Resume=%p, Terminate=%p\n",
+		g_PsSuspendThread, g_PsResumeThread, g_ZwTerminateThread));
+
+	g_ThreadApisResolved = TRUE;
+	return STATUS_SUCCESS;
+}
+
+// Resolve thread control APIs dynamically (fallback)
 static BOOLEAN ResolveThreadApis()
 {
 	if (g_ThreadApisResolved)
@@ -5062,17 +5094,26 @@ static BOOLEAN ResolveThreadApis()
 
 	UNICODE_STRING funcName;
 
-	RtlInitUnicodeString(&funcName, L"PsSuspendThread");
-	g_PsSuspendThread = (PFN_PsSuspendThread)MmGetSystemRoutineAddress(&funcName);
+	// Try Zw* versions first (may not be exported on all Windows versions)
+	RtlInitUnicodeString(&funcName, L"ZwSuspendThread");
+	PVOID zwSuspend = MmGetSystemRoutineAddress(&funcName);
+	if (zwSuspend)
+		g_PsSuspendThread = (PFN_PsSuspendThread)zwSuspend;
 
-	RtlInitUnicodeString(&funcName, L"PsResumeThread");
-	g_PsResumeThread = (PFN_PsResumeThread)MmGetSystemRoutineAddress(&funcName);
+	RtlInitUnicodeString(&funcName, L"ZwResumeThread");
+	PVOID zwResume = MmGetSystemRoutineAddress(&funcName);
+	if (zwResume)
+		g_PsResumeThread = (PFN_PsResumeThread)zwResume;
 
 	RtlInitUnicodeString(&funcName, L"ZwTerminateThread");
 	g_ZwTerminateThread = (PFN_ZwTerminateThread)MmGetSystemRoutineAddress(&funcName);
 
 	g_ThreadApisResolved = TRUE;
-	return (g_PsSuspendThread != nullptr && g_PsResumeThread != nullptr && g_ZwTerminateThread != nullptr);
+
+	KdPrint((DRIVER_PREFIX "Thread APIs resolved: Suspend=%p, Resume=%p, Terminate=%p\n",
+		g_PsSuspendThread, g_PsResumeThread, g_ZwTerminateThread));
+
+	return (g_PsSuspendThread != nullptr || g_PsResumeThread != nullptr || g_ZwTerminateThread != nullptr);
 }
 
 #define LOCAL_SystemProcessInformation 5
@@ -5135,7 +5176,9 @@ NTSTATUS HandleSuspendThread(PIRP Irp, PIO_STACK_LOCATION irpSp)
 {
 	KdPrint((DRIVER_PREFIX "HandleSuspendThread called\n"));
 
-	if (!ResolveThreadApis() || !g_PsSuspendThread)
+	ResolveThreadApis();
+	
+	if (!g_PsSuspendThread)
 	{
 		KdPrint((DRIVER_PREFIX "PsSuspendThread not available\n"));
 		return STATUS_NOT_SUPPORTED;
@@ -5169,7 +5212,9 @@ NTSTATUS HandleResumeThread(PIRP Irp, PIO_STACK_LOCATION irpSp)
 {
 	KdPrint((DRIVER_PREFIX "HandleResumeThread called\n"));
 
-	if (!ResolveThreadApis() || !g_PsResumeThread)
+	ResolveThreadApis();
+	
+	if (!g_PsResumeThread)
 	{
 		KdPrint((DRIVER_PREFIX "PsResumeThread not available\n"));
 		return STATUS_NOT_SUPPORTED;

@@ -41,13 +41,13 @@ pub use driver::{
     remove_object_callback, remove_process_callback, remove_registry_callback, remove_thread_callback,
     restore_image_callback, restore_object_callback, restore_process_callback,
     restore_registry_callback, restore_thread_callback, resume_process, resume_thread,
-    set_ethread_offsets, set_registry_callback_offsets, start_collection, stop_collection,
+    set_ethread_offsets, set_registry_callback_offsets, set_thread_api_addresses, start_collection, stop_collection,
     suspend_process, suspend_thread, terminate_thread,
     hide_memory, unlink_minifilter, unprotect_process, unregister_callbacks, CallbackInfo, KernelDriverInfo,
     KernelThreadInfo, MinifilterCallbacks, MinifilterInfo, ObjectCallbackInfo, ObjectCallbackOperations,
     ObjectCallbackType, ProcessProtectionLevel, RegistryCallbackInfo, SystemThreadInfo,
 };
-pub use pdb_resolver::{resolve_ethread_offsets, resolve_kernel_symbol, resolve_registry_callback_offsets, ResolvedEthreadOffsets, ResolvedRegistryCallbackOffsets};
+pub use pdb_resolver::{resolve_ethread_offsets, resolve_kernel_symbol, resolve_registry_callback_offsets, resolve_thread_api_addresses, ResolvedEthreadOffsets, ResolvedRegistryCallbackOffsets, ResolvedThreadApiAddresses};
 pub use error::CallbackError;
 pub use hypervisor::{
     hv_clear_hidden_drivers, hv_hide_driver, hv_inject_dll, hv_inject_shellcode, hv_install_hooks,

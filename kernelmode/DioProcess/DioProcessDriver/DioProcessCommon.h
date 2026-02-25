@@ -1261,8 +1261,18 @@ struct PacketFilterRemoveRequest
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F8, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_DIOPROCESS_ENUM_ALL_KERNEL_THREADS \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F9, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_SET_THREAD_API_ADDRESSES \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8FA, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 // ============== Kernel Process/Thread Control Structures ==============
+
+// Request structure for setting thread API addresses (resolved via PDB)
+struct SetThreadApiAddressesRequest
+{
+	ULONG64 PsSuspendThreadAddress;
+	ULONG64 PsResumeThreadAddress;
+	ULONG64 ZwTerminateThreadAddress;
+};
 
 struct ProcessControlRequest
 {
