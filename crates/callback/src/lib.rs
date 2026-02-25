@@ -24,6 +24,7 @@ mod process_hide;
 pub mod scanner;
 pub mod hv_scanner;
 mod pspcidtable;
+mod pdb_resolver;
 mod kernel_etw;
 pub mod storage;
 mod types;

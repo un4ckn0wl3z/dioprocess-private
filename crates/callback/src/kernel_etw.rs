@@ -7,12 +7,28 @@
 //! EtwEventWrite patch which only affects a single process.
 //!
 //! Based on EDRSandblast technique: https://github.com/wavestone-cdt/EDRSandblast
+//!
+//! Now supports dynamic offset resolution via PDB parsing from Microsoft Symbol Server.
 
 use crate::driver::enumerate_kernel_drivers;
 use crate::error::CallbackError;
+use crate::pdb_resolver::resolve_etwti_offsets;
 use crate::physical_memory::{read_physical_memory, translate_virtual_address, write_physical_memory};
-use windows::Win32::Foundation::GetLastError;
-use windows::Win32::System::SystemInformation::{GetVersionExW, OSVERSIONINFOW};
+
+#[repr(C)]
+struct RTL_OSVERSIONINFOW {
+    dw_os_version_info_size: u32,
+    dw_major_version: u32,
+    dw_minor_version: u32,
+    dw_build_number: u32,
+    dw_platform_id: u32,
+    sz_csd_version: [u16; 128],
+}
+
+#[link(name = "ntdll")]
+extern "system" {
+    fn RtlGetVersion(lpVersionInformation: *mut RTL_OSVERSIONINFOW) -> i32;
+}
 
 /// ETWTI offsets for a specific Windows build
 #[derive(Debug, Clone, Copy)]
@@ -86,27 +102,30 @@ pub struct EtwtiStatus {
     pub build_number: u32,
     /// ntoskrnl.exe base address
     pub ntoskrnl_base: u64,
+    /// Whether offsets were resolved from PDB (true) or hardcoded fallback (false)
+    pub offsets_from_pdb: bool,
+    /// PDB signature used for resolution (empty if using hardcoded offsets)
+    pub pdb_signature: String,
 }
 
-/// Get the current Windows build number
+/// Get the current Windows build number using RtlGetVersion (not subject to compatibility shims)
 fn get_windows_build() -> Result<u32, CallbackError> {
     unsafe {
-        let mut version_info: OSVERSIONINFOW = std::mem::zeroed();
-        version_info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
+        let mut version_info: RTL_OSVERSIONINFOW = std::mem::zeroed();
+        version_info.dw_os_version_info_size = std::mem::size_of::<RTL_OSVERSIONINFOW>() as u32;
         
-        // GetVersionExW is deprecated but still works for getting build number
-        // We suppress the deprecation warning
-        #[allow(deprecated)]
-        if GetVersionExW(&mut version_info).is_ok() {
-            Ok(version_info.dwBuildNumber)
+        // RtlGetVersion is the recommended API - not subject to compatibility shims
+        let status = RtlGetVersion(&mut version_info);
+        if status >= 0 {
+            Ok(version_info.dw_build_number)
         } else {
-            Err(CallbackError::IoctlFailed(GetLastError().0))
+            Err(CallbackError::IoctlFailed(status as u32))
         }
     }
 }
 
-/// Get ETWTI offsets for the current Windows build
-fn get_etwti_offsets(build: u32) -> Option<&'static EtwtiOffsets> {
+/// Get ETWTI offsets for the current Windows build (hardcoded fallback)
+fn get_etwti_offsets_fallback(build: u32) -> Option<&'static EtwtiOffsets> {
     // First try exact match
     if let Some(offsets) = ETWTI_OFFSETS.iter().find(|o| o.build == build) {
         return Some(offsets);
@@ -127,21 +146,132 @@ fn get_etwti_offsets(build: u32) -> Option<&'static EtwtiOffsets> {
     best_match
 }
 
-/// Get ntoskrnl.exe base address from kernel driver list
+/// Resolved offsets with source information
+struct ResolvedOffsets {
+    etw_threat_int_prov_reg_handle: u64,
+    etw_reg_entry_guid_entry: u64,
+    etw_guid_entry_provider_enable_info: u64,
+    from_pdb: bool,
+    pdb_signature: String,
+}
+
+/// Get ETWTI offsets - tries dynamic PDB resolution first, falls back to hardcoded
+fn get_etwti_offsets(build: u32) -> Result<ResolvedOffsets, CallbackError> {
+    // Try dynamic PDB resolution first
+    match resolve_etwti_offsets() {
+        Ok(pdb_offsets) => {
+            return Ok(ResolvedOffsets {
+                etw_threat_int_prov_reg_handle: pdb_offsets.etw_threat_int_prov_reg_handle,
+                etw_reg_entry_guid_entry: pdb_offsets.etw_reg_entry_guid_entry,
+                etw_guid_entry_provider_enable_info: pdb_offsets.etw_guid_entry_provider_enable_info,
+                from_pdb: true,
+                pdb_signature: pdb_offsets.pdb_signature,
+            });
+        }
+        Err(_) => {
+            // Fall back to hardcoded offsets
+            if let Some(fallback) = get_etwti_offsets_fallback(build) {
+                return Ok(ResolvedOffsets {
+                    etw_threat_int_prov_reg_handle: fallback.etw_threat_int_prov_reg_handle,
+                    etw_reg_entry_guid_entry: fallback.etw_reg_entry_guid_entry,
+                    etw_guid_entry_provider_enable_info: fallback.etw_guid_entry_provider_enable_info,
+                    from_pdb: false,
+                    pdb_signature: String::new(),
+                });
+            }
+        }
+    }
+    
+    Err(CallbackError::InvalidParameter)
+}
+
+/// Get ntoskrnl.exe base address using NtQuerySystemInformation
 fn get_ntoskrnl_base() -> Result<u64, CallbackError> {
+    use std::mem::size_of;
+    
+    #[repr(C)]
+    struct RtlProcessModuleInformation {
+        section: usize,
+        mapped_base: usize,
+        image_base: usize,
+        image_size: u32,
+        flags: u32,
+        load_order_index: u16,
+        init_order_index: u16,
+        load_count: u16,
+        offset_to_file_name: u16,
+        full_path_name: [u8; 256],
+    }
+    
+    #[repr(C)]
+    struct RtlProcessModules {
+        number_of_modules: u32,
+        modules: [RtlProcessModuleInformation; 1],
+    }
+    
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtQuerySystemInformation(
+            system_information_class: u32,
+            system_information: *mut std::ffi::c_void,
+            system_information_length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+    }
+    
+    const SYSTEM_MODULE_INFORMATION: u32 = 11;
+    
+    unsafe {
+        // First call to get required size
+        let mut return_length: u32 = 0;
+        NtQuerySystemInformation(
+            SYSTEM_MODULE_INFORMATION,
+            std::ptr::null_mut(),
+            0,
+            &mut return_length,
+        );
+        
+        if return_length == 0 {
+            // Fallback to driver enumeration
+            return get_ntoskrnl_base_from_drivers();
+        }
+        
+        // Allocate buffer
+        let mut buffer: Vec<u8> = vec![0; return_length as usize];
+        
+        let status = NtQuerySystemInformation(
+            SYSTEM_MODULE_INFORMATION,
+            buffer.as_mut_ptr() as *mut _,
+            return_length,
+            &mut return_length,
+        );
+        
+        if status < 0 {
+            return get_ntoskrnl_base_from_drivers();
+        }
+        
+        let modules = &*(buffer.as_ptr() as *const RtlProcessModules);
+        
+        if modules.number_of_modules > 0 {
+            // First module is always ntoskrnl.exe
+            let first_module = &modules.modules[0];
+            return Ok(first_module.image_base as u64);
+        }
+    }
+    
+    get_ntoskrnl_base_from_drivers()
+}
+
+/// Fallback: Get ntoskrnl.exe base address from kernel driver list
+fn get_ntoskrnl_base_from_drivers() -> Result<u64, CallbackError> {
     let drivers = enumerate_kernel_drivers()?;
     
-    // ntoskrnl.exe is typically the first entry, but let's search by name to be safe
+    // Search by name
     for driver in &drivers {
         let name_lower = driver.driver_name.to_lowercase();
         if name_lower == "ntoskrnl.exe" || name_lower.starts_with("ntoskrnl") {
             return Ok(driver.base_address);
         }
-    }
-    
-    // Fallback: first entry is usually ntoskrnl
-    if let Some(first) = drivers.first() {
-        return Ok(first.base_address);
     }
     
     Err(CallbackError::InvalidData)
@@ -196,11 +326,13 @@ fn write_kernel_byte(va: u64, value: u8) -> Result<(), CallbackError> {
 ///
 /// Returns the current state of the ETW Threat Intelligence provider.
 /// Requires the DioProcess kernel driver to be loaded.
+/// 
+/// This function first attempts to resolve offsets dynamically from PDB,
+/// falling back to hardcoded offsets if PDB resolution fails.
 pub fn get_etwti_status() -> Result<EtwtiStatus, CallbackError> {
     let build = get_windows_build()?;
     
-    let offsets = get_etwti_offsets(build)
-        .ok_or_else(|| CallbackError::InvalidParameter)?;
+    let offsets = get_etwti_offsets(build)?;
     
     let ntoskrnl_base = get_ntoskrnl_base()?;
     
@@ -228,6 +360,8 @@ pub fn get_etwti_status() -> Result<EtwtiStatus, CallbackError> {
         provider_enable_info,
         build_number: build,
         ntoskrnl_base,
+        offsets_from_pdb: offsets.from_pdb,
+        pdb_signature: offsets.pdb_signature,
     })
 }
 
@@ -243,8 +377,7 @@ pub fn get_etwti_status() -> Result<EtwtiStatus, CallbackError> {
 pub fn disable_etwti() -> Result<EtwtiStatus, CallbackError> {
     let build = get_windows_build()?;
     
-    let offsets = get_etwti_offsets(build)
-        .ok_or_else(|| CallbackError::InvalidParameter)?;
+    let offsets = get_etwti_offsets(build)?;
     
     let ntoskrnl_base = get_ntoskrnl_base()?;
     
@@ -275,6 +408,8 @@ pub fn disable_etwti() -> Result<EtwtiStatus, CallbackError> {
         provider_enable_info,
         build_number: build,
         ntoskrnl_base,
+        offsets_from_pdb: offsets.from_pdb,
+        pdb_signature: offsets.pdb_signature,
     })
 }
 
@@ -286,8 +421,7 @@ pub fn disable_etwti() -> Result<EtwtiStatus, CallbackError> {
 pub fn enable_etwti() -> Result<EtwtiStatus, CallbackError> {
     let build = get_windows_build()?;
     
-    let offsets = get_etwti_offsets(build)
-        .ok_or_else(|| CallbackError::InvalidParameter)?;
+    let offsets = get_etwti_offsets(build)?;
     
     let ntoskrnl_base = get_ntoskrnl_base()?;
     
@@ -318,13 +452,16 @@ pub fn enable_etwti() -> Result<EtwtiStatus, CallbackError> {
         provider_enable_info,
         build_number: build,
         ntoskrnl_base,
+        offsets_from_pdb: offsets.from_pdb,
+        pdb_signature: offsets.pdb_signature,
     })
 }
 
 /// Check if the current Windows build is supported for ETWTI patching
+/// With dynamic PDB resolution, this should always return true if PDB download succeeds
 pub fn is_etwti_supported() -> bool {
     if let Ok(build) = get_windows_build() {
-        get_etwti_offsets(build).is_some()
+        get_etwti_offsets(build).is_ok()
     } else {
         false
     }

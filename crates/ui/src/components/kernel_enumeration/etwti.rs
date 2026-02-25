@@ -246,6 +246,32 @@ pub fn EtwtiTab(driver_loaded: bool) -> Element {
                                                 "0x{etwti_status.provider_enable_info:02X}"
                                             }
                                         }
+                                        tr {
+                                            td {
+                                                style: "padding: 8px 12px; color: var(--text-secondary);",
+                                                "Offset Source"
+                                            }
+                                            td {
+                                                style: "padding: 8px 12px; color: var(--text-primary); font-family: monospace;",
+                                                if etwti_status.offsets_from_pdb {
+                                                    "🟢 Dynamic PDB"
+                                                } else {
+                                                    "🟡 Hardcoded Fallback"
+                                                }
+                                            }
+                                        }
+                                        if etwti_status.offsets_from_pdb && !etwti_status.pdb_signature.is_empty() {
+                                            tr {
+                                                td {
+                                                    style: "padding: 8px 12px; color: var(--text-secondary);",
+                                                    "PDB Signature"
+                                                }
+                                                td {
+                                                    style: "padding: 8px 12px; color: var(--text-primary); font-family: monospace; font-size: 11px;",
+                                                    "{etwti_status.pdb_signature}"
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -259,15 +285,16 @@ pub fn EtwtiTab(driver_loaded: bool) -> Element {
                 style: "margin-top: 16px; padding: 12px; background: var(--bg-secondary); border-radius: 8px;",
                 h4 {
                     style: "margin: 0 0 8px 0; color: var(--text-secondary); font-size: 12px; text-transform: uppercase;",
-                    "Supported Windows Builds"
+                    "Offset Resolution"
                 }
                 p {
                     style: "margin: 0; color: var(--text-tertiary); font-size: 12px; line-height: 1.6;",
-                    "Windows 10 22H2 (19045), Windows 11 22H2 (22621), Windows 11 23H2 (22631), Windows 11 24H2 (26100), Windows Server 2022 (20348)"
+                    "Offsets are resolved dynamically from ntoskrnl.pdb via Microsoft Symbol Server. "
+                    "This ensures compatibility across all Windows builds and cumulative updates."
                 }
                 p {
                     style: "margin: 8px 0 0 0; color: var(--text-tertiary); font-size: 11px;",
-                    "To add support for other builds, update the ETWTI_OFFSETS table in kernel_etw.rs with offsets from ntoskrnl.pdb symbols."
+                    "Fallback builds: Windows 10 22H2 (19045), Windows 11 22H2/23H2 (22621/22631), Windows 11 24H2 (26100), Windows Server 2022 (20348)"
                 }
             }
         }
