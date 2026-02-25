@@ -728,33 +728,17 @@ NTSTATUS HandleProtectProcess(PIRP Irp, PIO_STACK_LOCATION irpSp)
 	KdPrint((DRIVER_PREFIX "Protecting process PID %d with level 0x%02X (EPROCESS=0x%p, Offset=0x%X)\n",
 		processId, level, eProcess, PROCESS_PROTECTION_OFFSET[windowsVersion]));
 
-	// Get protection structure pointer
-	PROCESS_PROTECTION_INFO* psProtection =
-		(PROCESS_PROTECTION_INFO*)(((ULONG_PTR)eProcess) + PROCESS_PROTECTION_OFFSET[windowsVersion]);
+	// Get pointer to Protection byte directly (PPLmanager approach)
+	ULONG_PTR protectionAddr = (ULONG_PTR)eProcess + PROCESS_PROTECTION_OFFSET[windowsVersion];
+	UCHAR* pProtectionByte = (UCHAR*)protectionAddr;
 
-	// Read current protection values for logging
-	KdPrint((DRIVER_PREFIX "Current Protection: SigLvl=0x%02X, SectSigLvl=0x%02X, Type=%d, Signer=%d\n",
-		psProtection->SignatureLevel, psProtection->SectionSignatureLevel,
-		psProtection->Protection.Type, psProtection->Protection.Signer));
+	// Read current protection value for logging
+	KdPrint((DRIVER_PREFIX "Current Protection byte: 0x%02X\n", *pProtectionByte));
 
-	// Extract Type and Signer from protection level
-	// Level format: (Signer << 4) | Type
-	UCHAR protType = level & 0x0F;
-	UCHAR protSigner = (level >> 4) & 0x0F;
+	// Write protection level directly (PPLmanager approach - just 1 byte)
+	*pProtectionByte = (UCHAR)level;
 
-	// Get appropriate signature levels
-	UCHAR sigLevel, sectionSigLevel;
-	GetSignatureLevelsForProtection(level, &sigLevel, &sectionSigLevel);
-
-	// Set protection values
-	psProtection->SignatureLevel = sigLevel;
-	psProtection->SectionSignatureLevel = sectionSigLevel;
-	psProtection->Protection.Type = protType;
-	psProtection->Protection.Signer = protSigner;
-
-	KdPrint((DRIVER_PREFIX "New Protection: SigLvl=0x%02X, SectSigLvl=0x%02X, Type=%d, Signer=%d\n",
-		psProtection->SignatureLevel, psProtection->SectionSignatureLevel,
-		psProtection->Protection.Type, psProtection->Protection.Signer));
+	KdPrint((DRIVER_PREFIX "New Protection byte: 0x%02X\n", *pProtectionByte));
 
 	ObDereferenceObject(eProcess);
 	KdPrint((DRIVER_PREFIX "Process PID %d protected successfully with level 0x%02X\n", processId, level));
@@ -794,16 +778,12 @@ NTSTATUS HandleUnprotectProcess(PIRP Irp, PIO_STACK_LOCATION irpSp)
 
 	KdPrint((DRIVER_PREFIX "Removing protection from process PID %d\n", request->ProcessId));
 
-	// Get protection structure pointer
-	PROCESS_PROTECTION_INFO* psProtection =
-		(PROCESS_PROTECTION_INFO*)(((ULONG_PTR)eProcess) + PROCESS_PROTECTION_OFFSET[windowsVersion]);
+	// Get pointer to Protection byte directly (PPLmanager approach)
+	ULONG_PTR protectionAddr = (ULONG_PTR)eProcess + PROCESS_PROTECTION_OFFSET[windowsVersion];
+	UCHAR* pProtectionByte = (UCHAR*)protectionAddr;
 
-	// Zero out protection
-	psProtection->SignatureLevel = 0;
-	psProtection->SectionSignatureLevel = 0;
-	psProtection->Protection.Type = 0;
-	psProtection->Protection.Signer = 0;
-	psProtection->Protection.Audit = 0;
+	// Zero out protection (just 1 byte)
+	*pProtectionByte = 0;
 
 	ObDereferenceObject(eProcess);
 	KdPrint((DRIVER_PREFIX "Process PID %d unprotected successfully\n", request->ProcessId));

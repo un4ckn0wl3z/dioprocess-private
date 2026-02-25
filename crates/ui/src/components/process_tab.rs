@@ -1869,33 +1869,154 @@ pub fn ProcessTab() -> Element {
                                             span { class: "arrow", "▶" }
                                         }
                                         div {
-                                            class: "context-menu-submenu-content",
-                                            // Protection level buttons
-                                            for level in ProcessProtectionLevel::all() {
+                                            class: "context-menu-submenu-content context-menu-columns",
+                                            // Column 1: Light protection levels
+                                            div {
+                                                class: "context-menu-column",
                                                 {
-                                                    let level_copy = *level;
+                                                    let levels = [
+                                                        ProcessProtectionLevel::AuthenticodLight,
+                                                        ProcessProtectionLevel::AntimalwareLight,
+                                                        ProcessProtectionLevel::LsaLight,
+                                                    ];
                                                     rsx! {
+                                                        for level in levels {
+                                                            {
+                                                                let level_copy = level;
+                                                                rsx! {
+                                                                    button {
+                                                                        class: "context-menu-item",
+                                                                        onclick: move |_| {
+                                                                            let target_pid = ctx_menu.pid;
+                                                                            context_menu.set(ContextMenuState::default());
+                                                                            if let Some(pid) = target_pid {
+                                                                                let level_name = level_copy.short_name();
+                                                                                spawn(async move {
+                                                                                    match protect_process_with_level(pid, level_copy) {
+                                                                                        Ok(()) => {
+                                                                                            status_message.set(format!("✓ Process {} protected with {}", pid, level_name));
+                                                                                        }
+                                                                                        Err(e) => {
+                                                                                            status_message.set(format!("✗ Protection failed: {}", e));
+                                                                                        }
+                                                                                    }
+                                                                                    spawn(async move {
+                                                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                                                        status_message.set(String::new());
+                                                                                    });
+                                                                                });
+                                                                            }
+                                                                        },
+                                                                        span { "{level_copy.display_name()}" }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // Column 2: More Light + Authenticode
+                                            div {
+                                                class: "context-menu-column",
+                                                {
+                                                    let levels = [
+                                                        ProcessProtectionLevel::WindowsLight,
+                                                        ProcessProtectionLevel::WinTcbLight,
+                                                        ProcessProtectionLevel::Authenticode,
+                                                    ];
+                                                    rsx! {
+                                                        for level in levels {
+                                                            {
+                                                                let level_copy = level;
+                                                                rsx! {
+                                                                    button {
+                                                                        class: "context-menu-item",
+                                                                        onclick: move |_| {
+                                                                            let target_pid = ctx_menu.pid;
+                                                                            context_menu.set(ContextMenuState::default());
+                                                                            if let Some(pid) = target_pid {
+                                                                                let level_name = level_copy.short_name();
+                                                                                spawn(async move {
+                                                                                    match protect_process_with_level(pid, level_copy) {
+                                                                                        Ok(()) => {
+                                                                                            status_message.set(format!("✓ Process {} protected with {}", pid, level_name));
+                                                                                        }
+                                                                                        Err(e) => {
+                                                                                            status_message.set(format!("✗ Protection failed: {}", e));
+                                                                                        }
+                                                                                    }
+                                                                                    spawn(async move {
+                                                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                                                        status_message.set(String::new());
+                                                                                    });
+                                                                                });
+                                                                            }
+                                                                        },
+                                                                        span { "{level_copy.display_name()}" }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // Column 3: Full protection + Remove
+                                            div {
+                                                class: "context-menu-column",
+                                                {
+                                                    let levels = [
+                                                        ProcessProtectionLevel::Windows,
+                                                        ProcessProtectionLevel::WinTcb,
+                                                        ProcessProtectionLevel::System,
+                                                    ];
+                                                    rsx! {
+                                                        for level in levels {
+                                                            {
+                                                                let level_copy = level;
+                                                                rsx! {
+                                                                    button {
+                                                                        class: "context-menu-item",
+                                                                        onclick: move |_| {
+                                                                            let target_pid = ctx_menu.pid;
+                                                                            context_menu.set(ContextMenuState::default());
+                                                                            if let Some(pid) = target_pid {
+                                                                                let level_name = level_copy.short_name();
+                                                                                spawn(async move {
+                                                                                    match protect_process_with_level(pid, level_copy) {
+                                                                                        Ok(()) => {
+                                                                                            status_message.set(format!("✓ Process {} protected with {}", pid, level_name));
+                                                                                        }
+                                                                                        Err(e) => {
+                                                                                            status_message.set(format!("✗ Protection failed: {}", e));
+                                                                                        }
+                                                                                    }
+                                                                                    spawn(async move {
+                                                                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                                                        status_message.set(String::new());
+                                                                                    });
+                                                                                });
+                                                                            }
+                                                                        },
+                                                                        span { "{level_copy.display_name()}" }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        // Remove Protection at bottom of last column
+                                                        div { class: "context-menu-separator" }
                                                         button {
                                                             class: "context-menu-item",
                                                             onclick: move |_| {
                                                                 let target_pid = ctx_menu.pid;
                                                                 context_menu.set(ContextMenuState::default());
-
                                                                 if let Some(pid) = target_pid {
-                                                                    let level_name = level_copy.short_name();
                                                                     spawn(async move {
-                                                                        match protect_process_with_level(pid, level_copy) {
+                                                                        match unprotect_process(pid) {
                                                                             Ok(()) => {
-                                                                                status_message.set(format!(
-                                                                                    "✓ Process {} protected with {}",
-                                                                                    pid, level_name
-                                                                                ));
+                                                                                status_message.set(format!("✓ Process {} protection removed", pid));
                                                                             }
                                                                             Err(e) => {
-                                                                                status_message.set(format!(
-                                                                                    "✗ Process protection failed: {}",
-                                                                                    e
-                                                                                ));
+                                                                                status_message.set(format!("✗ Remove protection failed: {}", e));
                                                                             }
                                                                         }
                                                                         spawn(async move {
@@ -1905,45 +2026,10 @@ pub fn ProcessTab() -> Element {
                                                                     });
                                                                 }
                                                             },
-                                                            span { "{level_copy.display_name()}" }
+                                                            span { "🔓 Remove" }
                                                         }
                                                     }
                                                 }
-                                            }
-
-                                            div { class: "context-menu-separator" }
-
-                                            // Remove Protection button (inside submenu)
-                                            button {
-                                                class: "context-menu-item",
-                                                onclick: move |_| {
-                                                    let target_pid = ctx_menu.pid;
-                                                    context_menu.set(ContextMenuState::default());
-
-                                                    if let Some(pid) = target_pid {
-                                                        spawn(async move {
-                                                            match unprotect_process(pid) {
-                                                                Ok(()) => {
-                                                                    status_message.set(format!(
-                                                                        "✓ Process {} protection removed",
-                                                                        pid
-                                                                    ));
-                                                                }
-                                                                Err(e) => {
-                                                                    status_message.set(format!(
-                                                                        "✗ Remove protection failed: {}",
-                                                                        e
-                                                                    ));
-                                                                }
-                                                            }
-                                                            spawn(async move {
-                                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                                                status_message.set(String::new());
-                                                            });
-                                                        });
-                                                    }
-                                                },
-                                                span { "🔓 Remove Protection" }
                                             }
                                         }
                                     }

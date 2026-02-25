@@ -68,20 +68,20 @@ typedef enum _WINDOWS_VERSION
 } WINDOWS_VERSION;
 
 // Structure offset arrays (indexed by WINDOWS_VERSION)
-// Protection offset in EPROCESS
+// Protection offset in EPROCESS - points directly to PS_PROTECTION byte (like PPLmanager)
 const ULONG PROCESS_PROTECTION_OFFSET[] =
 {
 	0x00,   // WINDOWS_UNSUPPORTED
-	0x67a,  // WINDOWS_10_1507  (10240)
-	0x67a,  // WINDOWS_10_1511  (10586)
-	0x6c2,  // WINDOWS_10_1607  (14393)
-	0x6ca,  // WINDOWS_10_1703  (15063)
+	0x6aa,  // WINDOWS_10_1507  (10240) - from PPLmanager
+	0x6b2,  // WINDOWS_10_1511  (10586) - from PPLmanager
+	0x6c2,  // WINDOWS_10_1607  (14393) - from PPLmanager
+	0x6ca,  // WINDOWS_10_1703  (15063) - from PPLmanager
 	0x6ca,  // WINDOWS_10_1709  (16299)
 	0x6ca,  // WINDOWS_10_1803  (17134)
 	0x6ca,  // WINDOWS_10_1809  (17763)
-	0x6fa,  // WINDOWS_10_1903  (18362)
+	0x6fa,  // WINDOWS_10_1903  (18362) - from PPLmanager
 	0x6fa,  // WINDOWS_10_1909  (18363)
-	0x87a,  // WINDOWS_10_2004  (19041)
+	0x87a,  // WINDOWS_10_2004  (19041) - from PPLmanager
 	0x87a,  // WINDOWS_10_20H2  (19042)
 	0x87a,  // WINDOWS_10_21H1  (19043)
 	0x87a,  // WINDOWS_10_21H2  (19044)
