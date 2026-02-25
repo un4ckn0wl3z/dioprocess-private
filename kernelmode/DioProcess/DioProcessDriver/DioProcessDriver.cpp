@@ -32,6 +32,15 @@ RemovedObjectCallback g_RemovedProcessObjectCallbacks[MAX_REMOVED_CALLBACKS] = {
 RemovedObjectCallback g_RemovedThreadObjectCallbacks[MAX_REMOVED_CALLBACKS] = { 0 };
 RemovedRegistryCallback g_RemovedRegistryCallbacks[MAX_REMOVED_CALLBACKS] = { 0 };
 
+// Dynamic registry callback offsets (initialized with defaults, updated via IOCTL)
+RegistryCallbackOffsets g_RegistryCallbackOffsets = {
+	0x18,  // CookieOffset - default for Windows 10 22H2
+	0x28,  // FunctionOffset
+	0x20,  // ContextOffset
+	0x30,  // AltitudeOffset
+	FALSE  // IsInitialized
+};
+
 // ============== Helper Function Implementations ==============
 
 void AddItem(FullEventData* item)

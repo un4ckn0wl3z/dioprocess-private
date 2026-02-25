@@ -346,3 +346,118 @@ pub fn clear_offset_cache() {
     let mut cache = OFFSET_CACHE.write();
     cache.clear();
 }
+
+/// Resolved registry callback offsets from PDB
+#[derive(Debug, Clone)]
+pub struct ResolvedRegistryCallbackOffsets {
+    /// Offset of Cookie field in _CM_CALLBACK_CONTEXT_BLOCK
+    pub cookie_offset: u32,
+    /// Offset of Function field in _CM_CALLBACK_CONTEXT_BLOCK
+    pub function_offset: u32,
+    /// Offset of CallerContext field in _CM_CALLBACK_CONTEXT_BLOCK
+    pub context_offset: u32,
+    /// Offset of Altitude field in _CM_CALLBACK_CONTEXT_BLOCK
+    pub altitude_offset: u32,
+    /// Whether offsets were resolved from PDB
+    pub from_pdb: bool,
+    /// PDB signature used for resolution
+    pub pdb_signature: String,
+}
+
+/// Global cache for registry callback offsets
+static REGISTRY_CALLBACK_OFFSET_CACHE: Lazy<RwLock<Option<ResolvedRegistryCallbackOffsets>>> =
+    Lazy::new(|| RwLock::new(None));
+
+/// Parse PDB and extract _CM_CALLBACK_CONTEXT_BLOCK offsets
+fn parse_pdb_for_registry_callback_offsets(pdb_data: &[u8]) -> Result<ResolvedRegistryCallbackOffsets, CallbackError> {
+    let cursor = Cursor::new(pdb_data);
+    let mut pdb = PDB::open(cursor)
+        .map_err(|_| CallbackError::InvalidData)?;
+    
+    let mut cookie_offset: Option<u32> = None;
+    let mut function_offset: Option<u32> = None;
+    let mut context_offset: Option<u32> = None;
+    let mut altitude_offset: Option<u32> = None;
+    
+    // Get type information for structure field offsets
+    let type_info = pdb.type_information()
+        .map_err(|_| CallbackError::InvalidData)?;
+    
+    let mut type_finder = type_info.finder();
+    let mut types = type_info.iter();
+    
+    while let Some(typ) = types.next().map_err(|_| CallbackError::InvalidData)? {
+        let _ = type_finder.update(&types);
+        
+        if let Ok(pdb::TypeData::Class(class)) = typ.parse() {
+            let class_name = class.name.to_string();
+            
+            // Look for _CM_CALLBACK_CONTEXT_BLOCK structure
+            if class_name.to_string() == "_CM_CALLBACK_CONTEXT_BLOCK" {
+                if let Some(fields) = class.fields {
+                    if let Ok(field_type) = type_finder.find(fields) {
+                        if let Ok(pdb::TypeData::FieldList(field_list)) = field_type.parse() {
+                            for field in field_list.fields {
+                                if let pdb::TypeData::Member(member) = field {
+                                    let field_name = member.name.to_string().to_string();
+                                    match field_name.as_str() {
+                                        "Cookie" => cookie_offset = Some(member.offset as u32),
+                                        "Function" => function_offset = Some(member.offset as u32),
+                                        "CallerContext" => context_offset = Some(member.offset as u32),
+                                        "Altitude" => altitude_offset = Some(member.offset as u32),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                break; // Found the structure, no need to continue
+            }
+        }
+    }
+    
+    // Use defaults if not found (based on Windows 10 22H2 typical layout)
+    let cookie_offset = cookie_offset.unwrap_or(0x18);
+    let function_offset = function_offset.unwrap_or(0x28);
+    let context_offset = context_offset.unwrap_or(0x20);
+    let altitude_offset = altitude_offset.unwrap_or(0x30);
+    
+    Ok(ResolvedRegistryCallbackOffsets {
+        cookie_offset,
+        function_offset,
+        context_offset,
+        altitude_offset,
+        from_pdb: cookie_offset != 0x18 || function_offset != 0x28, // True if we found actual values
+        pdb_signature: String::new(),
+    })
+}
+
+/// Resolve registry callback offsets dynamically from PDB
+/// Returns cached offsets if available, otherwise downloads and parses PDB
+pub fn resolve_registry_callback_offsets() -> Result<ResolvedRegistryCallbackOffsets, CallbackError> {
+    // Check memory cache first
+    {
+        let cache = REGISTRY_CALLBACK_OFFSET_CACHE.read();
+        if let Some(offsets) = cache.as_ref() {
+            return Ok(offsets.clone());
+        }
+    }
+    
+    // Get PDB info from ntoskrnl.exe
+    let pdb_info = get_ntoskrnl_pdb_info()?;
+    let cache_key = format!("{}{}", pdb_info.guid, pdb_info.age);
+    
+    // Download and parse PDB
+    let pdb_data = download_pdb(&pdb_info)?;
+    let mut offsets = parse_pdb_for_registry_callback_offsets(&pdb_data)?;
+    offsets.pdb_signature = cache_key;
+    
+    // Cache the result
+    {
+        let mut cache = REGISTRY_CALLBACK_OFFSET_CACHE.write();
+        *cache = Some(offsets.clone());
+    }
+    
+    Ok(offsets)
+}

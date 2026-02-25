@@ -155,6 +155,10 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		status = HandleRemoveRegistryCallback(Irp, irpSp);
 		break;
 
+	case IOCTL_DIOPROCESS_SET_REGISTRY_CALLBACK_OFFSETS:
+		status = HandleSetRegistryCallbackOffsets(Irp, irpSp);
+		break;
+
 	// Callback Restore IOCTLs
 	case IOCTL_DIOPROCESS_RESTORE_PROCESS_CALLBACK:
 		status = HandleRestoreProcessCallback(Irp, irpSp);
@@ -2008,20 +2012,36 @@ NTSTATUS HandleRemoveRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
 
 				if (callbackItem && MmIsAddressValid(callbackItem))
 				{
-					// Use InterlockedExchangePointer for atomic, safe modification
-					PVOID oldFunction = InterlockedExchangePointer((PVOID*)&callbackItem->Function, NULL);
+					// Read Cookie using dynamic offset (or default 0x18)
+					ULONG cookieOffset = g_RegistryCallbackOffsets.IsInitialized ? 
+						g_RegistryCallbackOffsets.CookieOffset : 0x18;
+					ULONG functionOffset = g_RegistryCallbackOffsets.IsInitialized ?
+						g_RegistryCallbackOffsets.FunctionOffset : 0x28;
+					
+					LARGE_INTEGER cookie = *(PLARGE_INTEGER)((PUCHAR)callbackItem + cookieOffset);
+					ULONG64 oldFunction = *(PULONG64)((PUCHAR)callbackItem + functionOffset);
 
 					// Save original values for restoration
 					g_RemovedRegistryCallbacks[request->Index].IsRemoved = TRUE;
-					g_RemovedRegistryCallbacks[request->Index].OriginalFunction = (ULONG64)oldFunction;
+					g_RemovedRegistryCallbacks[request->Index].OriginalFunction = oldFunction;
 					g_RemovedRegistryCallbacks[request->Index].CallbackItem = callbackItem;
-					// Save original list links for potential re-linking
 					g_RemovedRegistryCallbacks[request->Index].OriginalLinks.Flink = callbackItem->Item.Flink;
 					g_RemovedRegistryCallbacks[request->Index].OriginalLinks.Blink = callbackItem->Item.Blink;
 
-					KdPrint((DRIVER_PREFIX "Removed registry callback at index %d (was 0x%llX, saved for restore)\n",
-						request->Index, (ULONG64)oldFunction));
-					found = TRUE;
+					// Use CmUnRegisterCallback for safe removal (handles synchronization)
+					NTSTATUS unregStatus = CmUnRegisterCallback(cookie);
+					if (NT_SUCCESS(unregStatus))
+					{
+						KdPrint((DRIVER_PREFIX "Removed registry callback at index %d via CmUnRegisterCallback (Cookie=0x%llX, Function=0x%llX)\n",
+							request->Index, cookie.QuadPart, oldFunction));
+						found = TRUE;
+					}
+					else
+					{
+						KdPrint((DRIVER_PREFIX "CmUnRegisterCallback failed (0x%X), callback may already be removed\n", unregStatus));
+						// Still mark as removed since we saved the info
+						found = TRUE;
+					}
 				}
 				break;
 			}
@@ -2041,6 +2061,45 @@ NTSTATUS HandleRemoveRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp)
 		KdPrint((DRIVER_PREFIX "Exception while removing registry callback at index %d\n", request->Index));
 		return STATUS_ACCESS_VIOLATION;
 	}
+
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS HandleSetRegistryCallbackOffsets(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	KdPrint((DRIVER_PREFIX "HandleSetRegistryCallbackOffsets called\n"));
+
+	auto inputLen = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+	if (inputLen < sizeof(SetRegistryCallbackOffsetsRequest))
+	{
+		KdPrint((DRIVER_PREFIX "Buffer too small\n"));
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	auto request = (SetRegistryCallbackOffsetsRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Validate offsets are reasonable (within typical structure size)
+	if (request->CookieOffset > 0x100 || request->FunctionOffset > 0x100 ||
+		request->ContextOffset > 0x100 || request->AltitudeOffset > 0x100)
+	{
+		KdPrint((DRIVER_PREFIX "Invalid offsets: Cookie=0x%X, Function=0x%X, Context=0x%X, Altitude=0x%X\n",
+			request->CookieOffset, request->FunctionOffset, request->ContextOffset, request->AltitudeOffset));
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Update global offsets
+	g_RegistryCallbackOffsets.CookieOffset = request->CookieOffset;
+	g_RegistryCallbackOffsets.FunctionOffset = request->FunctionOffset;
+	g_RegistryCallbackOffsets.ContextOffset = request->ContextOffset;
+	g_RegistryCallbackOffsets.AltitudeOffset = request->AltitudeOffset;
+	g_RegistryCallbackOffsets.IsInitialized = TRUE;
+
+	KdPrint((DRIVER_PREFIX "Registry callback offsets set: Cookie=0x%X, Function=0x%X, Context=0x%X, Altitude=0x%X\n",
+		request->CookieOffset, request->FunctionOffset, request->ContextOffset, request->AltitudeOffset));
 
 	return STATUS_SUCCESS;
 }

@@ -109,6 +109,27 @@ pub fn CallbackEnumTab(driver_loaded: bool) -> Element {
                 }
             } else if cb_type == CallbackType::Registry {
                 // Handle Registry callbacks (RCK style)
+                // First, resolve and set dynamic offsets from PDB
+                let offsets_result = tokio::task::spawn_blocking(|| {
+                    match callback::resolve_registry_callback_offsets() {
+                        Ok(offsets) => {
+                            // Send offsets to driver
+                            let _ = callback::set_registry_callback_offsets(
+                                offsets.cookie_offset,
+                                offsets.function_offset,
+                                offsets.context_offset,
+                                offsets.altitude_offset,
+                            );
+                            Some(offsets)
+                        }
+                        Err(_) => None,
+                    }
+                }).await;
+
+                if let Ok(Some(_offsets)) = offsets_result {
+                    // Offsets set successfully, proceed with enumeration
+                }
+
                 let result = tokio::task::spawn_blocking(enumerate_registry_callbacks).await;
 
                 match result {

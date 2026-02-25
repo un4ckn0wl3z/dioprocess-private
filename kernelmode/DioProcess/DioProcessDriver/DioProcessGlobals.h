@@ -52,6 +52,18 @@ struct RemovedRegistryCallback
 
 extern RemovedRegistryCallback g_RemovedRegistryCallbacks[MAX_REMOVED_CALLBACKS];
 
+// Dynamic registry callback offsets (from PDB resolution)
+struct RegistryCallbackOffsets
+{
+	ULONG CookieOffset;                          // Offset of Cookie field in _CM_CALLBACK_CONTEXT_BLOCK
+	ULONG FunctionOffset;                        // Offset of Function field
+	ULONG ContextOffset;                         // Offset of CallerContext field
+	ULONG AltitudeOffset;                        // Offset of Altitude field
+	BOOLEAN IsInitialized;                       // TRUE if offsets have been set
+};
+
+extern RegistryCallbackOffsets g_RegistryCallbackOffsets;
+
 // ============== Forward Declarations - Callbacks ==============
 
 VOID OnProcessCallback(
@@ -176,6 +188,7 @@ NTSTATUS HandleRemoveObjectCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
 // Registry callback handlers (RCK style)
 NTSTATUS HandleEnumRegistryCallbacks(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
 NTSTATUS HandleRemoveRegistryCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleSetRegistryCallbackOffsets(PIRP Irp, PIO_STACK_LOCATION irpSp);
 
 // Callback restore handlers
 NTSTATUS HandleRestoreProcessCallback(PIRP Irp, PIO_STACK_LOCATION irpSp);

@@ -2563,6 +2563,61 @@ pub fn remove_registry_callback(index: u32) -> Result<(), CallbackError> {
     Ok(())
 }
 
+// IOCTL code for setting registry callback offsets: CTL_CODE(0x22, 0x8F0, 0, 0)
+const IOCTL_DIOPROCESS_SET_REGISTRY_CALLBACK_OFFSETS: u32 = 0x002223C0;
+
+/// Request structure for setting registry callback offsets
+#[repr(C)]
+struct SetRegistryCallbackOffsetsRequest {
+    cookie_offset: u32,
+    function_offset: u32,
+    context_offset: u32,
+    altitude_offset: u32,
+}
+
+/// Set registry callback structure offsets in the kernel driver
+/// 
+/// This should be called before enumerating or removing registry callbacks
+/// to ensure the driver uses correct offsets for the current Windows version.
+pub fn set_registry_callback_offsets(
+    cookie_offset: u32,
+    function_offset: u32,
+    context_offset: u32,
+    altitude_offset: u32,
+) -> Result<(), CallbackError> {
+    let handle = open_device()?;
+
+    unsafe {
+        let request = SetRegistryCallbackOffsetsRequest {
+            cookie_offset,
+            function_offset,
+            context_offset,
+            altitude_offset,
+        };
+        let mut bytes_returned: u32 = 0;
+
+        let result = DeviceIoControl(
+            handle,
+            IOCTL_DIOPROCESS_SET_REGISTRY_CALLBACK_OFFSETS,
+            Some(&request as *const _ as *const _),
+            std::mem::size_of::<SetRegistryCallbackOffsetsRequest>() as u32,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.is_err() {
+            let err = GetLastError();
+            return Err(CallbackError::IoctlFailed(err.0));
+        }
+    }
+
+    Ok(())
+}
+
 // ============== Kernel Memory Copy (KsDumper-style) ==============
 
 // IOCTL code for memory copy: CTL_CODE(0x22, 0x860, 0, 0)

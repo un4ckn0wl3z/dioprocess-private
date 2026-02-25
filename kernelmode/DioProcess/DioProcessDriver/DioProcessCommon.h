@@ -214,6 +214,10 @@ struct EventData
 #define IOCTL_DIOPROCESS_RESTORE_REGISTRY_CALLBACK \
 	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x81D, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+// Set registry callback offsets (dynamic PDB resolution)
+#define IOCTL_DIOPROCESS_SET_REGISTRY_CALLBACK_OFFSETS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8F0, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 // ============== Hypervisor Control IOCTLs ==============
 
 #define IOCTL_DIOPROCESS_HV_START \
@@ -533,6 +537,15 @@ struct RegistryCallbackInfo
 struct RemoveRegistryCallbackRequest
 {
 	ULONG Index;                                  // Callback entry index in linked list
+};
+
+// Request structure for setting registry callback offsets (dynamic PDB resolution)
+struct SetRegistryCallbackOffsetsRequest
+{
+	ULONG CookieOffset;                           // Offset of Cookie field in _CM_CALLBACK_CONTEXT_BLOCK
+	ULONG FunctionOffset;                         // Offset of Function field
+	ULONG ContextOffset;                          // Offset of CallerContext field
+	ULONG AltitudeOffset;                         // Offset of Altitude field
 };
 
 // Request structure for restoring registry callbacks
