@@ -8,7 +8,6 @@ import {
   Cpu,
   Zap,
   Shield,
-  Github,
   ArrowRight,
   Terminal,
   Syringe,
@@ -52,12 +51,6 @@ export default function Home() {
                   Get Started
                   <ArrowRight className="w-4 h-4" />
                 </Link>
-              </Button>
-              <Button size="lg" variant="outline" className="gap-2 border-border/50" asChild>
-                <a href="https://github.com/un4ckn0wl3z/dioprocess-private" target="_blank" rel="noopener noreferrer">
-                  <Github className="w-4 h-4" />
-                  View on GitHub
-                </a>
               </Button>
               <Button size="lg" variant="outline" className="gap-2 border-border/50 border-indigo-500/30 hover:bg-indigo-500/10" asChild>
                 <a href="https://discord.gg/ugYeeJRf5S" target="_blank" rel="noopener noreferrer">

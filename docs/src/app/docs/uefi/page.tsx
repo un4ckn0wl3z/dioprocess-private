@@ -103,7 +103,7 @@ export default function UefiPage() {
           EFI driver installation is handled from the <strong>title bar</strong> buttons:
         </p>
         <ul className="space-y-2 text-muted-foreground">
-          <li>• <strong>Install EFI</strong> — Downloads from private GitHub repo and installs to ESP</li>
+          <li>• <strong>Install EFI</strong> — Installs the EFI driver to ESP</li>
           <li>• <strong>Uninstall EFI</strong> — Removes boot entry and ESP files</li>
           <li>• With <code>-debug</code> flag: &quot;Browse Local File&quot; option available</li>
         </ul>

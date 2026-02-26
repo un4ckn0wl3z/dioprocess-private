@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   Menu,
-  Github,
   BookOpen,
   Cpu,
   Shield,
@@ -54,22 +53,6 @@ export function Navbar() {
         </nav>
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="hidden sm:flex gap-2 border-border/50 hover:border-violet/50 hover:bg-violet/10"
-            asChild
-          >
-            <a
-              href="https://github.com/un4ckn0wl3z/dioprocess-private"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <Github className="w-4 h-4" />
-              GitHub
-            </a>
-          </Button>
-
           <Button
             size="sm"
             className="hidden sm:flex bg-violet hover:bg-violet/90"

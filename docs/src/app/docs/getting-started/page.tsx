@@ -52,28 +52,7 @@ export default function GettingStartedPage() {
         </a>
       </section>
 
-      <section className="space-y-4">
-        <h2 className="text-2xl font-bold">Build from Source</h2>
-        <p className="text-muted-foreground">
-          DioProcess is built with Rust. Make sure you have the Rust toolchain installed.
-        </p>
-        
-        <CodeBlock
-          filename="Terminal"
-          language="bash"
-          code={`# Clone the repository
-git clone https://github.com/un4ckn0wl3z/dioprocess-private.git
-cd dioprocess
-
-# Debug build + run (must run as administrator)
-cargo run
-
-# Optimized release binary
-cargo build --release
-.\\target\\release\\dioprocess.exe`}
-        />
-      </section>
-
+      
       <section className="space-y-4">
         <h2 className="text-2xl font-bold">CLI Flags</h2>
         <p className="text-muted-foreground">
@@ -92,7 +71,7 @@ cargo build --release
               <tr className="border-b border-border/50">
                 <td className="py-3 px-4 font-mono text-violet">-debug</td>
                 <td className="py-3 px-4 text-muted-foreground">
-                  Enables local file browsing for EFI installation (bypass GitHub download)
+                  Enables local file browsing for EFI installation
                 </td>
               </tr>
               <tr className="border-b border-border/50">

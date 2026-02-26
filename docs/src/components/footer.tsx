@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Github, Heart } from "lucide-react";
+import { Heart } from "lucide-react";
 
 export function Footer() {
   return (
@@ -49,17 +49,6 @@ export function Footer() {
           <div>
             <h4 className="font-semibold mb-4">Resources</h4>
             <ul className="space-y-2 text-sm text-muted-foreground">
-              <li>
-                <a
-                  href="https://github.com/un4ckn0wl3z/dioprocess-private"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 hover:text-violet transition-colors"
-                >
-                  <Github className="w-4 h-4" />
-                  GitHub
-                </a>
-              </li>
               <li>
                 <Link href="/docs/api-reference" className="hover:text-violet transition-colors">
                   API Reference
