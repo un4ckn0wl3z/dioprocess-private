@@ -158,12 +158,6 @@ const navigation: NavItem[] = [
     title: "SDK",
     href: "/docs/sdk",
     icon: Code,
-    items: [
-      { title: "Injection Examples", href: "/docs/sdk/injection-examples", icon: Syringe },
-      { title: "Callback Examples", href: "/docs/sdk/callback-examples", icon: Database },
-      { title: "Hypervisor Examples", href: "/docs/sdk/hypervisor-examples", icon: Zap },
-      { title: "Packet Capture Examples", href: "/docs/sdk/packet-capture-examples", icon: Radio },
-    ],
   },
   {
     title: "API Reference",
