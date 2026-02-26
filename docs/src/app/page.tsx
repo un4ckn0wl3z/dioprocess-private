@@ -39,9 +39,13 @@ export default function Home() {
               </span>
             </h1>
             
-            <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-8">
-              Modern desktop application for real-time system monitoring and low-level process manipulation. 
-              Built with <span className="text-violet font-medium">Rust</span> and{" "}
+            <p className="text-xl text-muted-foreground max-w-2xl mx-auto mb-4">
+              The <span className="text-violet font-medium">God Process</span> for Windows.
+              <span className="italic text-muted-foreground/80"> Dio</span> means <span className="italic text-muted-foreground/80">God</span> in Latin — 
+              DioProcess is the ultimate process manager and security research toolkit.
+            </p>
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
+              Built with <span className="text-violet font-medium">Rust</span> and 
               <span className="text-violet font-medium">Dioxus</span> for maximum performance.
             </p>
             

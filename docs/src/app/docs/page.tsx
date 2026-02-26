@@ -54,8 +54,9 @@ export default function DocsPage() {
       <div>
         <h1 className="text-4xl font-bold mb-4">Documentation</h1>
         <p className="text-lg text-muted-foreground">
-          Welcome to the DioProcess documentation. Learn how to use the advanced Windows 
-          process monitor and security research tool.
+          Welcome to the DioProcess documentation. <span className="italic">Dio</span> means <span className="italic">God</span> in Latin — 
+          DioProcess is the <span className="text-violet font-medium">God Process</span> for Windows, 
+          the ultimate process manager and security research toolkit.
         </p>
       </div>
 
