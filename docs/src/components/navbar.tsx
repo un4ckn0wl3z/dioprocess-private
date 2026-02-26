@@ -61,7 +61,7 @@ export function Navbar() {
             asChild
           >
             <a
-              href="https://github.com"
+              href="https://github.com/un4ckn0wl3z/dioprocess-private"
               target="_blank"
               rel="noopener noreferrer"
             >

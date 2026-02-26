@@ -51,7 +51,7 @@ export function Footer() {
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>
                 <a
-                  href="https://github.com"
+                  href="https://github.com/un4ckn0wl3z/dioprocess-private"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-2 hover:text-violet transition-colors"
