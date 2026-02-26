@@ -14,12 +14,20 @@ export default function ApiReferencePage() {
           <p className="text-sm">
             <strong>SDK Header:</strong> <code className="text-violet">sdk/DioProcessSDK.h</code> - Single header-only SDK with 90+ IOCTLs, 70+ structures, and 60+ wrapper functions.
           </p>
-          <a href="/DioProcessSDK.h" download="DioProcessSDK.h">
-            <Button variant="outline" size="sm" className="gap-2 shrink-0">
-              <Download className="h-4 w-4" />
-              Download SDK
-            </Button>
-          </a>
+          <div className="flex gap-2 shrink-0">
+            <a href="/DioProcessSDK.h" download="DioProcessSDK.h">
+              <Button variant="outline" size="sm" className="gap-2">
+                <Download className="h-4 w-4" />
+                SDK Header
+              </Button>
+            </a>
+            <a href="/hello_world.cpp" download="hello_world.cpp">
+              <Button variant="outline" size="sm" className="gap-2">
+                <Download className="h-4 w-4" />
+                Example
+              </Button>
+            </a>
+          </div>
         </div>
       </div>
 
