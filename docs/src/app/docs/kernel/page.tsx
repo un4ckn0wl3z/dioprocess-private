@@ -11,6 +11,7 @@ import {
   Rocket,
   Bell,
   ArrowRight,
+  Network,
 } from "lucide-react";
 
 const features = [
@@ -49,6 +50,12 @@ const features = [
     description: "Inject DLLs before any user code executes",
     href: "/docs/kernel/early-injection",
     icon: Rocket,
+  },
+  {
+    title: "Packet Capture",
+    description: "WFP-based network packet capture and injection",
+    href: "/docs/kernel/packet-capture",
+    icon: Network,
   },
   {
     title: "System Events",
