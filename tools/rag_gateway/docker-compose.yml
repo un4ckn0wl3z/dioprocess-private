@@ -1,0 +1,41 @@
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: tools/rag_gateway/Dockerfile.backend
+    env_file:
+      - .env
+    environment:
+      RAG_SOURCE_FILE: /workspace/docs/skills/dio-process-skill.md
+      RAG_DATA_PATH: /data/chroma
+    volumes:
+      - rag_chroma:/data/chroma
+      - ../../docs/skills:/workspace/docs/skills:ro
+    restart: unless-stopped
+
+  mcp_http:
+    build:
+      context: ../..
+      dockerfile: tools/rag_gateway/Dockerfile.mcp
+    env_file:
+      - .env
+    environment:
+      MCP_TRANSPORT: sse
+      RAG_BACKEND_URL: http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  gateway:
+    image: caddy:2.8
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - backend
+      - mcp_http
+    restart: unless-stopped
+
+volumes:
+  rag_chroma:

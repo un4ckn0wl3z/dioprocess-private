@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY tools/rag_gateway/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY tools/rag_gateway/mcp_server /app/mcp_server
+
+CMD ["python", "-m", "mcp_server.server"]

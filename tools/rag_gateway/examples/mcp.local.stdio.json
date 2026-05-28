@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "dioprocess-private-rag": {
+      "type": "stdio",
+      "command": "d:/AICoding/dioprocess/tools/rag_gateway/.venv311/Scripts/python.exe",
+      "args": [
+        "-m",
+        "mcp_server.server"
+      ],
+      "cwd": "d:/AICoding/dioprocess/tools/rag_gateway",
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "RAG_BACKEND_URL": "http://127.0.0.1:8000",
+        "RAG_MCP_SERVICE_KEY": "change-me-mcp"
+      }
+    }
+  }
+}

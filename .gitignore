@@ -4,3 +4,42 @@
 /ref
 mimikatz_trunk/
 error_report/
+
+# RAG/cache/runtime
+/.rag/
+tools/rag_gateway/.venv/
+tools/rag_gateway/.venv311/
+
+# Rust/Cargo build outputs (workspace + nested crates)
+**/target/
+
+# Python caches
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Node/Next build outputs
+**/node_modules/
+docs/.next/
+docs/out/
+docs/dist/
+
+# Visual Studio/WDK intermediates
+**/.vs/
+**/x64/
+**/Win32/
+**/*.obj
+**/*.o
+**/*.pdb
+**/*.ilk
+**/*.idb
+**/*.ipch
+**/*.tlog
+**/*.lastbuildstate
+**/*.recipe
+**/*.log
+
+# Generic temp files
+**/*.tmp
+**/*.cache

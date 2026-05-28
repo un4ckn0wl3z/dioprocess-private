@@ -1,0 +1,10 @@
+:8080 {
+    encode gzip
+
+    @backend path /v1/*
+    reverse_proxy @backend backend:8000
+
+    handle_path /mcp/* {
+        reverse_proxy mcp_http:8001
+    }
+}
