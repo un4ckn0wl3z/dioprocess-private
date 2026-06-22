@@ -33,9 +33,9 @@ export default function Home() {
             </Badge>
             
             <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold tracking-tight mb-6">
-              Advanced Windows{" "}
+              DioProcess{" "}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet to-purple-400">
-                Process Monitor
+                Advanced Windows Internals, Evasion, Hypervisor & Bootkit Research Framework
               </span>
             </h1>
             
