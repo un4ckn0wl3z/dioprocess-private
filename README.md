@@ -1,4 +1,4 @@
-# DioProcess — Advanced Windows Process & System Monitor
+# DioProcess — Advanced Windows Internals, Evasion, Hypervisor & Bootkit Research Framework
 
 Modern, Windows desktop application for real-time system monitoring and low-level process manipulation.
 Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
