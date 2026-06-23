@@ -164,7 +164,7 @@ pub fn Layout() -> Element {
                 div { class: "title-bar",
                     div {
                         class: "title-bar-drag",
-                        span { class: "title-text", "DIOPROCESS | WINDOWS SYSTEM MONITOR v{version} [PRIVATE BUILD]" }
+                        span { class: "title-text", "DIOPROCESS | WINDOWS SYSTEM MONITOR [SMM BUILD DEMO]" }
                     }
                     // Theme selector
                     div { class: "theme-selector",
