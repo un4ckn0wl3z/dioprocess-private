@@ -1,0 +1,51 @@
+## @file
+#  DioProcess DXE Driver — SMM communication bridge.
+#
+#  This DXE runtime driver sets up the communication buffer for the SMM driver
+#  and exposes the API to the kernel driver via NVRAM variable.
+#
+#  Copyright (c) 2024, DioProcess. All rights reserved.
+##
+
+[Defines]
+  INF_VERSION     = 0x00010005
+  BASE_NAME       = DioProcessDxe
+  FILE_GUID       = D100C0C5-1337-4242-BEEF-CAFEBABE0020
+  MODULE_TYPE     = DXE_RUNTIME_DRIVER
+  VERSION_STRING  = 1.0
+  ENTRY_POINT     = UefiMain
+
+[Sources]
+  DxeMain.c
+  Utils.c
+  Utils.h
+  Serial.c
+  Serial.h
+  Defs.h
+  Globals.h
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiLib
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  BaseLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  IoLib
+  DebugLib
+  PrintLib
+  UefiRuntimeLib
+
+[Protocols]
+  gEfiMmCommunication2ProtocolGuid  ## CONSUMES
+
+[Guids]
+  gEfiEventVirtualAddressChangeGuid ## CONSUMES
+  gEfiEventBeforeExitBootServicesGuid ## CONSUMES
+
+[Depex]
+  TRUE

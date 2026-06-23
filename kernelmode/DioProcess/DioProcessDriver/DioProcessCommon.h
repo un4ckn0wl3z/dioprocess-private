@@ -1243,6 +1243,130 @@ struct PacketFilterRemoveRequest
 	ULONG Index;
 };
 
+// ============== SMM Communication IOCTLs (Ring -2) ==============
+
+#define IOCTL_DIOPROCESS_SMM_PING \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0xD00, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_SMM_CACHE_SESSION \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0xD02, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_SMM_READ_PHYS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0xD03, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_SMM_READ_VIRTUAL \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0xD04, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_SMM_WRITE_PHYS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0xD05, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_SMM_WRITE_VIRTUAL \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0xD06, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_SMM_VIRT_TO_PHYS \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0xD08, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_DIOPROCESS_SMM_PRIV_ESC \
+	CTL_CODE(FILE_DEVICE_UNKNOWN, 0xD0A, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+// ============== SMM Communication Structures ==============
+
+#define SMM_MAX_TRANSFER_SIZE 0x1000  // 4KB max per operation
+
+// SMM commands sent via SMI
+#define SMM_CMD_PING             0xD700DEAD
+#define SMM_CMD_READ_PHYS        0xD800AAAB
+#define SMM_CMD_WRITE_PHYS       0xD800BBCD
+#define SMM_CMD_VIRT_TO_PHYS     0xD800FF11
+#define SMM_CMD_READ_VIRTUAL     0xD900CCEF
+#define SMM_CMD_WRITE_VIRTUAL    0xD900DDAF
+#define SMM_CMD_PRIV_ESC         0xD100AC91
+#define SMM_CMD_CACHE_SESSION    0xD110A110
+
+// SMM communication buffer structure (matches DioProcess EFI driver)
+struct SmmCommunication
+{
+	ULONG Command;
+	NTSTATUS SmiRetStatus;
+	ULONG64 CommBufSize;
+
+	struct {
+		ULONG64 TargetProcessId;
+		VOID* PhysReadAddress;
+		VOID* VaReadAddress;
+		VOID* ReadResult;
+		ULONG64 ReadLength;
+	} Read;
+
+	struct {
+		ULONG64 TargetProcessId;
+		VOID* PhysWriteAddress;
+		VOID* VaWriteAddress;
+		VOID* DataToWrite;
+		ULONG64 WriteLength;
+	} Write;
+
+	struct {
+		ULONG64 ControllerProcessId;
+		VOID* VaPsInitialSysProcess;
+		ULONG64 DirBase;
+	} Cache;
+
+	struct {
+		ULONG64 TargetPid;
+		VOID* AddressToTranslate;
+		VOID* Translated;
+	} Vtop;
+};
+
+// SMM transfer info (retrieved from UEFI runtime variable)
+struct SmmTransferInfo
+{
+	struct {
+		VOID* CommBufVirtual;
+		VOID* CommBufPhys;
+		SIZE_T BufSize;
+	} Buffer;
+
+	struct {
+		VOID* SetupBufFunction;
+		VOID* SmmCommunicateFunction;
+	} API;
+};
+
+// Request structures for SMM IOCTLs
+struct SmmReadRequest
+{
+	ULONG ProcessId;           // 0 for physical, >0 for virtual
+	ULONG64 Address;           // Physical or virtual address
+	ULONG64 BufferAddress;     // Usermode buffer to write results
+	ULONG Size;                // Bytes to read (max SMM_MAX_TRANSFER_SIZE)
+};
+
+struct SmmWriteRequest
+{
+	ULONG ProcessId;           // 0 for physical, >0 for virtual
+	ULONG64 Address;           // Physical or virtual address
+	ULONG64 BufferAddress;     // Usermode buffer with data to write
+	ULONG Size;                // Bytes to write (max SMM_MAX_TRANSFER_SIZE)
+};
+
+struct SmmVtopRequest
+{
+	ULONG ProcessId;           // Target process
+	ULONG64 VirtualAddress;    // Virtual address to translate
+};
+
+struct SmmVtopResponse
+{
+	ULONG64 PhysicalAddress;   // Translated physical address
+	BOOLEAN Success;
+};
+
+struct SmmCacheSessionRequest
+{
+	ULONG ControllerPid;       // Usermode controller process PID
+};
+
+struct SmmReadWriteResponse
+{
+	ULONG BytesTransferred;
+	BOOLEAN Success;
+};
+
 // ============== Kernel Process/Thread Control IOCTLs ==============
 
 #define IOCTL_DIOPROCESS_SUSPEND_PROCESS \

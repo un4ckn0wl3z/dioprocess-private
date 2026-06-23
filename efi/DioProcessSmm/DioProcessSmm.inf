@@ -1,0 +1,57 @@
+## @file
+#  DioProcess SMM Driver — Ring -2 memory operations via SMI.
+#
+#  This SMM driver provides physical and virtual memory read/write
+#  operations from System Management Mode. Based on Deadwing.
+#
+#  Copyright (c) 2024, DioProcess. All rights reserved.
+##
+
+[Defines]
+  INF_VERSION     = 0x00010005
+  BASE_NAME       = DioProcessSmm
+  FILE_GUID       = D100C0C5-1337-4242-BEEF-CAFEBABE0010
+  MODULE_TYPE     = DXE_SMM_DRIVER
+  VERSION_STRING  = 1.0
+  PI_SPECIFICATION_VERSION = 0x00010400
+  ENTRY_POINT     = UefiMain
+
+[Sources]
+  SmmMain.c
+  Smi.c
+  Smi.h
+  Commands.c
+  Commands.h
+  Memory.c
+  Memory.h
+  Nt.c
+  Nt.h
+  Serial.c
+  Serial.h
+  Defs.h
+  Globals.h
+  PML4.h
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiLib
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  BaseLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  SmmServicesTableLib
+  SmmMemLib
+  IoLib
+  DebugLib
+  PrintLib
+  CpuLib
+
+[Protocols]
+  gEfiSmmBase2ProtocolGuid          ## CONSUMES
+
+[Depex]
+  gEfiSmmBase2ProtocolGuid

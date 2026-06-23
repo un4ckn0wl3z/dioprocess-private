@@ -136,6 +136,7 @@ pub fn Layout() -> Element {
     let is_scripts_tab = matches!(route, Route::ScriptsTab {});
     let is_packet_capture_tab = matches!(route, Route::PacketCaptureTab {});
     let is_uefi_tab = matches!(route, Route::UefiTab {});
+    let is_smm_tab = matches!(route, Route::SmmTab {});
     let is_callback_tab = matches!(route, Route::CallbackTab {});
 
     let about_message = format!(
@@ -1119,6 +1120,12 @@ pub fn Layout() -> Element {
                         class: if is_uefi_tab { "tab-item tab-active" } else { "tab-item" },
                         "UEFI Bootkit"
                         span { class: "experimental-badge", style: "background: #7c3aed;", "EFI" }
+                    }
+                    Link {
+                        to: Route::SmmTab {},
+                        class: if is_smm_tab { "tab-item tab-active" } else { "tab-item" },
+                        "SMM"
+                        span { class: "experimental-badge", style: "background: #dc2626;", "Ring -2" }
                     }
                     Link {
                         to: Route::CallbackTab {},

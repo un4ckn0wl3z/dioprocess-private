@@ -13,6 +13,7 @@
 #include "../Memory/HideMemory.h"
 #include "../ProcessKill/ProcessKill.h"
 #include "../WFP/WfpCapture.h"
+#include "../SMM/SmmCommunication.h"
 
 // Forward declaration for HandleCopyMemory
 NTSTATUS HandleCopyMemory(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
@@ -48,6 +49,16 @@ NTSTATUS HandlePacketRemoveFilter(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandlePacketClearFilters(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandlePacketClearBuffer(PIRP Irp, PIO_STACK_LOCATION irpSp);
 NTSTATUS HandlePacketGetState(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+
+// Forward declarations for SMM Communication handlers
+NTSTATUS HandleSmmPing(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleSmmCacheSession(PIRP Irp, PIO_STACK_LOCATION irpSp);
+NTSTATUS HandleSmmReadPhys(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleSmmWritePhys(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleSmmReadVirtual(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleSmmWriteVirtual(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleSmmVirtToPhys(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info);
+NTSTATUS HandleSmmPrivEsc(PIRP Irp, PIO_STACK_LOCATION irpSp);
 
 // ============== IOCTL Device Control Dispatcher ==============
 
@@ -480,6 +491,39 @@ NTSTATUS DioProcessDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	case IOCTL_DIOPROCESS_SET_THREAD_API_ADDRESSES:
 		status = HandleSetThreadApiAddresses(Irp, irpSp);
+		break;
+
+	// SMM Communication IOCTLs (Ring -2)
+	case IOCTL_DIOPROCESS_SMM_PING:
+		status = HandleSmmPing(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_SMM_CACHE_SESSION:
+		status = HandleSmmCacheSession(Irp, irpSp);
+		break;
+
+	case IOCTL_DIOPROCESS_SMM_READ_PHYS:
+		status = HandleSmmReadPhys(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_SMM_READ_VIRTUAL:
+		status = HandleSmmReadVirtual(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_SMM_WRITE_PHYS:
+		status = HandleSmmWritePhys(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_SMM_WRITE_VIRTUAL:
+		status = HandleSmmWriteVirtual(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_SMM_VIRT_TO_PHYS:
+		status = HandleSmmVirtToPhys(Irp, irpSp, &info);
+		break;
+
+	case IOCTL_DIOPROCESS_SMM_PRIV_ESC:
+		status = HandleSmmPrivEsc(Irp, irpSp);
 		break;
 
 	default:
@@ -5622,7 +5666,275 @@ NTSTATUS HandleEnumAllKernelThreads(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_P
 
 	if (modules) ExFreePoolWithTag(modules, 'modK');
 	*info = sizeof(EnumAllKernelThreadsResponse) + (response->Count > 0 ? (response->Count - 1) * sizeof(KernelThreadInfo) : 0);
-	
+
 	KdPrint((DRIVER_PREFIX "Enumerated %d kernel threads from all processes\n", response->Count));
 	return STATUS_SUCCESS;
+}
+
+// ============== SMM Communication Handlers (Ring -2) ==============
+
+NTSTATUS HandleSmmPing(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+	UNREFERENCED_PARAMETER(info);
+
+	// Initialize SMM if not already done
+	NTSTATUS status = SmmInitialize();
+	if (!NT_SUCCESS(status))
+		return status;
+
+	return SmmPing();
+}
+
+NTSTATUS HandleSmmCacheSession(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	if (irpSp->Parameters.DeviceIoControl.InputBufferLength < sizeof(SmmCacheSessionRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (SmmCacheSessionRequest*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	// Initialize SMM if not already done
+	NTSTATUS status = SmmInitialize();
+	if (!NT_SUCCESS(status))
+		return status;
+
+	return SmmCacheSession(request->ControllerPid);
+}
+
+NTSTATUS HandleSmmReadPhys(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	if (irpSp->Parameters.DeviceIoControl.InputBufferLength < sizeof(SmmReadRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (irpSp->Parameters.DeviceIoControl.OutputBufferLength < sizeof(SmmReadWriteResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (SmmReadRequest*)Irp->AssociatedIrp.SystemBuffer;
+	auto response = (SmmReadWriteResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	if (!SmmIsAvailable())
+		return STATUS_NOT_SUPPORTED;
+
+	if (request->Size == 0 || request->Size > SMM_MAX_TRANSFER_SIZE)
+		return STATUS_INVALID_PARAMETER;
+
+	// Allocate intermediate buffer
+	PVOID buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, request->Size, 'SMMP');
+	if (!buffer)
+		return STATUS_INSUFFICIENT_RESOURCES;
+
+	ULONG bytesRead = 0;
+	NTSTATUS status = SmmPhysRead(request->Address, buffer, request->Size, &bytesRead);
+
+	if (NT_SUCCESS(status))
+	{
+		// Copy to user buffer
+		__try
+		{
+			RtlCopyMemory((PVOID)request->BufferAddress, buffer, bytesRead);
+			response->BytesTransferred = bytesRead;
+			response->Success = TRUE;
+			*info = sizeof(SmmReadWriteResponse);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			status = STATUS_ACCESS_VIOLATION;
+		}
+	}
+
+	ExFreePoolWithTag(buffer, 'SMMP');
+	return status;
+}
+
+NTSTATUS HandleSmmWritePhys(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	if (irpSp->Parameters.DeviceIoControl.InputBufferLength < sizeof(SmmWriteRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (irpSp->Parameters.DeviceIoControl.OutputBufferLength < sizeof(SmmReadWriteResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (SmmWriteRequest*)Irp->AssociatedIrp.SystemBuffer;
+	auto response = (SmmReadWriteResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	if (!SmmIsAvailable())
+		return STATUS_NOT_SUPPORTED;
+
+	if (request->Size == 0 || request->Size > SMM_MAX_TRANSFER_SIZE)
+		return STATUS_INVALID_PARAMETER;
+
+	// Allocate intermediate buffer and copy from user
+	PVOID buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, request->Size, 'SMMW');
+	if (!buffer)
+		return STATUS_INSUFFICIENT_RESOURCES;
+
+	NTSTATUS status = STATUS_SUCCESS;
+	__try
+	{
+		RtlCopyMemory(buffer, (PVOID)request->BufferAddress, request->Size);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		ExFreePoolWithTag(buffer, 'SMMW');
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	ULONG bytesWritten = 0;
+	status = SmmPhysWrite(request->Address, buffer, request->Size, &bytesWritten);
+
+	if (NT_SUCCESS(status))
+	{
+		response->BytesTransferred = bytesWritten;
+		response->Success = TRUE;
+		*info = sizeof(SmmReadWriteResponse);
+	}
+
+	ExFreePoolWithTag(buffer, 'SMMW');
+	return status;
+}
+
+NTSTATUS HandleSmmReadVirtual(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	if (irpSp->Parameters.DeviceIoControl.InputBufferLength < sizeof(SmmReadRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (irpSp->Parameters.DeviceIoControl.OutputBufferLength < sizeof(SmmReadWriteResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (SmmReadRequest*)Irp->AssociatedIrp.SystemBuffer;
+	auto response = (SmmReadWriteResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	if (!SmmIsAvailable())
+		return STATUS_NOT_SUPPORTED;
+
+	if (request->Size == 0 || request->Size > SMM_MAX_TRANSFER_SIZE || request->ProcessId == 0)
+		return STATUS_INVALID_PARAMETER;
+
+	// Allocate intermediate buffer
+	PVOID buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, request->Size, 'SMMV');
+	if (!buffer)
+		return STATUS_INSUFFICIENT_RESOURCES;
+
+	ULONG bytesRead = 0;
+	NTSTATUS status = SmmVirtualRead(request->ProcessId, request->Address, buffer, request->Size, &bytesRead);
+
+	if (NT_SUCCESS(status))
+	{
+		// Copy to user buffer
+		__try
+		{
+			RtlCopyMemory((PVOID)request->BufferAddress, buffer, bytesRead);
+			response->BytesTransferred = bytesRead;
+			response->Success = TRUE;
+			*info = sizeof(SmmReadWriteResponse);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			status = STATUS_ACCESS_VIOLATION;
+		}
+	}
+
+	ExFreePoolWithTag(buffer, 'SMMV');
+	return status;
+}
+
+NTSTATUS HandleSmmWriteVirtual(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	if (irpSp->Parameters.DeviceIoControl.InputBufferLength < sizeof(SmmWriteRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (irpSp->Parameters.DeviceIoControl.OutputBufferLength < sizeof(SmmReadWriteResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (SmmWriteRequest*)Irp->AssociatedIrp.SystemBuffer;
+	auto response = (SmmReadWriteResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	if (!SmmIsAvailable())
+		return STATUS_NOT_SUPPORTED;
+
+	if (request->Size == 0 || request->Size > SMM_MAX_TRANSFER_SIZE || request->ProcessId == 0)
+		return STATUS_INVALID_PARAMETER;
+
+	// Allocate intermediate buffer and copy from user
+	PVOID buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, request->Size, 'SMMX');
+	if (!buffer)
+		return STATUS_INSUFFICIENT_RESOURCES;
+
+	NTSTATUS status = STATUS_SUCCESS;
+	__try
+	{
+		RtlCopyMemory(buffer, (PVOID)request->BufferAddress, request->Size);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		ExFreePoolWithTag(buffer, 'SMMX');
+		return STATUS_ACCESS_VIOLATION;
+	}
+
+	ULONG bytesWritten = 0;
+	status = SmmVirtualWrite(request->ProcessId, request->Address, buffer, request->Size, &bytesWritten);
+
+	if (NT_SUCCESS(status))
+	{
+		response->BytesTransferred = bytesWritten;
+		response->Success = TRUE;
+		*info = sizeof(SmmReadWriteResponse);
+	}
+
+	ExFreePoolWithTag(buffer, 'SMMX');
+	return status;
+}
+
+NTSTATUS HandleSmmVirtToPhys(PIRP Irp, PIO_STACK_LOCATION irpSp, PULONG_PTR info)
+{
+	if (irpSp->Parameters.DeviceIoControl.InputBufferLength < sizeof(SmmVtopRequest))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	if (irpSp->Parameters.DeviceIoControl.OutputBufferLength < sizeof(SmmVtopResponse))
+		return STATUS_BUFFER_TOO_SMALL;
+
+	auto request = (SmmVtopRequest*)Irp->AssociatedIrp.SystemBuffer;
+	auto response = (SmmVtopResponse*)Irp->AssociatedIrp.SystemBuffer;
+	if (!request)
+		return STATUS_INVALID_PARAMETER;
+
+	if (!SmmIsAvailable())
+		return STATUS_NOT_SUPPORTED;
+
+	if (request->ProcessId == 0)
+		return STATUS_INVALID_PARAMETER;
+
+	ULONG64 physAddr = 0;
+	NTSTATUS status = SmmVirtToPhys(request->ProcessId, request->VirtualAddress, &physAddr);
+
+	if (NT_SUCCESS(status))
+	{
+		response->PhysicalAddress = physAddr;
+		response->Success = TRUE;
+		*info = sizeof(SmmVtopResponse);
+	}
+
+	return status;
+}
+
+NTSTATUS HandleSmmPrivEsc(PIRP Irp, PIO_STACK_LOCATION irpSp)
+{
+	UNREFERENCED_PARAMETER(Irp);
+	UNREFERENCED_PARAMETER(irpSp);
+
+	if (!SmmIsAvailable())
+		return STATUS_NOT_SUPPORTED;
+
+	return SmmEscalatePrivileges();
 }

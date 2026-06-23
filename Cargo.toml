@@ -7,6 +7,7 @@ members = [
     "crates/misc",
     "crates/callback",
     "crates/uefi",
+    "crates/smm",
     "crates/ui",
     "crates/dioprocess",
 ]

@@ -4874,6 +4874,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
+name = "smm"
+version = "3.1.0"
+dependencies = [
+ "thiserror 1.0.69",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "socket2"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5565,6 +5573,7 @@ dependencies = [
  "rfd 0.15.4",
  "rusqlite",
  "service",
+ "smm",
  "tokio",
  "uefi-manager",
  "ureq",
