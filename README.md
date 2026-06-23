@@ -34,6 +34,11 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - **Process Hiding** — Hide processes from ring 0 enumeration via EPT hooks
   - **Driver Hiding** — Hide kernel drivers from ring 0 enumeration
   - Physical memory read/write via EPT translation
+- **SMM (Ring -2) Features** — System Management Mode driver for the deepest level of x86 execution:
+  - **Ring -2 Memory Operations** — Read/write physical memory from SMM handler (bypasses even hypervisor)
+  - **UEFI DXE + SMM drivers** — DioProcessDxe.efi (kernel bridge) + DioProcessSmm.efi (SMM handler)
+  - **QEMU Testing** — Pre-built OVMF firmware with embedded SMM drivers for safe testing
+  - Communication via NVRAM variable + SMI trigger
 - **7 DLL injection techniques** — from classic LoadLibrary to function stomping & full manual mapping
 - **Shellcode injection** — classic (from .bin file), web staging (download from URL via WinInet), and threadless (hook exported function, no new threads)
 - **Kernel injection** (requires driver) — shellcode & DLL injection from kernel mode via `RtlCreateUserThread`, bypasses usermode hooks
@@ -79,6 +84,12 @@ crates/
 │       ├── storage.rs     # SQLite persistence (WAL mode, batched writes)
 │       ├── types.rs       # CallbackEvent, EventType, EventCategory
 │       └── error.rs       # CallbackError enum
+├── smm/           # SMM (Ring -2) communication bindings
+│   └── src/
+│       ├── lib.rs         # Module re-exports
+│       ├── driver.rs      # SMM IOCTL wrappers (read/write physical memory via SMI)
+│       ├── types.rs       # SmmCommand, SmmResponse, SmmStatus
+│       └── error.rs       # SmmError enum
 ├── misc/          # DLL injection (7 methods), process hollowing, ghosting, token theft, hook scanning, NT syscalls
 │   └── src/
 │       ├── lib.rs              # Module declarations + pub use re-exports
@@ -100,8 +111,26 @@ kernelmode/
     │   ├── DioProcessDriver.h      # Protection structures, Windows version detection
     │   ├── DioProcessCommon.h      # Shared event structures + security IOCTLs
     │   ├── IRP/DeviceControl.cpp   # IOCTL handlers including hypervisor injection
+    │   ├── SMM/SmmCommunication.cpp # SMM communication layer (NVRAM + SMI trigger)
     │   └── Hypervisor/             # Bundled Intel VT-x hypervisor (EPT, VMCALL handlers)
     └── DioProcessCli/              # Test CLI client
+efi/
+├── DioProcessSmm/     # SMM driver (Ring -2) — UEFI EDK2 DXE_SMM_DRIVER
+│   ├── SmmMain.c      # SMM entry point, SMI handler registration
+│   ├── Smi.c          # SMI handler implementation
+│   ├── Commands.c     # Command dispatcher (read/write physical memory)
+│   ├── Memory.c       # Physical memory operations via CR3 page table walk
+│   └── Nt.c           # NT kernel structure parsing (EPROCESS offsets)
+├── DioProcessDxe/     # DXE runtime driver — kernel ↔ SMM communication bridge
+│   ├── DxeMain.c      # DXE entry, MM_COMMUNICATION2 setup, NVRAM publishing
+│   └── Utils.c        # Virtual address translation helpers
+├── build/             # Pre-built .efi binaries
+│   ├── DioProcessSmm.efi
+│   └── DioProcessDxe.efi
+└── ovmf/              # QEMU testing files
+    ├── OVMF_CODE.fd   # OVMF firmware with embedded DioProcess SMM/DXE drivers
+    ├── OVMF_VARS.fd   # NVRAM variables
+    └── run_qemu.bat   # QEMU launch script with SMM support
 ```
 
 ## Implemented Techniques — Summary
@@ -224,6 +253,94 @@ Access via the **Hypervisor** tab (marked with red "Ring -1" badge) in main navi
 │   └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### SMM (Ring -2) Features
+
+**System Management Mode (SMM)** is the deepest execution level on x86, running below even the hypervisor. The DioProcess SMM driver provides physical memory operations from this privileged environment.
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 DioProcess UI (Dioxus)                      │
+│   SMM Tab (Ring -2)                                         │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ DeviceIoControl
+┌──────────────────────────▼──────────────────────────────────┐
+│              Kernel Driver (DioProcess.sys)                  │
+│   SMM/SmmCommunication.cpp — reads NVRAM, triggers SMI      │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ SMI (System Management Interrupt)
+┌──────────────────────────▼──────────────────────────────────┐
+│              DioProcessDxe.efi (DXE Runtime Driver)         │
+│   - Allocates communication buffer at boot                   │
+│   - Publishes buffer address to NVRAM                        │
+│   - Bridges kernel driver ↔ SMM handler                      │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ MM_COMMUNICATE
+┌──────────────────────────▼──────────────────────────────────┐
+│              DioProcessSmm.efi (SMM Driver)                  │
+│   - Runs in SMRAM (hidden from OS)                           │
+│   - Handles SMI requests                                     │
+│   - Physical memory read/write via CR3 page table walk       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Why Both DXE and SMM Drivers?
+
+- **SMM is isolated** — runs in hidden SMRAM, only accessible via SMI interrupt
+- **No direct calls** — the OS/kernel cannot call SMM functions directly
+- **DXE sets up the "mailbox"** — allocates communication buffer during boot, publishes address to NVRAM
+- **Kernel reads NVRAM** — gets buffer address, writes command, triggers SMI
+- **SMM reads buffer** — executes command, writes result, returns from SMI
+
+#### QEMU Testing
+
+Pre-built OVMF firmware with embedded DioProcess SMM/DXE drivers is included for safe testing:
+
+```batch
+cd efi\ovmf
+run_qemu.bat
+```
+
+**Serial output** shows SMM driver initialization:
+```
+=[ DioProcess DXE ]=
+[ DXE ] EFI_MM_COMMUNICATION2_PROTOCOL discovered
+=[ DioProcess SMM ]=
+=[ Ring -2 Memory Operations ]=
+[ SMM ] SMM driver invoked by SMM IPL, initializing...
+[ SMM ] SMM driver has been initialized
+```
+
+#### Building EFI Drivers (EDK2)
+
+```batch
+# Requires EDK2 toolchain at C:\edk2
+cd C:\edk2
+edksetup.bat
+
+# Build SMM driver
+build -a X64 -t VS2022 -p D:/AICoding/dioprocess/efi/DioProcessSmm/DioProcessSmm.dsc -b RELEASE
+
+# Build DXE driver
+build -a X64 -t VS2022 -p D:/AICoding/dioprocess/efi/DioProcessDxe/DioProcessDxe.dsc -b RELEASE
+
+# Build OVMF with embedded drivers
+build -DSMM_REQUIRE
+# Output: C:\edk2\Build\OvmfX64\RELEASE_VS2022\FV\OVMF_CODE.fd
+```
+
+#### Real Hardware Testing
+
+Testing SMM on real hardware requires flashing modified UEFI firmware — **extremely risky**:
+
+- **Brick risk** — incorrect flash can make motherboard unbootable
+- **Intel Boot Guard** — many modern systems verify firmware signatures
+- **Recovery** — requires SPI flash programmer (CH341A) if bricked
+- **Recommendation** — use QEMU for development, real hardware only on expendable test machines
+
+**Located in:** `crates/smm/` (Rust bindings), `efi/DioProcessSmm/` (SMM driver), `efi/DioProcessDxe/` (DXE bridge), `kernelmode/.../SMM/` (kernel communication)
 
 ### Kernel Callback Enumeration
 
@@ -453,7 +570,7 @@ Real-time kernel event capture via WDM driver with 17 event types:
   - **Aura Glow** (default) — Dark background with purple/violet accents and glowing white text
   - **Cyber** — Original cyan/teal accent theme
   - Theme preference persisted in SQLite (`%LOCALAPPDATA%\DioProcess\config.db`)
-- Tabs: **Processes** · **Network** · **Services** · **Memory Scanner** · **Usermode Utilities** · **Kernel Enumeration** · **Hypervisor** <sup style="color:red">Ring -1</sup> · **UEFI Bootkit** · **System Events**
+- Tabs: **Processes** · **Network** · **Services** · **Memory Scanner** · **Usermode Utilities** · **Kernel Enumeration** · **Hypervisor** <sup style="color:red">Ring -1</sup> · **SMM** <sup style="color:purple">Ring -2</sup> · **UEFI Bootkit** · **System Events**
 - **Tree view** in Processes tab (DFS traversal, box-drawing connectors ├ │ └ ─, ancestor-inclusive search)
 - Modal inspectors: Threads · Handles · Modules · Memory · Performance graphs · String Scan
 - Real-time per-process CPU/memory graphs (60-second rolling history, SVG + fill)
