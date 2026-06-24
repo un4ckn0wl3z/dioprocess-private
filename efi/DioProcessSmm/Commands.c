@@ -130,39 +130,33 @@ CmdVirtualRead(
         return Status;
     }
 
-    UINT64 MappedEprocess = MemProcessOutsideSmramPhysMemory((UINT64)gLiveSession.SysProcess.PhysPsInitialSysProcess);
-    if (MappedEprocess != 0) {
-        UINT64 TargetDirBase = NtGetDirBaseByPid(TargetPid, (VOID *)MappedEprocess, gLiveSession.SysProcess.DirBase, NULL);
-        if (TargetDirBase == 0) {
-            SerialPrint("[ SMM ] Unable to get target process dir base\r\n");
-            gSmst2->SmmFreePages(InterimPage, 1);
-            return EFI_NOT_FOUND;
-        }
+    // Use VIRTUAL address for NtGetDirBaseByPid - it does page table walking internally
+    UINT64 TargetDirBase = NtGetDirBaseByPid(TargetPid, gLiveSession.SysProcess.VaPsInitialSysProcess, gLiveSession.SysProcess.DirBase, NULL);
+    if (TargetDirBase == 0) {
+        SerialPrint("[ SMM ] Unable to get target process dir base\r\n");
+        gSmst2->SmmFreePages(InterimPage, 1);
+        return EFI_NOT_FOUND;
+    }
 
-        UINT64 TranslatedReadTarget = MemMapVirtualAddress(AddressToRead, TargetDirBase, NULL);
-        if (TranslatedReadTarget == 0) {
-            SerialPrint("[ SMM ] Unable to translate and map read address\r\n");
-            gSmst2->SmmFreePages(InterimPage, 1);
-            return EFI_ABORTED;
-        }
-
-        PhysMemCpy((VOID *)InterimPage, (VOID *)TranslatedReadTarget, (UINT32)LengthToRead);
-        MemRestoreSmramMappings();
-
-        UINT64 TranslatedConsumer = MemMapVirtualAddress(ReceivedInfo, gLiveSession.UmController.UmControllerDirBase, NULL);
-        if (TranslatedConsumer == 0) {
-            SerialPrint("[ SMM ] Unable to translate and map consumer address\r\n");
-            gSmst2->SmmFreePages(InterimPage, 1);
-            return EFI_ABORTED;
-        }
-
-        PhysMemCpy((VOID *)TranslatedConsumer, (VOID *)InterimPage, (UINT32)LengthToRead);
-        MemRestoreSmramMappings();
-    } else {
-        SerialPrint("[ SMM ] Unable to map system EPROCESS\r\n");
+    UINT64 TranslatedReadTarget = MemMapVirtualAddress(AddressToRead, TargetDirBase, NULL);
+    if (TranslatedReadTarget == 0) {
+        SerialPrint("[ SMM ] Unable to translate and map read address\r\n");
         gSmst2->SmmFreePages(InterimPage, 1);
         return EFI_ABORTED;
     }
+
+    PhysMemCpy((VOID *)InterimPage, (VOID *)TranslatedReadTarget, (UINT32)LengthToRead);
+    MemRestoreSmramMappings();
+
+    UINT64 TranslatedConsumer = MemMapVirtualAddress(ReceivedInfo, gLiveSession.UmController.UmControllerDirBase, NULL);
+    if (TranslatedConsumer == 0) {
+        SerialPrint("[ SMM ] Unable to translate and map consumer address\r\n");
+        gSmst2->SmmFreePages(InterimPage, 1);
+        return EFI_ABORTED;
+    }
+
+    PhysMemCpy((VOID *)TranslatedConsumer, (VOID *)InterimPage, (UINT32)LengthToRead);
+    MemRestoreSmramMappings();
 
     gSmst2->SmmFreePages(InterimPage, 1);
     return EFI_SUCCESS;
@@ -191,39 +185,33 @@ CmdVirtualWrite(
         return Status;
     }
 
-    UINT64 MappedEprocess = MemProcessOutsideSmramPhysMemory((UINT64)gLiveSession.SysProcess.PhysPsInitialSysProcess);
-    if (MappedEprocess != 0) {
-        UINT64 TargetDirBase = NtGetDirBaseByPid(TargetPid, (VOID *)MappedEprocess, gLiveSession.SysProcess.DirBase, NULL);
-        if (TargetDirBase == 0) {
-            SerialPrint("[ SMM ] Unable to get target process dir base\r\n");
-            gSmst2->SmmFreePages(InterimPage, 1);
-            return EFI_NOT_FOUND;
-        }
+    // Use VIRTUAL address for NtGetDirBaseByPid - it does page table walking internally
+    UINT64 TargetDirBase = NtGetDirBaseByPid(TargetPid, gLiveSession.SysProcess.VaPsInitialSysProcess, gLiveSession.SysProcess.DirBase, NULL);
+    if (TargetDirBase == 0) {
+        SerialPrint("[ SMM ] Unable to get target process dir base\r\n");
+        gSmst2->SmmFreePages(InterimPage, 1);
+        return EFI_NOT_FOUND;
+    }
 
-        UINT64 TranslatedDataDonor = MemMapVirtualAddress(DataToWrite, gLiveSession.UmController.UmControllerDirBase, NULL);
-        if (TranslatedDataDonor == 0) {
-            SerialPrint("[ SMM ] Unable to translate donor buffer address\r\n");
-            gSmst2->SmmFreePages(InterimPage, 1);
-            return EFI_ABORTED;
-        }
-
-        PhysMemCpy((VOID *)InterimPage, (VOID *)TranslatedDataDonor, (UINT32)LengthToWrite);
-        MemRestoreSmramMappings();
-
-        UINT64 TranslatedWriteAddress = MemMapVirtualAddress(AddressToWrite, TargetDirBase, NULL);
-        if (TranslatedWriteAddress == 0) {
-            SerialPrint("[ SMM ] Unable to translate target write address\r\n");
-            gSmst2->SmmFreePages(InterimPage, 1);
-            return EFI_ABORTED;
-        }
-
-        PhysMemCpy((VOID *)TranslatedWriteAddress, (VOID *)InterimPage, (UINT32)LengthToWrite);
-        MemRestoreSmramMappings();
-    } else {
-        SerialPrint("[ SMM ] Unable to map system EPROCESS\r\n");
+    UINT64 TranslatedDataDonor = MemMapVirtualAddress(DataToWrite, gLiveSession.UmController.UmControllerDirBase, NULL);
+    if (TranslatedDataDonor == 0) {
+        SerialPrint("[ SMM ] Unable to translate donor buffer address\r\n");
         gSmst2->SmmFreePages(InterimPage, 1);
         return EFI_ABORTED;
     }
+
+    PhysMemCpy((VOID *)InterimPage, (VOID *)TranslatedDataDonor, (UINT32)LengthToWrite);
+    MemRestoreSmramMappings();
+
+    UINT64 TranslatedWriteAddress = MemMapVirtualAddress(AddressToWrite, TargetDirBase, NULL);
+    if (TranslatedWriteAddress == 0) {
+        SerialPrint("[ SMM ] Unable to translate target write address\r\n");
+        gSmst2->SmmFreePages(InterimPage, 1);
+        return EFI_ABORTED;
+    }
+
+    PhysMemCpy((VOID *)TranslatedWriteAddress, (VOID *)InterimPage, (UINT32)LengthToWrite);
+    MemRestoreSmramMappings();
 
     gSmst2->SmmFreePages(InterimPage, 1);
     return EFI_SUCCESS;
@@ -247,18 +235,23 @@ CmdCacheSessionInfo(
     VOID *UmEprocess = NULL;
     UINT64 UmDirBase = 0;
     VOID *UnmappedSysEprocess = NULL;
+
+    // First verify we can map PsInitialSystemProcess
     UINT64 PhysEprocess = MemMapVirtualAddress(VirtualEprocess, DirBase, &UnmappedSysEprocess);
-    if (PhysEprocess != 0) {
-        UmDirBase = NtGetDirBaseByPid(ControllerPid, (VOID *)PhysEprocess, DirBase, &UmEprocess);
-        if (UmDirBase == 0 || UmEprocess == 0) {
-            SerialPrint("[ SMM ] Cannot get dir base of the controller\r\n");
-            return EFI_ABORTED;
-        }
-    } else {
+    if (PhysEprocess == 0) {
         SerialPrint("[ SMM ] Unable to get physical address of PsInitialSystemProcess\r\n");
         return EFI_ABORTED;
     }
+    MemRestoreSmramMappings();
 
+    // Pass the VIRTUAL address, not the mapped one - NtGetDirBaseByPid will translate it
+    UmDirBase = NtGetDirBaseByPid(ControllerPid, VirtualEprocess, DirBase, &UmEprocess);
+    if (UmDirBase == 0 || UmEprocess == 0) {
+        SerialPrint("[ SMM ] Cannot get dir base of the controller\r\n");
+        return EFI_ABORTED;
+    }
+
+    gLiveSession.SysProcess.VaPsInitialSysProcess = VirtualEprocess;
     gLiveSession.SysProcess.PhysPsInitialSysProcess = (VOID *)UnmappedSysEprocess;
     gLiveSession.SysProcess.DirBase = DirBase;
     gLiveSession.UmController.PhysUmControllerEprocess = (VOID *)UmEprocess;
@@ -283,26 +276,21 @@ CmdVirtToPhys(
         return EFI_INVALID_PARAMETER;
     }
 
-    UINT64 MappedEprocess = MemProcessOutsideSmramPhysMemory((UINT64)gLiveSession.SysProcess.PhysPsInitialSysProcess);
-    if (MappedEprocess != 0) {
-        UINT64 TargetDir = NtGetDirBaseByPid(TargetPid, (VOID *)MappedEprocess, gLiveSession.SysProcess.DirBase, NULL);
-        if (TargetDir == 0) {
-            SerialPrint("[ SMM ] Unable to get target process dirbase\r\n");
-            return EFI_NOT_FOUND;
-        }
+    // Use VIRTUAL address for NtGetDirBaseByPid - it does page table walking internally
+    UINT64 TargetDir = NtGetDirBaseByPid(TargetPid, gLiveSession.SysProcess.VaPsInitialSysProcess, gLiveSession.SysProcess.DirBase, NULL);
+    if (TargetDir == 0) {
+        SerialPrint("[ SMM ] Unable to get target process dirbase\r\n");
+        return EFI_NOT_FOUND;
+    }
 
-        UINT64 Phys = MemTranslateVirtualToPhys(AddressToTranslate, TargetDir);
-        if (Phys == 0) {
-            SerialPrint("[ SMM ] Unable to translate virtual address\r\n");
-            return EFI_ABORTED;
-        }
-
-        *TranslatedAddress = (VOID *)Phys;
-        MemRestoreSmramMappings();
-    } else {
-        SerialPrint("[ SMM ] Unable to map system EPROCESS\r\n");
+    UINT64 Phys = MemTranslateVirtualToPhys(AddressToTranslate, TargetDir);
+    if (Phys == 0) {
+        SerialPrint("[ SMM ] Unable to translate virtual address\r\n");
         return EFI_ABORTED;
     }
+
+    *TranslatedAddress = (VOID *)Phys;
+    MemRestoreSmramMappings();
 
     return EFI_SUCCESS;
 }
