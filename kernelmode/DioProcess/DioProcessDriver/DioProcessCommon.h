@@ -1277,10 +1277,12 @@ struct PacketFilterRemoveRequest
 #define SMM_CMD_CACHE_SESSION    0xD110A110
 
 // SMM communication buffer structure (matches DioProcess EFI driver)
+// NOTE: EFI_STATUS is 8 bytes on x64 (UINTN), so we use ULONG64 to match
 struct SmmCommunication
 {
 	ULONG Command;
-	NTSTATUS SmiRetStatus;
+	ULONG Reserved;           // Padding to match EFI x64 alignment
+	ULONG64 SmiRetStatus;     // EFI_STATUS is 8 bytes on x64
 	ULONG64 CommBufSize;
 
 	struct {

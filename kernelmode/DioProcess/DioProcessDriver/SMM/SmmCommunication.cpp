@@ -74,10 +74,11 @@ static NTSTATUS FireSmi(SmmCommunication* Packet)
         return STATUS_NOT_SUPPORTED;
 
     // Setup communication buffer (this is a runtime services call)
-    NTSTATUS Status = g_SetupBuffer(Packet, sizeof(SmmCommunication));
-    if (!NT_SUCCESS(Status)) {
-        KdPrint(("[SMM] SetupBuffer failed: 0x%08X\n", Status));
-        return Status;
+    // g_SetupBuffer returns EFI_STATUS (ULONG64), 0 = success
+    ULONG64 EfiStatus = g_SetupBuffer(Packet, sizeof(SmmCommunication));
+    if (EfiStatus != 0) {
+        KdPrint(("[SMM] SetupBuffer failed: 0x%llX\n", EfiStatus));
+        return STATUS_UNSUCCESSFUL;
     }
 
     // Fire SMI and get response
@@ -90,7 +91,9 @@ static NTSTATUS FireSmi(SmmCommunication* Packet)
     // Copy response back
     RtlCopyMemory(Packet, Response, sizeof(SmmCommunication));
 
-    return Packet->SmiRetStatus;
+    // EFI_STATUS 0 = success, non-zero = error
+    // Map to NTSTATUS: 0 -> STATUS_SUCCESS, non-zero -> STATUS_UNSUCCESSFUL
+    return (Packet->SmiRetStatus == 0) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
 
 NTSTATUS SmmPing()

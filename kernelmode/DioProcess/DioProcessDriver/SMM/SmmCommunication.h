@@ -9,7 +9,8 @@
     { 0xD100C0C5, 0x1337, 0x4242, { 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x03 } }
 
 // SMM communication function types
-typedef NTSTATUS(*SETUP_COMMUNICATION_BUFFER)(
+// Note: EFI functions return EFI_STATUS (ULONG64 on x64)
+typedef ULONG64 (*SETUP_COMMUNICATION_BUFFER)(
     SmmCommunication* CommPacket,
     SIZE_T DataSize
     );
