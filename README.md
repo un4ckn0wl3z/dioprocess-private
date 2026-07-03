@@ -13,17 +13,23 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 
 ---
 
+## Related Repositories
+
+**Technical Specifications & Modules:** See [damned-software organization](https://github.com/orgs/damned-software) for additional technical specifications, module implementations, and complementary components for DioProcess.
+
+---
+
 ## Disclaimer
 
 **FOR EDUCATIONAL AND AUTHORIZED SECURITY RESEARCH PURPOSES ONLY.**
 
-This software is provided "as is" without warranty of any kind. The authors and contributors assume **no responsibility** for any damages, data loss, system instability, legal consequences, or any other harm resulting from the use or misuse of this software.
+This software is provided "as is" without warranty of any kind. The authors and contributors assume **no responsibility** for any damages, data loss, system instability, legal consequences, or any[...]
 
 By using DioProcess, you acknowledge that:
 
 - You are solely responsible for ensuring compliance with all applicable laws and regulations in your jurisdiction
 - You will only use this software on systems you own or have explicit written authorization to test
-- The techniques implemented (kernel manipulation, process injection, SMM/hypervisor operations, bootkit installation) can cause **permanent system damage**, **data loss**, or **unbootable systems**
+- The techniques implemented (kernel manipulation, process injection, SMM/hypervisor operations, bootkit installation) can cause **permanent system damage**, **data loss**, or **unbootable systems[...]
 - Misuse of this software may violate computer crime laws and result in civil or criminal penalties
 - The authors are not liable for any consequences arising from the use of this software
 
@@ -38,7 +44,7 @@ By using DioProcess, you acknowledge that:
 - **DioProcess kernel driver** installed and running
 - **DioProcess UEFI bootkit** installed and enabled (for DSE/KPP bypass)
 
-Basic usermode features (process enumeration, DLL injection, etc.) may work on other Windows versions, but kernel-level features (hypervisor, SMM, security research IOCTLs) are only tested on Windows 10 22H2.
+Basic usermode features (process enumeration, DLL injection, etc.) may work on other Windows versions, but kernel-level features (hypervisor, SMM, security research IOCTLs) are only tested on Wind[...]
 
 ---
 
@@ -74,7 +80,7 @@ Basic usermode features (process enumeration, DLL injection, etc.) may work on o
 - **Kernel injection** (requires driver) — shellcode & DLL injection from kernel mode via `RtlCreateUserThread`, bypasses usermode hooks
 - **Early kernel injection** (requires driver) — inject DLLs before any user code executes via APC callback when kernel32.dll loads (Trampoline method removed due to stability issues)
 - **DLL Unhooking** — restore hooked DLLs (ntdll, kernel32, kernelbase, user32, advapi32, ws2_32) by replacing .text section from disk
-- **Hook Detection & Unhooking** — scan IAT entries for inline hooks (E9 JMP, E8 CALL, EB short JMP, FF25 indirect JMP, MOV+JMP x64 patterns), compare with disk, and optionally unhook detected hooks
+- **Hook Detection & Unhooking** — scan IAT entries for inline hooks (E9 JMP, E8 CALL, EB short JMP, FF25 indirect JMP, MOV+JMP x64 patterns), compare with disk, and optionally unhook detected h[...]
 - **Process String Scanning** — extract ASCII and UTF-16 strings from process memory with configurable min length, encoding filter, paginated results (1000/page), and text export
 - Advanced process creation & masquerading:
   - Normal `CreateProcessW` (suspended option)
@@ -179,7 +185,7 @@ efi/
 
 1. **Classic** — Read raw shellcode from `.bin` file → `VirtualAllocEx(RW)` → `WriteProcessMemory` → `VirtualProtectEx(RWX)` → `CreateRemoteThread`
 2. **Web Staging** — Download shellcode from URL via WinInet (`InternetOpenW` → `InternetOpenUrlW` → `InternetReadFile` in 1024-byte chunks) → inject using classic technique
-3. **Threadless** — Hook an exported function (e.g. `USER32!MessageBoxW`) with a CALL trampoline → payload fires when the function is naturally called by the target process (no `CreateRemoteThread`). Self-healing hook restores original bytes after execution.
+3. **Threadless** — Hook an exported function (e.g. `USER32!MessageBoxW`) with a CALL trampoline → payload fires when the function is naturally called by the target process (no `CreateRemoteT[...]
 
 Access via context menu: **Miscellaneous → Shellcode Injection → Classic**, **Web Staging**, or **Threadless**
 
@@ -188,7 +194,7 @@ Access via context menu: **Miscellaneous → Shellcode Injection → Classic**, 
 Located in `crates/misc/src/kernel_inject.rs` + `kernelmode/DioProcess/DioProcessDriver/DioProcessDriver.cpp`:
 
 1. **Kernel Shellcode Injection** — Allocate RWX memory in target process, write shellcode, create thread via `RtlCreateUserThread` from kernel mode (bypasses usermode hooks)
-2. **Kernel DLL Injection** — Allocate memory for DLL path, resolve `LoadLibraryW` address in target process via PEB walking + PE export parsing, create thread with `RtlCreateUserThread(LoadLibraryW, dll_path)`
+2. **Kernel DLL Injection** — Allocate memory for DLL path, resolve `LoadLibraryW` address in target process via PEB walking + PE export parsing, create thread with `RtlCreateUserThread(LoadLib[...]
 
 **Implementation:**
 - Uses undocumented `RtlCreateUserThread` kernel API (resolved dynamically via `MmGetSystemRoutineAddress`)
@@ -203,7 +209,7 @@ Located in `crates/misc/src/kernel_inject.rs` + `kernelmode/DioProcess/DioProces
 
 Inject DLLs into processes **before any user code executes** — triggered by kernel callbacks at process creation time.
 
-**NOTE:** Only the **APC Callback** method is supported. The Trampoline method was removed due to stability issues (PEB.Ldr not initialized at process creation time caused STATUS_ILLEGAL_INSTRUCTION errors).
+**NOTE:** Only the **APC Callback** method is supported. The Trampoline method was removed due to stability issues (PEB.Ldr not initialized at process creation time caused STATUS_ILLEGAL_INSTRUCT[...]
 
 **How it works (APC method):**
 1. Arm injection with target process name (e.g., "notepad.exe") and DLL path
@@ -219,13 +225,13 @@ Inject DLLs into processes **before any user code executes** — triggered by ke
 - Bypass DLL load order restrictions
 - Security research on early-stage process behavior
 
-**Access:** Process tab toolbar → **Early Injection** button → opens modal with target process name, DLL path picker, one-shot toggle, and arm/disarm controls (disabled when driver not loaded)
+**Access:** Process tab toolbar → **Early Injection** button → opens modal with target process name, DLL path picker, one-shot toggle, and arm/disarm controls (disabled when driver not loaded[...]
 
 **Located in:** `crates/callback/src/early_injection.rs` (Rust bindings), `kernelmode/DioProcess/DioProcessDriver/Injection/EarlyInjection.cpp` (kernel implementation)
 
 ### Hypervisor (Ring -1) Features
 
-**Requires DioProcess.sys kernel driver with bundled hypervisor.** The hypervisor is integrated into DioProcess.sys — no separate driver needed. Operates at Ring -1 (hypervisor level) via Intel VT-x, providing capabilities that bypass even kernel-level protections.
+**Requires DioProcess.sys kernel driver with bundled hypervisor.** The hypervisor is integrated into DioProcess.sys — no separate driver needed. Operates at Ring -1 (hypervisor level) via Intel[...]
 
 #### Ring -1 Injection (Hypervisor-Level)
 
@@ -279,13 +285,13 @@ Access via the **Hypervisor** tab (marked with red "Ring -1" badge) in main navi
 │                              │ VMCALL                        │
 │   ┌──────────────────────────▼──────────────────────────┐   │
 │   │  Ring -1: Bundled Hypervisor (Intel VT-x, EPT)      │   │
-│   └─────────────────────────────────────────────────────┘   │
+│   └���────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### SMM (Ring -2) Features
 
-**System Management Mode (SMM)** is the deepest execution level on x86, running below even the hypervisor. The DioProcess SMM driver provides physical memory operations from this privileged environment.
+**System Management Mode (SMM)** is the deepest execution level on x86, running below even the hypervisor. The DioProcess SMM driver provides physical memory operations from this privileged envir[...]
 
 #### Architecture
 
@@ -412,9 +418,9 @@ Remove debugger presence indicators from a process via right-click → **Miscell
 - PPID spoofing via extended startup attributes
 - Process hollowing — full unmap, section-by-section write, relocations, PEB.ImageBaseAddress patch, section protection fix, thread context hijack (RCX)
 - **Process ghosting** — temp file → delete disposition → `SEC_IMAGE` section → orphaned section → `NtCreateProcessEx` → normalized process parameters → `NtCreateThreadEx`
-- **Ghostly hollowing** — Create ghost section (temp file → mark deleted → write PE → SEC_IMAGE section → file deleted), create legitimate host process SUSPENDED via `CreateProcessW`, map ghost section into remote process via `NtMapViewOfSection`, hijack thread (set RCX to entry point, patch PEB.ImageBase via `WriteProcessMemory`), resume thread
-- **Process herpaderping** — Write payload PE to a temp file, create an image section from it, create a process from the section, then overwrite the temp file with a legitimate PE. When AV/OS inspects the on-disk file, it sees the legitimate PE, but the in-memory image is the payload. Located in `crates/misc/src/process/herpaderp.rs`; function: `herpaderp_process(pe_path, pe_args, legit_img)`. Key NT APIs: `NtCreateSection`, `NtCreateProcessEx`, `NtCreateThreadEx`, `RtlCreateProcessParametersEx`. Note: the legitimate image should be larger than the payload PE.
-- **Herpaderping hollowing** — Combines herpaderping with hollowing: write payload PE to temp file, create image section, launch legitimate process suspended, map section into it, overwrite temp file with legitimate PE, hijack thread execution and resume. The on-disk file shows the legitimate PE while the in-memory mapped section runs the payload inside a legitimate process. Located in `crates/misc/src/process/herpaderp_hollow.rs`; function: `herpaderp_hollow_process(pe_path, legit_img)`. Key APIs: `NtCreateSection`, `CreateProcessW` (SUSPENDED), `NtMapViewOfSection`, `NtWriteVirtualMemory`, `GetThreadContext`, `SetThreadContext`, `ResumeThread`. Note: the legitimate image should be larger than the payload PE.
+- **Ghostly hollowing** — Create ghost section (temp file → mark deleted → write PE → SEC_IMAGE section → file deleted), create legitimate host process SUSPENDED via `CreateProcessW`, m[...]
+- **Process herpaderping** — Write payload PE to a temp file, create an image section from it, create a process from the section, then overwrite the temp file with a legitimate PE. When AV/OS i[...]
+- **Herpaderping hollowing** — Combines herpaderping with hollowing: write payload PE to temp file, create image section, launch legitimate process suspended, map section into it, overwrite tem[...]
 
 ### DLL Unhooking
 
@@ -453,12 +459,12 @@ Physical memory scanner via hypervisor CR3 page table walk. Access via the **Mem
 - **EPT Hooks** — Install execution-page hooks via hypervisor EPT (requires hypervisor running):
   - **Hex mode** — Patch execution page with raw hex bytes
   - **Assembly mode** — Write Intel syntax assembly, assembled at target address (live preview)
-  - **Detour mode** — Allocate RWX cave near hook point (±2GB for JMP rel32), assemble detour code there, EPT hook redirects execution via JMP. Return jump auto-appended (`FF 25` absolute JMP back to hook_addr + stolen_bytes)
+  - **Detour mode** — Allocate RWX cave near hook point (±2GB for JMP rel32), assemble detour code there, EPT hook redirects execution via JMP. Return jump auto-appended (`FF 25` absolute JMP [...]
   - Save/load `.aa` assembly script files
 
 #### `.dph` Hook Script System
 
-Save EPT hook configurations to `.dph` (DioProcess Hook) files for portable, repeatable hook application. Scripts survive process restarts by using `module+offset` addressing resolved at apply time.
+Save EPT hook configurations to `.dph` (DioProcess Hook) files for portable, repeatable hook application. Scripts survive process restarts by using `module+offset` addressing resolved at apply ti[...]
 
 **File format** (plain text, human-editable):
 ```ini
@@ -486,7 +492,7 @@ add [rbx+0x7F8], edx
 3. **Apply** — Click "Apply" per script or "Apply All" to install all pending scripts
 4. **From process context menu** — Right-click process → Miscellaneous → "Apply .dph Script" → browse file → hook applied
 
-**Module+offset resolution:** At apply time, `get_process_modules(pid)` enumerates loaded modules, finds the matching module base (case-insensitive), and adds the offset. This makes scripts portable across ASLR restarts.
+**Module+offset resolution:** At apply time, `get_process_modules(pid)` enumerates loaded modules, finds the matching module base (case-insensitive), and adds the offset. This makes scripts porta[...]
 
 Located in `crates/ui/src/components/memory_scanner_tab.rs`: `parse_dph_script()`, `resolve_target()`, `reverse_resolve_address()`, `apply_dph_file_to_process()`
 
@@ -533,7 +539,7 @@ Located in `crates/ui/src/components/memory_scanner_tab.rs`: `parse_dph_script()
 - **PE payload** — Select 64-bit PE to execute via ghost section
 - Ghost section mapped into suspended host via `NtMapViewOfSection`, thread hijacked, PEB patched, resumed
 
-**Process Herpaderping** — Write payload PE to a temp file, create an image section from it, create a process from the section, then overwrite the temp file with a legitimate PE. When AV/OS inspects the on-disk file, it sees the legitimate PE, but the in-memory image is the payload. Access via the **Utilities** tab:
+**Process Herpaderping** — Write payload PE to a temp file, create an image section from it, create a process from the section, then overwrite the temp file with a legitimate PE. When AV/OS ins[...]
 
 - **PE Payload** — Select the 64-bit executable to run via herpaderping
 - **Command Arguments** — Optional command line arguments for the payload
@@ -541,7 +547,7 @@ Located in `crates/ui/src/components/memory_scanner_tab.rs`: `parse_dph_script()
 - Located in `crates/misc/src/process/herpaderp.rs`; function: `herpaderp_process(pe_path, pe_args, legit_img)`
 - Key NT APIs: `NtCreateSection`, `NtCreateProcessEx`, `NtCreateThreadEx`, `RtlCreateProcessParametersEx`
 
-**Herpaderping Hollowing** — Combines herpaderping with hollowing: write payload PE to a temp file, create an image section from it, launch a legitimate process suspended, map the section into it, overwrite the temp file with the legitimate PE, hijack thread execution and resume. The on-disk file shows the legitimate PE while the in-memory mapped section runs the payload inside a legitimate process. Access via the **Utilities** tab:
+**Herpaderping Hollowing** — Combines herpaderping with hollowing: write payload PE to a temp file, create an image section from it, launch a legitimate process suspended, map the section into [...]
 
 - **PE Payload** — Select the 64-bit executable to run via herpaderping hollowing
 - **Legitimate Image** — Select a legitimate PE that serves as both the host process and the disk overwrite (should be larger than the payload PE)
@@ -595,7 +601,7 @@ Real-time kernel event capture via WDM driver with 17 event types:
   - **Aura Glow** (default) — Dark background with purple/violet accents and glowing white text
   - **Cyber** — Original cyan/teal accent theme
   - Theme preference persisted in SQLite (`%LOCALAPPDATA%\DioProcess\config.db`)
-- Tabs: **Processes** · **Network** · **Services** · **Memory Scanner** · **Usermode Utilities** · **Kernel Enumeration** · **Hypervisor** <sup style="color:red">Ring -1</sup> · **SMM** <sup style="color:purple">Ring -2</sup> · **UEFI Bootkit** · **System Events**
+- Tabs: **Processes** · **Network** · **Services** · **Memory Scanner** · **Usermode Utilities** · **Kernel Enumeration** · **Hypervisor** <sup style="color:red">Ring -1</sup> · **SMM** <s[...]
 - **Tree view** in Processes tab (DFS traversal, box-drawing connectors ├ │ └ ─, ancestor-inclusive search)
 - Modal inspectors: Threads · Handles · Modules · Memory · Performance graphs · String Scan
 - Real-time per-process CPU/memory graphs (60-second rolling history, SVG + fill)
