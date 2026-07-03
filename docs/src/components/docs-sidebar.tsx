@@ -46,6 +46,9 @@ import {
   Play,
   Cog,
   Code,
+  Flame,
+  Server,
+  Container,
 } from "lucide-react";
 
 interface NavItem {
@@ -140,6 +143,17 @@ const navigation: NavItem[] = [
       { title: "Physical Memory", href: "/docs/hypervisor/physical-memory", icon: Binary },
       { title: "Ring -1 Injection", href: "/docs/hypervisor/ring-1-injection", icon: Syringe },
       { title: "Process Hiding", href: "/docs/hypervisor/process-hiding", icon: EyeOff },
+    ],
+  },
+  {
+    title: "SMM",
+    href: "/docs/smm",
+    icon: Flame,
+    items: [
+      { title: "Architecture", href: "/docs/smm/architecture", icon: Server },
+      { title: "Physical Memory", href: "/docs/smm/physical-memory", icon: MemoryStick },
+      { title: "SMI Communication", href: "/docs/smm/smi-communication", icon: Radio },
+      { title: "QEMU Testing", href: "/docs/smm/qemu-testing", icon: Container },
     ],
   },
   {

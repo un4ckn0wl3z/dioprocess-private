@@ -15,6 +15,7 @@ import {
   Lock,
   Database,
   Layers,
+  Flame,
 } from "lucide-react";
 
 export default function Home() {
@@ -89,12 +90,12 @@ export default function Home() {
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-bold mb-4">
-              Four Layers of{" "}
+              Five Layers of{" "}
               <span className="text-violet">Power</span>
             </h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">
-              From usermode APIs to hypervisor-level control, DioProcess provides comprehensive 
-              system access for security research and analysis.
+              From usermode APIs to SMM-level control, DioProcess provides comprehensive
+              system access for security research and analysis — spanning Ring 3 down to Ring -2.
             </p>
           </div>
 
@@ -142,6 +143,22 @@ export default function Home() {
                 "Process hiding from Ring 0 enumeration",
                 "Driver hiding via EPT manipulation",
                 ".dph hook script system for portable hooks",
+              ]}
+            />
+
+            <FeatureCard
+              title="SMM"
+              description="System Management Mode — deepest x86 execution level"
+              icon={Flame}
+              badge="Ring -2"
+              badgeVariant="destructive"
+              features={[
+                "Physical memory read/write from SMRAM",
+                "CR3 page table walk for VA → PA translation",
+                "SMI-triggered command dispatch",
+                "DXE + SMM driver split (EDK2-based)",
+                "NVRAM-published communication buffer",
+                "QEMU + OVMF for safe development testing",
               ]}
             />
 
@@ -234,6 +251,7 @@ export default function Home() {
               <li>Kernel driver requires test signing mode or valid signature</li>
               <li>Hypervisor features require Hyper-V to be disabled</li>
               <li>UEFI bootkit requires Secure Boot to be disabled</li>
+              <li>SMM features require modified UEFI firmware — test in QEMU/OVMF first</li>
             </ul>
           </WarningBox>
 

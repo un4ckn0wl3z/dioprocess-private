@@ -8,6 +8,7 @@ import {
   Power,
   ArrowRight,
   Rocket,
+  Flame,
 } from "lucide-react";
 
 const sections = [
@@ -37,6 +38,14 @@ const sections = [
     href: "/docs/hypervisor",
     icon: Zap,
     badge: "Ring -1",
+    badgeVariant: "destructive" as const,
+  },
+  {
+    title: "SMM",
+    description: "System Management Mode — physical memory ops from SMRAM",
+    href: "/docs/smm",
+    icon: Flame,
+    badge: "Ring -2",
     badgeVariant: "destructive" as const,
   },
   {
