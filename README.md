@@ -13,9 +13,17 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 
 ---
 
+## Community & Discussion
+
+Join our Discord community to discuss techniques, ask questions, and collaborate:
+
+[![Discord](https://img.shields.io/badge/Discord-Join%20Discussion-5865F2?logo=discord&logoColor=white)](https://discord.gg/rHTJQHVBjE)
+
+---
+
 ## Related Repositories
 
-**Technical Specifications & Modules:** See [damned-software organization](https://github.com/orgs/damned-software) for additional technical specifications, module implementations, and complementary components for DioProcess.
+**Technical Specifications & Modules:** See [damned-software organization](https://github.com/orgs/damned-software) for additional technical specifications, module implementations, and complementa[...]
 
 ---
 
@@ -285,7 +293,7 @@ Access via the **Hypervisor** tab (marked with red "Ring -1" badge) in main navi
 │                              │ VMCALL                        │
 │   ┌──────────────────────────▼──────────────────────────┐   │
 │   │  Ring -1: Bundled Hypervisor (Intel VT-x, EPT)      │   │
-│   └���────────────────────────────────────────────────────┘   │
+│   └───────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
