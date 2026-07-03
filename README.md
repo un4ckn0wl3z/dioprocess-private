@@ -11,6 +11,37 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 [![Windows](https://img.shields.io/badge/Platform-Windows-blue?logo=windows)](https://microsoft.com/windows)
 [![Dioxus](https://img.shields.io/badge/UI-Dioxus%200.6-purple)](https://dioxuslabs.com)
 
+---
+
+## Disclaimer
+
+**FOR EDUCATIONAL AND AUTHORIZED SECURITY RESEARCH PURPOSES ONLY.**
+
+This software is provided "as is" without warranty of any kind. The authors and contributors assume **no responsibility** for any damages, data loss, system instability, legal consequences, or any other harm resulting from the use or misuse of this software.
+
+By using DioProcess, you acknowledge that:
+
+- You are solely responsible for ensuring compliance with all applicable laws and regulations in your jurisdiction
+- You will only use this software on systems you own or have explicit written authorization to test
+- The techniques implemented (kernel manipulation, process injection, SMM/hypervisor operations, bootkit installation) can cause **permanent system damage**, **data loss**, or **unbootable systems**
+- Misuse of this software may violate computer crime laws and result in civil or criminal penalties
+- The authors are not liable for any consequences arising from the use of this software
+
+**Use at your own risk. Test only on isolated virtual machines or expendable hardware.**
+
+---
+
+## System Requirements
+
+**Full functionality requires:**
+- **Windows 10 22H2 (Build 19045)** — the only fully tested and supported version
+- **DioProcess kernel driver** installed and running
+- **DioProcess UEFI bootkit** installed and enabled (for DSE/KPP bypass)
+
+Basic usermode features (process enumeration, DLL injection, etc.) may work on other Windows versions, but kernel-level features (hypervisor, SMM, security research IOCTLs) are only tested on Windows 10 22H2.
+
+---
+
 ## Core Features
 
 - Live enumeration of processes, threads, handles, modules & virtual memory regions
@@ -28,7 +59,6 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
   - **Clear Debug Flags** — Remove debugger indicators (DebugPort, PEB.BeingDebugged, NtGlobalFlag)
   - **Callback Enumeration** — List registered process/thread/image kernel callbacks (identify EDR/AV hooks)
   - **PspCidTable Enumeration** — Enumerate all processes/threads via kernel CID table (detect hidden processes)
-  - Supports Windows 10 (1507-22H2) and Windows 11 (21H2-24H2)
 - **Hypervisor (Ring -1) Features** — Intel VT-x based hypervisor bundled into DioProcess.sys for advanced security research:
   - **Ring -1 Injection** — Shellcode/DLL injection via hypervisor physical memory access (bypasses ring 0 protections)
   - **Process Hiding** — Hide processes from ring 0 enumeration via EPT hooks
@@ -165,8 +195,7 @@ Located in `crates/misc/src/kernel_inject.rs` + `kernelmode/DioProcess/DioProces
 - Attaches to target process context via `KeStackAttachProcess`
 - Allocates memory via `ZwAllocateVirtualMemory`, writes data via `RtlCopyMemory`
 - For DLL injection: walks PEB→Ldr→InLoadOrderModuleList to find `kernel32.dll`, parses PE exports to find `LoadLibraryW`
-- Version-aware PEB access using `PROCESS_PEB_OFFSET[]` table (supports Windows 10 1507+ and Windows 11)
-- Returns `STATUS_NOT_SUPPORTED` for unsupported Windows versions
+- Version-aware PEB access using `PROCESS_PEB_OFFSET[]` table
 
 **Access:** Right-click process → **Miscellaneous → Kernel Injection** → Shellcode Injection or DLL Injection (grayed out when driver not loaded)
 
@@ -485,13 +514,9 @@ Located in `crates/ui/src/components/memory_scanner_tab.rs`: `parse_dph_script()
 **Implementation Details:**
 - Requires DioProcess kernel driver to be loaded and running
 - UI features automatically disabled when driver not loaded (grayed out in context menu)
-- Supports Windows 10 (1507-22H2) and Windows 11 (21H2-24H2)
-- Uses version-specific structure offsets (auto-detected via `RtlGetVersion`)
 - Data-only modifications — **does not trigger PatchGuard/KPP**
 - Located in: `kernelmode/DioProcess/DioProcessDriver/` (driver) and `crates/callback/src/driver.rs` (Rust bindings)
 - Access via: Right-click process → **Miscellaneous** → Protect/Unprotect/Enable Privileges
-
-**Offset Verification:** See `tools/verify_offsets.md` for testing and updating structure offsets for your Windows version
 
 ### Utilities
 
@@ -641,7 +666,6 @@ cargo build --release
 Contributions welcome — especially around:
 
 - stability & better error messages
-- 32-bit Windows support
 - additional evasion / injection techniques
 - UI polish & accessibility
 
