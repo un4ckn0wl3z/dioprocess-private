@@ -6,6 +6,13 @@ Built with **Rust 2021** + **Dioxus 0.6** (desktop renderer)
 
 ![Preview 1](./assets/preview1.png)
 
+## 📺 Demo & Walkthrough
+
+**Watch the YouTube playlist for detailed demos and walkthroughs:**
+
+[![YouTube Playlist](https://img.shields.io/badge/YouTube-DioProcess%20Demos-red?logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=2zzTrXmpCzY&list=PLIr7f9v8lTYg)
+
+---
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange?logo=rust)](https://www.rust-lang.org)
 [![Windows](https://img.shields.io/badge/Platform-Windows-blue?logo=windows)](https://microsoft.com/windows)
@@ -283,7 +290,7 @@ Access via the **Hypervisor** tab (marked with red "Ring -1" badge) in main navi
 ┌──────────────────────────▼──────────────────────────────────┐
 │              callback crate (Rust bindings)                  │
 │   hv_is_running(), hv_inject_shellcode(), hv_inject_dll()   │
-└──────────────────────────┬──────────────────────────────────┘
+└──���───────────────────────┬──────────────────────────────────┘
                            │ IOCTL
 ┌──────────────────────────▼──────────────────────────────────┐
 │                  DioProcess.sys                              │
@@ -293,7 +300,7 @@ Access via the **Hypervisor** tab (marked with red "Ring -1" badge) in main navi
 │                              │ VMCALL                        │
 │   ┌──────────────────────────▼──────────────────────────┐   │
 │   │  Ring -1: Bundled Hypervisor (Intel VT-x, EPT)      │   │
-│   └───────────────────────────────────────────────────────┘   │
+│   └──────────────────────────────────────��────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
